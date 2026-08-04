@@ -1,18 +1,24 @@
 server:
   port: 8081
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
 
 spring:
   application:
     name: feisheng-bot-gateway
   datasource:
-    url: jdbc:mysql://localhost:3306/feisheng_bot_db?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
-    username: root
-    password: root
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/feisheng_bot_db?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
   data:
     redis:
-      host: localhost
-      port: 6379
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: ${SPRING_REDIS_PORT:6379}
+      password: ${SPRING_REDIS_PASSWORD:}
       database: 0
 
 mybatis-plus:
@@ -27,3 +33,28 @@ mybatis-plus:
 
 dingtalk:
   app-secret: ${DINGTALK_APP_SECRET:}
+  token: ${DINGTALK_TOKEN:}
+  encoding-aes-key: ${DINGTALK_ENCODING_AES_KEY:}
+  robot-code: ${DINGTALK_ROBOT_CODE:}
+  stream:
+    enabled: ${DINGTALK_STREAM_ENABLED:false}
+    client-id: ${DINGTALK_CLIENT_ID:}
+    client-secret: ${DINGTALK_CLIENT_SECRET:}
+    consume-threads: ${DINGTALK_STREAM_CONSUME_THREADS:4}
+  media:
+    worker-threads: ${DINGTALK_MEDIA_WORKER_THREADS:2}
+    queue-capacity: ${DINGTALK_MEDIA_QUEUE_CAPACITY:50}
+    connect-timeout-ms: ${DINGTALK_MEDIA_CONNECT_TIMEOUT_MS:10000}
+    read-timeout-ms: ${DINGTALK_MEDIA_READ_TIMEOUT_MS:30000}
+    max-image-bytes: ${DINGTALK_MEDIA_MAX_IMAGE_BYTES:10485760}
+    max-audio-bytes: ${DINGTALK_MEDIA_MAX_AUDIO_BYTES:26214400}
+    max-text-chars: ${DINGTALK_MEDIA_MAX_TEXT_CHARS:8000}
+    ffmpeg-command: ${DINGTALK_MEDIA_FFMPEG_COMMAND:ffmpeg}
+    ffmpeg-timeout-seconds: ${DINGTALK_MEDIA_FFMPEG_TIMEOUT_SECONDS:60}
+wecom:
+  corp-id: ${WECOM_CORP_ID:}
+  corp-secret: ${WECOM_CORP_SECRET:}
+  agent-id: ${WECOM_AGENT_ID:}
+  callback-token: ${WECOM_CALLBACK_TOKEN:}
+  callback-aes-key: ${WECOM_CALLBACK_AES_KEY:}
+  api-base: ${WECOM_API_BASE:https://qyapi.weixin.qq.com}

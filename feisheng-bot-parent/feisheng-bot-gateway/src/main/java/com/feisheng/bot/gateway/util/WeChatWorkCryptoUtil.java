@@ -10,125 +10,151 @@ import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.Base64;
 
-/**
- * 浼佷笟寰俊鍥炶皟鍔犺В瀵?鈥?WXBizMsgCrypt
- * 鍙傝€? https://developer.work.weixin.qq.com/document/path/90968
- */
 public class WeChatWorkCryptoUtil {
+    private static final int RANDOM_PREFIX_LENGTH = 16;
+    private static final int PKCS7_BLOCK_SIZE = 32;
 
     private final byte[] aesKey;
     private final String token;
     private final String corpId;
 
     public WeChatWorkCryptoUtil(String encodingAesKey, String token, String corpId) {
+        if (isBlank(encodingAesKey) || isBlank(token) || isBlank(corpId)) {
+            throw new IllegalArgumentException("WeCom AES key, token and corpId are required");
+        }
         this.token = token;
         this.corpId = corpId;
-        String aesKeyBase64 = encodingAesKey + "=";
-        this.aesKey = Base64.getDecoder().decode(aesKeyBase64);
+        String normalized = encodingAesKey;
+        while (normalized.length() % 4 != 0) normalized += "=";
+        this.aesKey = Base64.getDecoder().decode(normalized);
         if (this.aesKey.length != 32) {
-            throw new IllegalArgumentException("encodingAESKey must decode to 32 bytes");
+            throw new IllegalArgumentException("WeCom AES key must decode to 32 bytes");
         }
     }
 
-    /** SHA1 绛惧悕楠岃瘉 */
-    public boolean verifySignature(String msgSignature, String timestamp, String nonce, String echoStr) {
-        String expected = sha1(token, timestamp, nonce, echoStr);
-        return expected.equalsIgnoreCase(msgSignature);
+    public boolean verifySignature(String msgSignature, String timestamp, String nonce, String encrypted) {
+        if (isBlank(msgSignature) || isBlank(timestamp) || isBlank(nonce) || isBlank(encrypted)) return false;
+        byte[] expected = sha1(token, timestamp, nonce, encrypted).getBytes(StandardCharsets.UTF_8);
+        return MessageDigest.isEqual(expected, msgSignature.getBytes(StandardCharsets.UTF_8));
     }
 
-    /** 瑙ｅ瘑鍥炴樉娑堟伅 (URL楠岃瘉鐢? */
     public String decryptEchoStr(String echoStr) {
-        byte[] encrypted = Base64.getDecoder().decode(echoStr);
-        byte[] plain = decrypt(encrypted);
-        // 鏍煎紡: [16B random][4B msgLen][msg][corpId]
-        ByteBuffer buf = ByteBuffer.wrap(plain);
-        int msgLen = buf.getInt(16);
-        return new String(plain, 20, msgLen, StandardCharsets.UTF_8);
+        return decryptPayload(echoStr);
     }
 
-    /** 瑙ｅ瘑鎺ユ敹鍒扮殑鍔犲瘑娑堟伅 */
-    public String decryptMsg(String encryptXml, String msgSignature, String timestamp, String nonce) {
-        if (!verifySignature(msgSignature, timestamp, nonce, encryptXml)) {
-            throw new SecurityException("Signature verification failed");
+    public String decryptMsg(String encrypted, String msgSignature, String timestamp, String nonce) {
+        if (!verifySignature(msgSignature, timestamp, nonce, encrypted)) {
+            throw new SecurityException("WeCom signature verification failed");
         }
-        byte[] encrypted = Base64.getDecoder().decode(encryptXml);
-        byte[] plain = decrypt(encrypted);
-        ByteBuffer buf = ByteBuffer.wrap(plain);
-        int msgLen = buf.getInt(16);
-        return new String(plain, 20, msgLen, StandardCharsets.UTF_8);
+        return decryptPayload(encrypted);
     }
 
-    /** 鍔犲瘑鍥炲娑堟伅 */
     public String encryptReply(String replyXml, String timestamp, String nonce) {
-        byte[] random = new byte[16];
+        byte[] random = new byte[RANDOM_PREFIX_LENGTH];
         new SecureRandom().nextBytes(random);
-        byte[] msgBytes = replyXml.getBytes(StandardCharsets.UTF_8);
+        byte[] message = replyXml.getBytes(StandardCharsets.UTF_8);
         byte[] corpIdBytes = corpId.getBytes(StandardCharsets.UTF_8);
+        ByteBuffer payload = ByteBuffer.allocate(random.length + Integer.BYTES + message.length + corpIdBytes.length);
+        payload.put(random);
+        payload.putInt(message.length);
+        payload.put(message);
+        payload.put(corpIdBytes);
 
-        ByteBuffer buf = ByteBuffer.allocate(16 + 4 + msgBytes.length + corpIdBytes.length);
-        buf.put(random);
-        buf.putInt(msgBytes.length);
-        buf.put(msgBytes);
-        buf.put(corpIdBytes);
+        String encrypted = Base64.getEncoder().encodeToString(encrypt(payload.array()));
+        String signature = sha1(token, timestamp, nonce, encrypted);
+        return "<xml>"
+            + "<Encrypt><![CDATA[" + encrypted + "]]></Encrypt>"
+            + "<MsgSignature><![CDATA[" + signature + "]]></MsgSignature>"
+            + "<TimeStamp>" + timestamp + "</TimeStamp>"
+            + "<Nonce><![CDATA[" + escapeCdata(nonce) + "]]></Nonce>"
+            + "</xml>";
+    }
 
-        byte[] encrypted = encrypt(buf.array());
-        String encryptBase64 = Base64.getEncoder().encodeToString(encrypted);
-        String signature = sha1(token, timestamp, nonce, encryptBase64);
-
-        return String.format(
-            "<xml>%s<Encrypt><![CDATA[%s]]></Encrypt>%s" +
-            "<MsgSignature><![CDATA[%s]]></MsgSignature>%s" +
-            "<TimeStamp><![CDATA[%s]]></TimeStamp>%s" +
-            "<Nonce><![CDATA[%s]]></Nonce></xml>",
-            "\n", encryptBase64, "\n", signature, "\n", timestamp, "\n", nonce
-        );
+    private String decryptPayload(String encryptedText) {
+        byte[] plain = decrypt(Base64.getDecoder().decode(encryptedText));
+        if (plain.length < RANDOM_PREFIX_LENGTH + Integer.BYTES) {
+            throw new IllegalArgumentException("WeCom decrypted payload is too short");
+        }
+        ByteBuffer buffer = ByteBuffer.wrap(plain);
+        buffer.position(RANDOM_PREFIX_LENGTH);
+        int messageLength = buffer.getInt();
+        if (messageLength < 0 || messageLength > buffer.remaining()) {
+            throw new IllegalArgumentException("Invalid WeCom message length");
+        }
+        byte[] message = new byte[messageLength];
+        buffer.get(message);
+        byte[] receiveId = new byte[buffer.remaining()];
+        buffer.get(receiveId);
+        String actualCorpId = new String(receiveId, StandardCharsets.UTF_8);
+        if (!MessageDigest.isEqual(corpId.getBytes(StandardCharsets.UTF_8), receiveId)) {
+            throw new SecurityException("WeCom corpId does not match configured corpId: " + actualCorpId);
+        }
+        return new String(message, StandardCharsets.UTF_8);
     }
 
     private byte[] decrypt(byte[] encrypted) {
         try {
-            SecretKeySpec key = new SecretKeySpec(aesKey, "AES");
-            IvParameterSpec iv = new IvParameterSpec(Arrays.copyOfRange(aesKey, 0, 16));
             Cipher cipher = Cipher.getInstance("AES/CBC/NoPadding");
-            cipher.init(Cipher.DECRYPT_MODE, key, iv);
-            byte[] plain = cipher.doFinal(encrypted);
-            // 鍘婚櫎 PKCS7 padding
-            int pad = plain[plain.length - 1] & 0xFF;
-            return Arrays.copyOf(plain, plain.length - pad);
+            cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(aesKey, "AES"),
+                new IvParameterSpec(aesKey, 0, 16));
+            return pkcs7Unpad(cipher.doFinal(encrypted));
+        } catch (SecurityException | IllegalArgumentException e) {
+            throw e;
         } catch (Exception e) {
-            throw new RuntimeException("AES decrypt failed", e);
+            throw new IllegalStateException("WeCom AES decrypt failed", e);
         }
     }
 
     private byte[] encrypt(byte[] plain) {
         try {
-            // PKCS7 padding
-            int blockSize = 32;
-            int padLen = blockSize - (plain.length % blockSize);
-            byte[] padded = Arrays.copyOf(plain, plain.length + padLen);
-            Arrays.fill(padded, plain.length, padded.length, (byte) padLen);
-
-            SecretKeySpec key = new SecretKeySpec(aesKey, "AES");
-            IvParameterSpec iv = new IvParameterSpec(Arrays.copyOfRange(aesKey, 0, 16));
             Cipher cipher = Cipher.getInstance("AES/CBC/NoPadding");
-            cipher.init(Cipher.ENCRYPT_MODE, key, iv);
-            return cipher.doFinal(padded);
+            cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(aesKey, "AES"),
+                new IvParameterSpec(aesKey, 0, 16));
+            return cipher.doFinal(pkcs7Pad(plain));
         } catch (Exception e) {
-            throw new RuntimeException("AES encrypt failed", e);
+            throw new IllegalStateException("WeCom AES encrypt failed", e);
         }
     }
 
-    private String sha1(String... strs) {
-        try {
-            Arrays.sort(strs);
-            StringBuilder sb = new StringBuilder();
-            for (String s : strs) sb.append(s);
-            MessageDigest md = MessageDigest.getInstance("SHA-1");
-            byte[] digest = md.digest(sb.toString().getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder();
-            for (byte b : digest) hex.append(String.format("%02x", b & 0xFF));
-            return hex.toString();
-        } catch (Exception e) {
-            throw new RuntimeException("SHA1 failed", e);
+    private static byte[] pkcs7Pad(byte[] plain) {
+        int padding = PKCS7_BLOCK_SIZE - plain.length % PKCS7_BLOCK_SIZE;
+        byte[] result = Arrays.copyOf(plain, plain.length + padding);
+        Arrays.fill(result, plain.length, result.length, (byte) padding);
+        return result;
+    }
+
+    private static byte[] pkcs7Unpad(byte[] plain) {
+        if (plain.length == 0) throw new IllegalArgumentException("Empty WeCom encrypted payload");
+        int padding = plain[plain.length - 1] & 0xff;
+        if (padding < 1 || padding > PKCS7_BLOCK_SIZE || padding > plain.length) {
+            throw new IllegalArgumentException("Invalid WeCom PKCS7 padding");
         }
+        for (int i = plain.length - padding; i < plain.length; i++) {
+            if ((plain[i] & 0xff) != padding) {
+                throw new IllegalArgumentException("Invalid WeCom PKCS7 padding");
+            }
+        }
+        return Arrays.copyOf(plain, plain.length - padding);
+    }
+
+    private static String sha1(String... values) {
+        try {
+            Arrays.sort(values);
+            MessageDigest digest = MessageDigest.getInstance("SHA-1");
+            byte[] hash = digest.digest(String.join("", values).getBytes(StandardCharsets.UTF_8));
+            StringBuilder result = new StringBuilder(hash.length * 2);
+            for (byte b : hash) result.append(String.format("%02x", b & 0xff));
+            return result.toString();
+        } catch (Exception e) {
+            throw new IllegalStateException("WeCom SHA-1 failed", e);
+        }
+    }
+
+    private static String escapeCdata(String value) {
+        return value == null ? "" : value.replace("]]>", "]]]]><![CDATA[>");
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 }

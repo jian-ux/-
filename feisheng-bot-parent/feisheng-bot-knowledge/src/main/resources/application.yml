@@ -1,0 +1,60 @@
+﻿server:
+  port: 8083
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+
+spring:
+  application:
+    name: feisheng-bot-knowledge
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/feisheng_bot_db?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: ${SPRING_REDIS_PORT:6379}
+      password: ${SPRING_REDIS_PASSWORD:}
+      database: 0
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+minio:
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  access-key: ${MINIO_ACCESS_KEY}
+  secret-key: ${MINIO_SECRET_KEY}
+  bucket: ${MINIO_BUCKET:feisheng-docs}
+
+rag:
+  index:
+    sync-interval-ms: ${RAG_INDEX_SYNC_INTERVAL_MS:30000}
+    require-consistent-embedding-version: ${RAG_REQUIRE_CONSISTENT_EMBEDDING_VERSION:false}
+  structured-unit-index:
+    enabled: ${RAG_STRUCTURED_UNIT_INDEX_ENABLED:false}
+
+qdrant:
+  enabled: ${QDRANT_ENABLED:true}
+  url: ${QDRANT_URL:http://localhost:6333}
+  api-key: ${QDRANT_API_KEY:}
+  collection: ${QDRANT_COLLECTION:feisheng_knowledge}
+  semantic-unit-collection: ${QDRANT_SEMANTIC_UNIT_COLLECTION:feisheng_knowledge_semantic_units}
+  vector-size: ${QDRANT_VECTOR_SIZE:2048}
+  batch-size: ${QDRANT_BATCH_SIZE:64}
+  connect-timeout-seconds: ${QDRANT_CONNECT_TIMEOUT_SECONDS:2}
+  read-timeout-seconds: ${QDRANT_READ_TIMEOUT_SECONDS:10}

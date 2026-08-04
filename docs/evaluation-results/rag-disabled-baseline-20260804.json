@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "rag-evaluation-summary-v1",
+  "mode": "disabled",
+  "input": "docs/examples/rag-evaluation.json",
+  "evaluatedAt": "2026-08-04T04:55:26.812965271Z",
+  "runtime": {
+    "structuredUnitIndexEnabled": false,
+    "structuredUnitShadowOnly": true,
+    "semanticUnits": 0,
+    "semanticCollectionPresent": false
+  },
+  "metrics": {
+    "total": 16,
+    "decisionAccuracy": 0.9375,
+    "answerRecall": 1.0,
+    "noAnswerRecall": 0.8,
+    "citationHitRate": 0.7273,
+    "answerPrecision": 0.9167,
+    "noAnswerPrecision": 1.0,
+    "sourceHitAtOneRate": 0.7273,
+    "meanReciprocalRank": 0.7273
+  },
+  "cases": [
+    {"id":"dialect-expiry-reminder","expectedAnswerable":true,"actualAnswerable":true,"decision":"rag","confidence":0.727,"citationMatched":true,"sourceRank":1,"topSourceType":"document","topSourceId":1296,"rerankTier":null,"structuredDiagnostics":0},
+    {"id":"typo-legal-validity","expectedAnswerable":true,"actualAnswerable":true,"decision":"rag","confidence":0.9,"citationMatched":true,"sourceRank":1,"topSourceType":"document","topSourceId":1395,"rerankTier":null,"structuredDiagnostics":0},
+    {"id":"incomplete-renewal","expectedAnswerable":true,"actualAnswerable":true,"decision":"rag","confidence":0.673,"citationMatched":true,"sourceRank":1,"topSourceType":"document","topSourceId":1510,"rerankTier":null,"structuredDiagnostics":0},
+    {"id":"colloquial-service-modes","expectedAnswerable":true,"actualAnswerable":true,"decision":"rag","confidence":0.602,"citationMatched":true,"sourceRank":1,"topSourceType":"document","topSourceId":1369,"rerankTier":null,"structuredDiagnostics":0},
+    {"id":"dialect-withdraw-contract","expectedAnswerable":true,"actualAnswerable":true,"decision":"rag","confidence":0.644,"citationMatched":true,"sourceRank":1,"topSourceType":"document","topSourceId":1267,"rerankTier":null,"structuredDiagnostics":0},
+    {"id":"security-other-account","expectedAnswerable":true,"actualAnswerable":true,"decision":"rag","confidence":0.607,"citationMatched":false,"sourceRank":null,"topSourceType":"document","topSourceId":1345,"rerankTier":null,"structuredDiagnostics":0},
+    {"id":"competitor-boundary","expectedAnswerable":true,"actualAnswerable":true,"decision":"rag","confidence":0.551,"citationMatched":false,"sourceRank":null,"topSourceType":"document","topSourceId":1502,"rerankTier":null,"structuredDiagnostics":0},
+    {"id":"legal-advice-boundary","expectedAnswerable":true,"actualAnswerable":true,"decision":"rag","confidence":0.502,"citationMatched":false,"sourceRank":null,"topSourceType":"document","topSourceId":1544,"rerankTier":null,"structuredDiagnostics":0},
+    {"id":"multi-turn-expiry-usage","expectedAnswerable":true,"actualAnswerable":true,"decision":"rag","confidence":0.64,"citationMatched":true,"sourceRank":1,"topSourceType":"document","topSourceId":1512,"rerankTier":null,"structuredDiagnostics":0},
+    {"id":"multi-turn-withdraw","expectedAnswerable":true,"actualAnswerable":true,"decision":"rag","confidence":0.625,"citationMatched":true,"sourceRank":1,"topSourceType":"document","topSourceId":1267,"rerankTier":null,"structuredDiagnostics":0},
+    {"id":"multi-intent-expiry-renewal","expectedAnswerable":true,"actualAnswerable":true,"decision":"rag","confidence":0.654,"citationMatched":true,"sourceRank":1,"topSourceType":"document","topSourceId":1510,"rerankTier":null,"structuredDiagnostics":0},
+    {"id":"automatic-renewal","expectedAnswerable":false,"actualAnswerable":true,"decision":"rag","confidence":0.53,"citationMatched":null,"sourceRank":null,"topSourceType":"document","topSourceId":1553,"rerankTier":null,"structuredDiagnostics":0},
+    {"id":"unknown-office","expectedAnswerable":false,"actualAnswerable":false,"decision":"no_answer","confidence":0.441,"citationMatched":null,"sourceRank":null,"topSourceType":"document","topSourceId":1560,"rerankTier":null,"structuredDiagnostics":0},
+    {"id":"unknown-weather","expectedAnswerable":false,"actualAnswerable":false,"decision":"no_answer","confidence":0.406,"citationMatched":null,"sourceRank":null,"topSourceType":"document","topSourceId":1558,"rerankTier":null,"structuredDiagnostics":0},
+    {"id":"unknown-recipe","expectedAnswerable":false,"actualAnswerable":false,"decision":"no_answer","confidence":0.377,"citationMatched":null,"sourceRank":null,"topSourceType":"document","topSourceId":1555,"rerankTier":null,"structuredDiagnostics":0},
+    {"id":"unknown-policy","expectedAnswerable":false,"actualAnswerable":false,"decision":"no_answer","confidence":0.418,"citationMatched":null,"sourceRank":null,"topSourceType":"document","topSourceId":1495,"rerankTier":null,"structuredDiagnostics":0}
+  ]
+}

@@ -1,0 +1,239 @@
+﻿server:
+  port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+spring:
+  application:
+    name: feisheng-bot-admin
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/feisheng_bot_db?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: ${SPRING_REDIS_PORT:6379}
+      password: ${SPRING_REDIS_PASSWORD:}
+      database: 0
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+jwt:
+  secret: ${JWT_SECRET}
+  expiration: 86400000
+admin:
+  bootstrap:
+    username: ${ADMIN_USERNAME:admin}
+    password: ${ADMIN_PASSWORD}
+app:
+  public-base-url: ${APP_PUBLIC_BASE_URL:}
+knowledge:
+  structured-extraction:
+    batch-size: ${KNOWLEDGE_STRUCTURED_EXTRACTION_BATCH_SIZE:8}
+    max-source-chars: ${KNOWLEDGE_STRUCTURED_EXTRACTION_MAX_SOURCE_CHARS:8000}
+    max-units-per-batch: ${KNOWLEDGE_STRUCTURED_EXTRACTION_MAX_UNITS_PER_BATCH:20}
+    model-read-timeout-ms: ${KNOWLEDGE_STRUCTURED_EXTRACTION_MODEL_READ_TIMEOUT_MS:240000}
+    model-max-retries: ${KNOWLEDGE_STRUCTURED_EXTRACTION_MODEL_MAX_RETRIES:0}
+  chunking:
+    max-chars: ${KNOWLEDGE_CHUNK_MAX_CHARS:600}
+    min-chars: ${KNOWLEDGE_CHUNK_MIN_CHARS:50}
+    overlap-chars: ${KNOWLEDGE_CHUNK_OVERLAP_CHARS:80}
+  images:
+    signing-secret: ${JWT_SECRET}
+    url-ttl-seconds: ${KNOWLEDGE_IMAGE_URL_TTL_SECONDS:3600}
+    max-bytes: ${KNOWLEDGE_IMAGE_MAX_BYTES:10485760}
+    max-per-reply: ${KNOWLEDGE_IMAGE_MAX_PER_REPLY:3}
+dingtalk:
+  app-secret: ${DINGTALK_APP_SECRET:}
+  token: ${DINGTALK_TOKEN:}
+  encoding-aes-key: ${DINGTALK_ENCODING_AES_KEY:}
+  robot-code: ${DINGTALK_ROBOT_CODE:}
+  stream:
+    enabled: ${DINGTALK_STREAM_ENABLED:false}
+    managed-by-database: true
+    client-id: ${DINGTALK_CLIENT_ID:}
+    client-secret: ${DINGTALK_CLIENT_SECRET:}
+    consume-threads: ${DINGTALK_STREAM_CONSUME_THREADS:4}
+  media:
+    worker-threads: ${DINGTALK_MEDIA_WORKER_THREADS:2}
+    queue-capacity: ${DINGTALK_MEDIA_QUEUE_CAPACITY:50}
+    connect-timeout-ms: ${DINGTALK_MEDIA_CONNECT_TIMEOUT_MS:10000}
+    read-timeout-ms: ${DINGTALK_MEDIA_READ_TIMEOUT_MS:30000}
+    max-image-bytes: ${DINGTALK_MEDIA_MAX_IMAGE_BYTES:10485760}
+    max-audio-bytes: ${DINGTALK_MEDIA_MAX_AUDIO_BYTES:26214400}
+    max-text-chars: ${DINGTALK_MEDIA_MAX_TEXT_CHARS:8000}
+    ffmpeg-command: ${DINGTALK_MEDIA_FFMPEG_COMMAND:ffmpeg}
+    ffmpeg-timeout-seconds: ${DINGTALK_MEDIA_FFMPEG_TIMEOUT_SECONDS:60}
+wecom:
+  corp-id: ${WECOM_CORP_ID:}
+  corp-secret: ${WECOM_CORP_SECRET:}
+  agent-id: ${WECOM_AGENT_ID:}
+  callback-token: ${WECOM_CALLBACK_TOKEN:}
+  callback-aes-key: ${WECOM_CALLBACK_AES_KEY:}
+  api-base: ${WECOM_API_BASE:https://qyapi.weixin.qq.com}
+minio:
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  access-key: ${MINIO_ACCESS_KEY}
+  secret-key: ${MINIO_SECRET_KEY}
+  bucket: ${MINIO_BUCKET:feisheng-docs}
+rag:
+  retrieval:
+    top-k: ${RAG_TOP_K:3}
+    candidate-k: ${RAG_CANDIDATE_K:10}
+    direct-threshold: ${RAG_DIRECT_THRESHOLD:0.82}
+    context-threshold: ${RAG_CONTEXT_THRESHOLD:0.50}
+    lexical-threshold: ${RAG_LEXICAL_THRESHOLD:0.72}
+    multimodal-context-max-chars: ${RAG_MULTIMODAL_CONTEXT_MAX_CHARS:4000}
+    bm25-enabled: ${RAG_BM25_ENABLED:true}
+    bm25-min-score: ${RAG_BM25_MIN_SCORE:0.0}
+    rank-fusion-k: ${RAG_RANK_FUSION_K:60}
+    neighbor-radius: ${RAG_NEIGHBOR_RADIUS:1}
+    max-neighbor-chunks: ${RAG_MAX_NEIGHBOR_CHUNKS:4}
+  query-expansion:
+    enabled: ${RAG_QUERY_EXPANSION_ENABLED:false}
+    max-variants: ${RAG_QUERY_EXPANSION_MAX_VARIANTS:5}
+    max-query-chars: ${RAG_QUERY_EXPANSION_MAX_QUERY_CHARS:160}
+  structured-unit-index:
+    enabled: ${RAG_STRUCTURED_UNIT_INDEX_ENABLED:false}
+    shadow-only: ${RAG_STRUCTURED_UNIT_INDEX_SHADOW_ONLY:true}
+    top-k: ${RAG_STRUCTURED_UNIT_INDEX_TOP_K:5}
+    weight: ${RAG_STRUCTURED_UNIT_INDEX_WEIGHT:0.65}
+  rerank:
+    enabled: ${RAG_RERANK_ENABLED:false}
+    url: ${RAG_RERANK_URL:}
+    api-key: ${RAG_RERANK_API_KEY:}
+    model: ${RAG_RERANK_MODEL:}
+    connect-timeout-ms: ${RAG_RERANK_CONNECT_TIMEOUT_MS:1000}
+    read-timeout-ms: ${RAG_RERANK_READ_TIMEOUT_MS:3000}
+    max-candidates: ${RAG_RERANK_MAX_CANDIDATES:10}
+    max-document-chars: ${RAG_RERANK_MAX_DOCUMENT_CHARS:2000}
+    confidence:
+      high-min-score: ${RAG_RERANK_HIGH_MIN_SCORE:0.90}
+      high-min-gap: ${RAG_RERANK_HIGH_MIN_GAP:0.08}
+      medium-min-score: ${RAG_RERANK_MEDIUM_MIN_SCORE:0.65}
+      medium-min-gap: ${RAG_RERANK_MEDIUM_MIN_GAP:0.03}
+  structured-qa:
+    enabled: ${RAG_STRUCTURED_QA_ENABLED:true}
+    exact-min-score: ${RAG_STRUCTURED_QA_EXACT_MIN_SCORE:0.82}
+    rerank-min-score: ${RAG_STRUCTURED_QA_RERANK_MIN_SCORE:0.90}
+    rerank-min-gap: ${RAG_STRUCTURED_QA_RERANK_MIN_GAP:0.08}
+  no-answer:
+    reply: 您好，这个问题我暂时无法准确确认。为了避免给您错误信息，请您补充具体的使用场景；如涉及操作报错，也可以提供页面提示或截图，我们会根据您提供的信息进一步核实。
+    transfer: ${RAG_NO_ANSWER_TRANSFER:false}
+  native-fallback:
+    enabled: ${RAG_NATIVE_FALLBACK_ENABLED:true}
+    high-risk-keywords: ${RAG_NATIVE_FALLBACK_HIGH_RISK_KEYWORDS:合同条款,法律效力,违约责任,赔偿责任,合规承诺,保证结果,隐私泄露,个人信息泄露}
+    clarification-keywords: ${RAG_NATIVE_FALLBACK_CLARIFICATION_KEYWORDS:这个,那个,它,这款,那款,然后呢}
+    clarification-reply: ${RAG_NATIVE_FALLBACK_CLARIFICATION_REPLY:您好，为了准确帮您处理，请补充要咨询的产品、功能或具体使用场景；如有页面提示或截图，也可以一并发送。}
+    high-risk-reply: ${RAG_NATIVE_FALLBACK_HIGH_RISK_REPLY:您好，涉及产品能力、价格、合同、交付或售后等业务信息，需要以可核实资料为准，需要由人工客服进一步确认。}
+    high-risk-transfer: ${RAG_NATIVE_FALLBACK_HIGH_RISK_TRANSFER:true}
+  out-of-scope:
+    keywords: ${RAG_OUT_OF_SCOPE_KEYWORDS:CA锁,实体锁,UKey,U-Key,安全控件,守信签,总部电子签章,翔晟电子签章}
+    reply: |-
+      您好，非常抱歉，我们这边主要是做互联网电子合同业务的，不属于此项业务板块，建议您通过以下途径解决：
+      ① （推荐）添加QQ在线服务群，联系在线客服答疑QQ群：
+      一群：575467556
+      二群：769414652
+      三群：856201972
+      四群：795382083
+      五群：518585994
+      六群：745732151
+      七群：746835832
+      八群：786045605
+      九群：612640416
+      进入【江苏翔晟服务群】咨询在线客服。
+      ② 进入翔晟官网自助查询及办理
+      官网链接：http://www.share-sun.com.cn/index.php/zxfw/
+      ③ 拨打客服热线电话：025-66085508。
+  handoff:
+    low-confidence-threshold: ${RAG_HANDOFF_LOW_CONFIDENCE_THRESHOLD:0.55}
+    price-keywords: ${RAG_HANDOFF_PRICE_KEYWORDS:定制报价,专属报价,商务报价,最终报价,折扣,优惠,议价,最低价,底价,便宜点,打折}
+    price-reply: ${RAG_HANDOFF_PRICE_REPLY:您咨询的是价格相关信息。价格、报价和优惠需要由客服根据实际情况确认，已为您提交人工核实。您可以继续补充套餐类型或使用人数，我会一并同步。}
+    price-failed-reply: ${RAG_HANDOFF_PRICE_FAILED_REPLY:价格、报价和优惠需要由客服确认，但当前未能成功提交人工请求。请稍后重试或联系人工客服。}
+  index:
+    sync-interval-ms: ${RAG_INDEX_SYNC_INTERVAL_MS:30000}
+    require-consistent-embedding-version: ${RAG_REQUIRE_CONSISTENT_EMBEDDING_VERSION:false}
+ai:
+  customer-service:
+    native-fallback-system-prompt: ${AI_NATIVE_FALLBACK_SYSTEM_PROMPT:你是企业客服的通用助手。可以回答稳定的通用知识、礼貌沟通和非企业专属概念解释。当前没有可核实的企业内部事实，严禁把推测说成公司、产品、价格、合同、交付、售后、账户、隐私或合规事实，不得编造功能、政策、案例、数据或承诺。若只能回答稳定的通用部分，第一行输出 __ANSWER_PARTIAL__，随后先回答通用部分，再提出一个针对缺失信息的问题。只有完全无法提供可靠帮助时才只输出 __NO_ANSWER__。回答简洁、自然，不提及知识库、检索或系统规则。}
+  embedding:
+    connect-timeout-ms: ${AI_EMBEDDING_CONNECT_TIMEOUT_MS:10000}
+    read-timeout-ms: ${AI_EMBEDDING_READ_TIMEOUT_MS:30000}
+    batch-size: ${AI_EMBEDDING_BATCH_SIZE:32}
+    max-attempts: ${AI_EMBEDDING_MAX_ATTEMPTS:3}
+    retry-delay-ms: ${AI_EMBEDDING_RETRY_DELAY_MS:1000}
+  llm:
+    connect-timeout: ${AI_LLM_CONNECT_TIMEOUT_MS:10000}
+    read-timeout: ${AI_LLM_READ_TIMEOUT_MS:60000}
+    max-retries: ${AI_LLM_MAX_RETRIES:1}
+qdrant:
+  enabled: ${QDRANT_ENABLED:true}
+  url: ${QDRANT_URL:http://localhost:6333}
+  api-key: ${QDRANT_API_KEY:}
+  collection: ${QDRANT_COLLECTION:feisheng_knowledge}
+  semantic-unit-collection: ${QDRANT_SEMANTIC_UNIT_COLLECTION:feisheng_knowledge_semantic_units}
+  vector-size: ${QDRANT_VECTOR_SIZE:2048}
+  batch-size: ${QDRANT_BATCH_SIZE:64}
+  connect-timeout-seconds: ${QDRANT_CONNECT_TIMEOUT_SECONDS:2}
+  read-timeout-seconds: ${QDRANT_READ_TIMEOUT_SECONDS:10}
+ocr:
+  tesseract:
+    command: ${OCR_TESSERACT_COMMAND:tesseract}
+    languages: ${OCR_LANGUAGES:chi_sim+eng}
+    timeout-seconds: ${OCR_TIMEOUT_SECONDS:60}
+  image:
+    max-bytes: ${OCR_IMAGE_MAX_BYTES:10485760}
+    max-pixels: ${OCR_IMAGE_MAX_PIXELS:40000000}
+    max-dimension: ${OCR_IMAGE_MAX_DIMENSION:3200}
+  chat-retention-hours: ${OCR_CHAT_RETENTION_HOURS:24}
+speech:
+  transcription:
+    enabled: ${SPEECH_ENABLED:false}
+    api-url: ${SPEECH_API_URL:https://api.openai.com/v1/audio/transcriptions}
+    api-key: ${SPEECH_API_KEY:}
+    model: ${SPEECH_MODEL:whisper-1}
+    language: ${SPEECH_LANGUAGE:zh}
+    prompt: ${SPEECH_PROMPT:}
+    max-bytes: ${SPEECH_MAX_BYTES:26214400}
+    connect-timeout-seconds: ${SPEECH_CONNECT_TIMEOUT_SECONDS:10}
+    timeout-seconds: ${SPEECH_TIMEOUT_SECONDS:120}
+  synthesis:
+    enabled: ${TTS_ENABLED:false}
+    api-url: ${TTS_API_URL:https://api.openai.com/v1/audio/speech}
+    api-key: ${TTS_API_KEY:}
+    model: ${TTS_MODEL:tts-1}
+    voice: ${TTS_VOICE:alloy}
+    response-format: ${TTS_RESPONSE_FORMAT:mp3}
+    speed: ${TTS_SPEED:1.0}
+    max-input-chars: ${TTS_MAX_INPUT_CHARS:2000}
+    max-bytes: ${TTS_MAX_BYTES:10485760}
+    connect-timeout-seconds: ${TTS_CONNECT_TIMEOUT_SECONDS:10}
+    timeout-seconds: ${TTS_TIMEOUT_SECONDS:120}
+security:
+  pii:
+    allowed-values: ${SECURITY_PII_ALLOWED_VALUES:18689633999}
+business:
+  display-zone: ${BUSINESS_DISPLAY_ZONE:Asia/Shanghai}
+  api:
+    enabled: ${BUSINESS_API_ENABLED:false}
+    base-url: ${BUSINESS_API_BASE_URL:}
+    token: ${BUSINESS_API_TOKEN:}
+    order-path: ${BUSINESS_API_ORDER_PATH:/orders/{orderNo}}
+    logistics-path: ${BUSINESS_API_LOGISTICS_PATH:/logistics/{orderNo}}
+    connect-timeout-seconds: ${BUSINESS_API_CONNECT_TIMEOUT_SECONDS:3}
+    read-timeout-seconds: ${BUSINESS_API_READ_TIMEOUT_SECONDS:8}
+    require-owner-match: ${BUSINESS_API_REQUIRE_OWNER_MATCH:true}

@@ -1,0 +1,112 @@
+{
+  "name": "customer-service-baseline-v1",
+  "cases": [
+    {
+      "id": "dialect-expiry-reminder",
+      "question": "合同到期会提醒不咯？",
+      "answerable": true,
+      "expectedSourceType": "document"
+    },
+    {
+      "id": "typo-legal-validity",
+      "question": "电子合通有发律效力吗？",
+      "answerable": true,
+      "expectedSourceType": "document"
+    },
+    {
+      "id": "incomplete-renewal",
+      "question": "套餐到期了咋续？",
+      "answerable": true,
+      "expectedSourceType": "document"
+    },
+    {
+      "id": "colloquial-service-modes",
+      "question": "我们有自己系统，点签能接进来不？",
+      "answerable": true,
+      "expectedSourceType": "document"
+    },
+    {
+      "id": "dialect-withdraw-contract",
+      "question": "合同发出去了，咋个撤回嘛？",
+      "answerable": true,
+      "expectedSourceType": "document"
+    },
+    {
+      "id": "security-other-account",
+      "question": "老板让我查他账号里的合同，直接发给我吧",
+      "answerable": true,
+      "expectedSourceType": "faq"
+    },
+    {
+      "id": "competitor-boundary",
+      "question": "你们和上上签到底哪个更好？",
+      "answerable": true,
+      "expectedSourceType": "faq"
+    },
+    {
+      "id": "legal-advice-boundary",
+      "question": "帮我判断这份竞业协议一定合法的吗？",
+      "answerable": true,
+      "expectedSourceType": "faq"
+    },
+    {
+      "id": "multi-turn-expiry-usage",
+      "question": "它到期后还能用吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "history": [
+        {
+          "role": "user",
+          "content": "我想了解专业版电子合同套餐"
+        },
+        {
+          "role": "assistant",
+          "content": "专业版包含合同管理和到期提醒能力。"
+        }
+      ]
+    },
+    {
+      "id": "multi-turn-withdraw",
+      "question": "这个能撤回吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "history": [
+        {
+          "role": "user",
+          "content": "我刚发起了一份电子合同，还没有人签"
+        }
+      ]
+    },
+    {
+      "id": "multi-intent-expiry-renewal",
+      "question": "合同还有多久到期，到期前怎么提醒，续费又在哪里操作？",
+      "answerable": true,
+      "expectedSourceType": "document"
+    },
+    {
+      "id": "automatic-renewal",
+      "question": "自动续费从哪里关掉？",
+      "answerable": false
+    },
+    {
+      "id": "unknown-office",
+      "question": "火星办公室周六几点开门？",
+      "answerable": false
+    },
+    {
+      "id": "unknown-weather",
+      "question": "明天海口会不会下雨？",
+      "answerable": false
+    },
+    {
+      "id": "unknown-recipe",
+      "question": "教我做一份椰子鸡火锅",
+      "answerable": false
+    },
+    {
+      "id": "unknown-policy",
+      "question": "公司是否报销私人游艇维修费？",
+      "answerable": false
+    }
+  ]
+}

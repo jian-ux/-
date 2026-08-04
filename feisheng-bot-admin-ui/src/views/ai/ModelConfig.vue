@@ -1,0 +1,136 @@
+<template>
+  <el-card>
+    <template #header>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span>智能模型配置</span>
+        <el-button type="primary" @click="openAdd">新增模型</el-button>
+      </div>
+    </template>
+
+    <el-alert type="info" :closable="false" style="margin-bottom:15px" show-icon>
+      每种模型类型可分别设置默认项；大语言模型用于对话，向量嵌入用于检索，语音识别用于转写，语音合成用于回复。
+    </el-alert>
+
+    <el-table :data="models" border stripe>
+      <el-table-column label="默认" width="70" align="center">
+        <template #default="{row}">
+          <span v-if="row.isDefault === 1" style="color:#e6a23c;font-size:20px;cursor:default" title="当前默认模型">⭐</span>
+          <span v-else style="color:#ccc;font-size:20px;cursor:pointer" title="点击设为默认" @click="setDefault(row.id)">☆</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="modelName" label="模型名称" min-width="140">
+        <template #default="{row}">{{ modelDisplayName(row) }}</template>
+      </el-table-column>
+      <el-table-column prop="provider" label="供应商" width="110">
+        <template #default="{row}">{{ providerText(row.provider) }}</template>
+      </el-table-column>
+      <el-table-column prop="modelType" label="类型" width="100">
+        <template #default="{row}"><el-tag size="small">{{ modelTypeText(row.modelType) }}</el-tag></template>
+      </el-table-column>
+      <el-table-column prop="status" label="状态" width="80">
+        <template #default="{row}"><el-tag :type="row.status===1?'success':'danger'" size="small">{{row.status===1?'启用':'禁用'}}</el-tag></template>
+      </el-table-column>
+      <el-table-column prop="apiUrl" label="接口状态" width="100">
+        <template #default="{row}">{{ row.apiUrl ? '已配置' : '未配置' }}</template>
+      </el-table-column>
+      <el-table-column label="操作" width="210">
+        <template #default="{row}">
+          <el-button size="small" @click="edit(row)">编辑</el-button>
+          <el-button size="small" type="warning" v-if="row.isDefault !== 1" @click="setDefault(row.id)">设为默认</el-button>
+          <el-button size="small" type="danger" @click="del(row.id)">删除</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+  </el-card>
+
+  <el-dialog v-model="dialogVisible" :title="isEdit?'编辑模型':'新增模型'" width="520px">
+    <el-form :model="form" label-width="100px">
+      <el-form-item label="模型名称"><el-input v-model="form.modelName" placeholder="请输入模型名称" /></el-form-item>
+      <el-form-item label="供应商">
+        <el-select v-model="form.provider" style="width:100%">
+          <el-option label="开放式智能" value="openai" />
+          <el-option label="深度求索" value="deepseek" />
+          <el-option label="通义千问" value="qwen" />
+          <el-option label="智谱" value="zhipu" />
+          <el-option label="微软云" value="azure" />
+          <el-option label="其他" value="other" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="接口地址"><el-input v-model="form.apiUrl" placeholder="请输入服务接口地址" /></el-form-item>
+      <el-form-item label="接口密钥"><el-input v-model="form.apiKey" show-password placeholder="请输入接口密钥" /></el-form-item>
+      <el-form-item label="类型">
+        <el-select v-model="form.modelType" style="width:100%">
+          <el-option label="大语言模型" value="LLM" />
+          <el-option label="知识抽取模型" value="Extraction" />
+          <el-option label="向量嵌入" value="Embedding" />
+          <el-option label="检索重排" value="Rerank" />
+          <el-option label="语音转文字" value="Speech" />
+          <el-option label="文字转语音" value="TTS" />
+        </el-select>
+      </el-form-item>
+      <el-form-item v-if="form.modelType === 'TTS'" label="合成参数">
+        <el-input
+          v-model="form.parameters"
+          type="textarea"
+          :rows="3"
+          placeholder="请输入语音、格式和语速等合成参数"
+        />
+      </el-form-item>
+      <el-form-item label="启用">
+        <el-switch v-model="form.status" :active-value="1" :inactive-value="0" />
+      </el-form-item>
+    </el-form>
+    <template #footer><el-button @click="dialogVisible=false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template>
+  </el-dialog>
+</template>
+
+<script setup>
+import { ref, onMounted, reactive } from 'vue'
+import request from '../../api/index.js'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { modelTypeText, providerText } from '../../utils/displayText.js'
+
+const models = ref([])
+const dialogVisible = ref(false)
+const isEdit = ref(false)
+const form = reactive({modelName:'',provider:'deepseek',apiUrl:'',apiKey:'',modelType:'LLM',parameters:'',status:1})
+
+function modelDisplayName(row) {
+  return row.modelName || `${providerText(row.provider)}${modelTypeText(row.modelType)}`
+}
+
+async function fetch() {
+  const r = await request.get('/admin/ai/model/list', {params:{size:100}})
+  models.value = r.data.records || []
+}
+
+function openAdd() {
+  Object.assign(form, {modelName:'',provider:'deepseek',apiUrl:'',apiKey:'',modelType:'LLM',parameters:'',status:1})
+  isEdit.value = false; dialogVisible.value = true
+}
+
+function edit(row) {
+  Object.assign(form, row, {apiKey: ''}); isEdit.value = true; dialogVisible.value = true
+}
+
+async function save() {
+  if (isEdit.value) await request.put('/admin/ai/model/save', form)
+  else await request.post('/admin/ai/model/save', form)
+  ElMessage.success('已保存'); dialogVisible.value = false; fetch()
+}
+
+async function setDefault(id) {
+  await request.put('/admin/ai/model/' + id + '/set-default')
+  ElMessage.success('已设为默认模型'); fetch()
+}
+
+async function del(id) {
+  try {
+    await ElMessageBox.confirm('确认删除？', '提示', {type:'warning'})
+    await request.delete('/admin/ai/model/' + id)
+    ElMessage.success('已删除'); fetch()
+  } catch(e) {}
+}
+
+onMounted(fetch)
+</script>

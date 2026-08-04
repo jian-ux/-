@@ -1,0 +1,12 @@
+.git
+.idea
+.env
+**/target
+**/node_modules
+**/dist
+*.log
+uploads
+backups
+dingtalk_doc.html
+fix_*.py
+qa_pairs.json

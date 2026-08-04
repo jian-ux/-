@@ -1,2 +1,22 @@
-
+# Local secrets
 .env
+
+# IDE and build output
+.idea/
+**/target/
+**/node_modules/
+**/dist/
+*.log
+
+# Runtime data and local analysis artifacts
+uploads/
+backups/
+tmp/
+.understand-anything/
+
+# One-off local migration/debug helpers
+dingtalk_doc.html
+fix_*.py
+gen.py
+import_faq.py
+write_poms.py

@@ -29,6 +29,14 @@ public class BotKnowledgeDocument {
     private Long fileSize;
     private Long categoryId;
     private Integer status;
+    private String knowledgeSetKey;
+    private Integer documentVersion;
+    private Integer priority;
+    private String publishStatus;
+    private Date effectiveFrom;
+    private Date effectiveTo;
+    private Long supersedesDocumentId;
+    private Date publishedAt;
     private Date createTime;
     @TableLogic
     private Integer deleted;

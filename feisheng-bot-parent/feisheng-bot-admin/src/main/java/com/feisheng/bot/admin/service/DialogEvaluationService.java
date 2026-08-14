@@ -4,6 +4,7 @@ import com.feisheng.bot.core.entity.BotConversation;
 import com.feisheng.bot.core.entity.BotMessage;
 import com.feisheng.bot.core.mapper.BotConversationMapper;
 import com.feisheng.bot.core.mapper.BotMessageMapper;
+import com.feisheng.bot.core.service.CustomerServicePromptProvider;
 import com.feisheng.bot.core.service.SensitiveDataService;
 import com.feisheng.bot.core.service.impl.DialogServiceImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -56,7 +57,7 @@ public class DialogEvaluationService {
             try {
                 result = transactionTemplate.execute(status -> {
                     try {
-                        return evaluateCase(sample, caseIndex);
+                        return evaluateCase(sample, caseIndex, request.promptVersion());
                     } catch (Exception e) {
                         return errorResult(sample, caseIndex, e);
                     } finally {
@@ -70,11 +71,15 @@ public class DialogEvaluationService {
                 ? errorResult(sample, caseIndex, new IllegalStateException("评测事务未返回结果"))
                 : result);
         }
+        String evaluatedPromptVersion = hasText(request.promptVersion())
+            ? request.promptVersion().trim().toLowerCase(java.util.Locale.ROOT)
+            : results.get(0).promptVersion();
         return summarize(firstNonBlank(request.name(), "dialog-evaluation"),
-            results, request.cases());
+            evaluatedPromptVersion, results, request.cases());
     }
 
-    private DialogCaseResult evaluateCase(DialogEvaluationCase sample, int index) {
+    private DialogCaseResult evaluateCase(DialogEvaluationCase sample, int index,
+                                          String requestedPromptVersion) {
         String caseId = firstNonBlank(sample.id(), "case-" + (index + 1));
         String channelUserId = "eval-" + UUID.randomUUID();
         BotConversation conversation = new BotConversation();
@@ -96,9 +101,13 @@ public class DialogEvaluationService {
         }
 
         long started = System.currentTimeMillis();
-        Map<String, Object> response = dialogService.send(
-            "evaluation", channelUserId, sample.question(), conversation.getTitle(),
-            null, sample.preferredModelId());
+        Map<String, Object> response = hasText(requestedPromptVersion)
+            ? dialogService.send(
+                "evaluation", channelUserId, sample.question(), conversation.getTitle(),
+                null, sample.preferredModelId(), requestedPromptVersion)
+            : dialogService.send(
+                "evaluation", channelUserId, sample.question(), conversation.getTitle(),
+                null, sample.preferredModelId());
         long latencyMs = System.currentTimeMillis() - started;
 
         String reply = Objects.toString(response.get("reply"), "");
@@ -128,6 +137,8 @@ public class DialogEvaluationService {
             caseId, sensitiveDataService.redact(sample.question()).text(),
             sample.answerable(), actualAnswerable, sample.expectedAnswerDecision(),
             answerDecision, answerStatus, source,
+            Objects.toString(response.get("promptVersion"),
+                firstNonBlank(requestedPromptVersion, "default")),
             decisionCorrect, number(response.get("confidence")), reply,
             sample.expectedSourceType(), sample.expectedSourceId(), groundingMatched,
             List.copyOf(missingRequired), List.copyOf(forbiddenFound),
@@ -142,7 +153,7 @@ public class DialogEvaluationService {
         return new DialogCaseResult(
             firstNonBlank(sample.id(), "case-" + (index + 1)),
             sensitiveDataService.redact(sample.question()).text(), sample.answerable(),
-            false, sample.expectedAnswerDecision(), "", "error", "evaluation_error", false, 0, "",
+            false, sample.expectedAnswerDecision(), "", "error", "evaluation_error", "", false, 0, "",
             sample.expectedSourceType(), sample.expectedSourceId(),
             expectsGrounding(sample) ? false : null,
             redactList(sample.mustContain()), Collections.emptyList(),
@@ -153,7 +164,8 @@ public class DialogEvaluationService {
                 firstNonBlank(error.getMessage(), error.getClass().getSimpleName())).text());
     }
 
-    private DialogEvaluationReport summarize(String name, List<DialogCaseResult> results,
+    private DialogEvaluationReport summarize(String name, String promptVersion,
+                                              List<DialogCaseResult> results,
                                               List<DialogEvaluationCase> samples) {
         int decisionExpected = 0;
         int decisionCorrect = 0;
@@ -193,7 +205,7 @@ public class DialogEvaluationService {
         }
 
         return new DialogEvaluationReport(
-            name, Instant.now().toString(), true, true,
+            name, promptVersion, Instant.now().toString(), true, true,
             "评测会调用真实模型并产生 API 成本；会话、消息、工单和日志数据均按样本回滚。",
             results.size(), decisionExpected, decisionCorrect,
             ratio(decisionCorrect, decisionExpected), groundingExpected, groundingMatched,
@@ -209,6 +221,10 @@ public class DialogEvaluationService {
         }
         if (request.cases().size() > MAX_CASES) {
             throw new IllegalArgumentException("单次评测最多支持 " + MAX_CASES + " 条样本");
+        }
+        if (hasText(request.promptVersion())
+                && !CustomerServicePromptProvider.isSupported(request.promptVersion())) {
+            throw new IllegalArgumentException("promptVersion 仅支持 v1 或 v2");
         }
     }
 
@@ -262,8 +278,11 @@ public class DialogEvaluationService {
 
     private List<String> missingPhrases(String reply, List<String> phrases) {
         List<String> missing = new ArrayList<>();
+        String normalizedReply = normalizePhrase(reply);
         for (String phrase : safeList(phrases)) {
-            if (!reply.contains(phrase)) missing.add(sensitiveDataService.redact(phrase).text());
+            if (!normalizedReply.contains(normalizePhrase(phrase))) {
+                missing.add(sensitiveDataService.redact(phrase).text());
+            }
         }
         return missing;
     }
@@ -271,9 +290,42 @@ public class DialogEvaluationService {
     private List<String> presentPhrases(String reply, List<String> phrases) {
         List<String> present = new ArrayList<>();
         for (String phrase : safeList(phrases)) {
-            if (reply.contains(phrase)) present.add(sensitiveDataService.redact(phrase).text());
+            if (containsForbiddenPhrase(reply, phrase)) {
+                present.add(sensitiveDataService.redact(phrase).text());
+            }
         }
         return present;
+    }
+
+    private boolean containsForbiddenPhrase(String reply, String phrase) {
+        String normalizedReply = normalizePhrase(reply);
+        String normalizedPhrase = normalizePhrase(phrase);
+        if (normalizedPhrase.isEmpty()) return false;
+        int fromIndex = 0;
+        while (true) {
+            int index = normalizedReply.indexOf(normalizedPhrase, fromIndex);
+            if (index < 0) return false;
+            String prefix = normalizedReply.substring(Math.max(0, index - 8), index);
+            if (!hasNegation(prefix)) return true;
+            fromIndex = index + normalizedPhrase.length();
+        }
+    }
+
+    private boolean hasNegation(String prefix) {
+        return List.of("无法", "不能", "不会", "不支持", "不代表", "并非", "不是",
+                "不等于", "不得", "严禁", "未", "没有")
+            .stream().anyMatch(prefix::contains);
+    }
+
+    private String normalizePhrase(String value) {
+        return Objects.toString(value, "")
+            .toLowerCase(java.util.Locale.ROOT)
+            .replaceAll("\\s+", "")
+            .replace("一年", "1年")
+            .replace("一个月", "1个月")
+            .replace("一小时", "1小时")
+            .replace("一个小时", "1小时")
+            .replace("一天", "1天");
     }
 
     @SuppressWarnings("unchecked")
@@ -328,7 +380,12 @@ public class DialogEvaluationService {
         return value != null && !value.isBlank();
     }
 
-    public record DialogEvaluationRequest(String name, List<DialogEvaluationCase> cases) {}
+    public record DialogEvaluationRequest(
+            String name, String promptVersion, List<DialogEvaluationCase> cases) {
+        public DialogEvaluationRequest(String name, List<DialogEvaluationCase> cases) {
+            this(name, null, cases);
+        }
+    }
 
     public record DialogEvaluationCase(
         String id, String question, Boolean answerable, String expectedAnswerStatus,
@@ -342,7 +399,7 @@ public class DialogEvaluationService {
     public record DialogCaseResult(
         String id, String question, Boolean expectedAnswerable, boolean actualAnswerable,
         String expectedAnswerDecision, String answerDecision, String answerStatus,
-        String source, boolean decisionCorrect, double confidence,
+        String source, String promptVersion, boolean decisionCorrect, double confidence,
         String reply, String expectedSourceType, Long expectedSourceId,
         Boolean groundingMatched, List<String> missingRequiredPhrases,
         List<String> forbiddenPhrasesFound, Boolean expectedNeedsTransfer,
@@ -352,7 +409,8 @@ public class DialogEvaluationService {
         List<Map<String, Object>> citations, String error) {}
 
     public record DialogEvaluationReport(
-        String name, String evaluatedAt, boolean usesRealModel, boolean databaseRolledBack,
+        String name, String promptVersion, String evaluatedAt,
+        boolean usesRealModel, boolean databaseRolledBack,
         String costNotice, int total, int decisionExpected, int decisionCorrect,
         double decisionAccuracy, int groundingExpected, int groundingMatched,
         double groundingAccuracy, int requiredPhraseTotal, int requiredPhraseHit,

@@ -55,6 +55,118 @@ class ChunkingServiceTest {
     }
 
     @Test
+    void keepsQuestionLikeAnswerProseInsideTheCurrentQaUnit() {
+        List<ChunkingService.Chunk> chunks = service.chunk("""
+            问题：合同如何收费？
+            答案：按套餐确定。
+            是否收费？这句话属于答案中的补充说明。
+            问题：如何开票？
+            答案：请联系客服。
+            """);
+
+        assertEquals(2, chunks.size());
+        assertTrue(chunks.get(0).qaAnswer.contains("是否收费？这句话属于答案中的补充说明。"));
+        assertEquals("如何开票？", chunks.get(1).qaQuestion);
+    }
+
+    @Test
+    void keepsConfirmedSpreadsheetRowsIndependentWhenAnswersContainQuestionLikeLines() {
+        DocumentParseService.ParsedDocument document = new DocumentParseService.ParsedDocument(
+            "", "",
+            List.of(
+                new DocumentParseService.QaRow("第一问？",
+                    "先完成认证。\n是否收费？这句话属于答案内容。", "工作表：问答", 2),
+                new DocumentParseService.QaRow("第二问？", "这是第二个答案。", "工作表：问答", 3)),
+            new DocumentParseService.ParseDiagnostics(true, 2, 2, 0));
+
+        List<ChunkingService.Chunk> chunks = service.chunk(document);
+
+        assertEquals(2, chunks.size());
+        assertEquals("第一问？", chunks.get(0).qaQuestion);
+        assertEquals("先完成认证。\n是否收费？这句话属于答案内容。", chunks.get(0).qaAnswer);
+        assertEquals("第二问？", chunks.get(1).qaQuestion);
+        assertEquals(2, chunks.stream().map(chunk -> chunk.qaGroupKey).distinct().count());
+    }
+
+    @Test
+    void splitsCallbackScriptRowsIntoIndependentSupportQuestions() {
+        DocumentParseService.ParsedDocument document = new DocumentParseService.ParsedDocument(
+            "", "", List.of(new DocumentParseService.QaRow(
+                "点签：您好，请问使用过程中有没有遇到疑问呢？", """
+                点签：您好，请问您在使用我们应用的过程中，有没有遇到疑问呢
+                发起多次后接收不到验证短信
+                运营商会限制短信发送次数，请等待一天后再发起。
+                更换法人认证
+                新法人认证后，将新旧法人姓名和手机号提供给客服处理。
+                用户个人签名存在重名
+                签名名称不能相同，请修改签名名称。
+                """, "Word 表格", 194)),
+            new DocumentParseService.ParseDiagnostics(true, 1, 1, 0));
+
+        List<ChunkingService.Chunk> chunks = service.chunk(document);
+
+        assertEquals(3, chunks.size());
+        assertEquals("发起多次后接收不到验证短信", chunks.get(0).qaQuestion);
+        assertEquals("更换法人认证", chunks.get(1).qaQuestion);
+        assertEquals("用户个人签名存在重名", chunks.get(2).qaQuestion);
+        assertTrue(chunks.stream().noneMatch(chunk ->
+            chunk.qaAnswer.contains("点签：您好，请问您在使用")));
+    }
+
+    @Test
+    void keepsOrdinaryStructuredAnswersWithQuestionLikeLinesIntact() {
+        String answer = "先完成认证。\n是否收费？这句话属于答案内容。\n请联系客服确认。";
+        DocumentParseService.ParsedDocument document = new DocumentParseService.ParsedDocument(
+            "", "", List.of(new DocumentParseService.QaRow(
+                "第一问？", answer, "工作表：问答", 2)),
+            new DocumentParseService.ParseDiagnostics(true, 1, 1, 0));
+
+        List<ChunkingService.Chunk> chunks = service.chunk(document);
+
+        assertEquals(1, chunks.size());
+        assertEquals("第一问？", chunks.get(0).qaQuestion);
+        assertEquals(answer, chunks.get(0).qaAnswer);
+    }
+
+    @Test
+    void doesNotReclassifyUnstructuredRemainderAfterParserConfirmation() {
+        DocumentParseService.ParsedDocument document = new DocumentParseService.ParsedDocument(
+            "", "普通说明。\n没有对应答案的问题？\n后续说明。", List.of(
+                new DocumentParseService.QaRow("已确认问题？", "已确认答案。", "Word 段落", 2)),
+            new DocumentParseService.ParseDiagnostics(true, 1, 1, 0));
+
+        List<ChunkingService.Chunk> chunks = service.chunk(document);
+
+        assertEquals(2, chunks.size());
+        assertEquals("QA", chunks.get(0).contentType);
+        assertEquals("TEXT", chunks.get(1).contentType);
+        assertTrue(chunks.get(1).content.contains("没有对应答案的问题？"));
+    }
+
+    @Test
+    void keepsExplicitOcrTableRelationshipsAfterChunkNormalisation() {
+        String answer = "外国友人仅支持以下方式认证：\n"
+            + "[结构化表格]\n"
+            + "表头：证件类型；手机认证；人脸认证；银行卡认证；人工审核认证\n"
+            + "表格行：证件类型=国际护照；手机认证=×；人脸认证=×；银行卡认证=√ (数据宝)；人工审核认证=√\n"
+            + "[/结构化表格]";
+        DocumentParseService.ParsedDocument document = new DocumentParseService.ParsedDocument(
+            "", "", List.of(new DocumentParseService.QaRow(
+                "客户是外籍人士，没有中国大陆手机号，能完成企业认证吗？", answer,
+                "Word 图片 OCR", 1)),
+            new DocumentParseService.ParseDiagnostics(true, 1, 1, 0));
+
+        List<ChunkingService.Chunk> chunks = service.chunk(document);
+
+        assertEquals(1, chunks.size());
+        assertTrue(chunks.get(0).qaAnswer.contains("证件类型=国际护照"));
+        assertTrue(chunks.get(0).qaAnswer.contains("手机认证=×"));
+        assertTrue(chunks.get(0).qaAnswer.contains("银行卡认证=√ (数据宝)"));
+        assertFalse(chunks.get(0).content.contains("\t"));
+        assertTrue(chunks.get(0).embeddingText().contains("人脸认证=×"));
+    }
+
+    @Test
     void neverDropsShortDocumentsOrShortSections() {
         String text = """
             # 第一章

@@ -28,6 +28,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -95,10 +96,60 @@ class DialogEvaluationServiceTest {
             report.cases().get(0).question());
     }
 
+    @Test
+    void normalizesRequiredPhrasesAndIgnoresForbiddenPhrasesInNegatedClaims() {
+        String question = "测试评测语义";
+        when(dialogService.send(eq("evaluation"), anyString(), eq(question),
+                anyString(), isNull(), isNull()))
+            .thenReturn(response(
+                "OpenAPI 套餐有效期为一年，已签合同无法直接补充附件，也不能保证百分之百认可。",
+                "answered", "rag_ai", 0.9, List.of(), false, false));
+
+        DialogEvaluationService.DialogEvaluationReport report = service.evaluate(
+            new DialogEvaluationService.DialogEvaluationRequest("phrase-semantics", List.of(
+                new DialogEvaluationService.DialogEvaluationCase(
+                    "semantic", question, true, null, "ANSWER", null, null,
+                    List.of(), List.of("OpenApi", "1 年"),
+                    List.of("直接补充附件", "百分之百认可"), false, null))));
+
+        assertEquals(1.0, report.requiredPhraseHitRate());
+        assertEquals(0, report.forbiddenPhraseViolations());
+        assertEquals(List.of(true), rollbackFlags);
+    }
+
+    @Test
+    void passesRequestedPromptVersionToDialogService() {
+        String question = "测试 V2";
+        when(dialogService.send(eq("evaluation"), anyString(), eq(question),
+                anyString(), isNull(), isNull(), eq("v2")))
+            .thenReturn(response("V2 回答", "answered", "rag_ai",
+                0.9, List.of(), false, false, "v2"));
+
+        DialogEvaluationService.DialogEvaluationReport report = service.evaluate(
+            new DialogEvaluationService.DialogEvaluationRequest("prompt-v2", "v2", List.of(
+                new DialogEvaluationService.DialogEvaluationCase(
+                    "v2", question, true, null, "ANSWER", null, null,
+                    List.of(), List.of(), List.of(), false, null))));
+
+        assertEquals("v2", report.promptVersion());
+        assertEquals("v2", report.cases().get(0).promptVersion());
+        verify(dialogService).send(eq("evaluation"), anyString(), eq(question),
+            anyString(), isNull(), isNull(), eq("v2"));
+    }
+
     private Map<String, Object> response(String reply, String status, String source,
                                          double confidence,
                                          List<Map<String, Object>> citations,
                                          boolean needsTransfer, boolean redactionApplied) {
+        return response(reply, status, source, confidence, citations,
+            needsTransfer, redactionApplied, "v1");
+    }
+
+    private Map<String, Object> response(String reply, String status, String source,
+                                         double confidence,
+                                         List<Map<String, Object>> citations,
+                                         boolean needsTransfer, boolean redactionApplied,
+                                         String promptVersion) {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("reply", reply);
         response.put("answerStatus", status);
@@ -109,6 +160,7 @@ class DialogEvaluationServiceTest {
         response.put("needsTransfer", needsTransfer);
         response.put("redactionApplied", redactionApplied);
         response.put("redactedTypes", redactionApplied ? List.of("PHONE") : List.of());
+        response.put("promptVersion", promptVersion);
         if (needsTransfer) {
             response.put("handoff", Map.of(
                 "ticketId", 99L, "success", true,

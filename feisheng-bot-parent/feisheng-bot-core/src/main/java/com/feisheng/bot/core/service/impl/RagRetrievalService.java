@@ -7,6 +7,7 @@ import com.feisheng.bot.core.client.StructuredUnitRetrievalClient;
 import com.feisheng.bot.core.client.StructuredUnitRetrievalClient.StructuredUnitHit;
 import com.feisheng.bot.core.dto.QueryVariant;
 import com.feisheng.bot.core.service.EmbeddingService;
+import com.feisheng.bot.core.service.BusinessSafetyBoundaryService;
 import com.feisheng.bot.core.service.QueryExpansionService;
 import com.feisheng.bot.core.service.RerankService;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -66,6 +67,7 @@ public class RagRetrievalService {
     private final StructuredUnitRetrievalClient structuredUnitRetrievalClient;
     private final RedisUtil redisUtil;
     private final ObjectMapper objectMapper;
+    private final BusinessSafetyBoundaryService businessSafetyBoundaryService;
 
     @Value("${rag.retrieval.top-k:3}")
     private int topK;
@@ -93,6 +95,18 @@ public class RagRetrievalService {
 
     @Value("${rag.retrieval.bm25-min-score:0.0}")
     private double bm25MinScore;
+
+    @Value("${rag.retrieval.bm25-fallback-min-score:8.0}")
+    private double bm25FallbackMinScore = 8.0;
+
+    @Value("${rag.retrieval.bm25-fallback-min-gap-ratio:1.10}")
+    private double bm25FallbackMinGapRatio = 1.10;
+
+    @Value("${rag.retrieval.bm25-fallback-min-question-similarity:0.60}")
+    private double bm25FallbackMinQuestionSimilarity = 0.60;
+
+    @Value("${rag.retrieval.bm25-fallback-confidence:0.65}")
+    private double bm25FallbackConfidence = 0.65;
 
     @Value("${rag.retrieval.rank-fusion-k:60}")
     private int rankFusionK = 60;
@@ -146,7 +160,8 @@ public class RagRetrievalService {
                                QueryExpansionService queryExpansionService,
                                StructuredUnitRetrievalClient structuredUnitRetrievalClient,
                                RedisUtil redisUtil,
-                               ObjectMapper objectMapper) {
+                               ObjectMapper objectMapper,
+                               BusinessSafetyBoundaryService businessSafetyBoundaryService) {
         this.faqMatchService = faqMatchService;
         this.embeddingService = embeddingService;
         this.knowledgeClient = knowledgeClient;
@@ -155,6 +170,7 @@ public class RagRetrievalService {
         this.structuredUnitRetrievalClient = structuredUnitRetrievalClient;
         this.redisUtil = redisUtil;
         this.objectMapper = objectMapper;
+        this.businessSafetyBoundaryService = businessSafetyBoundaryService;
     }
 
     public RetrievalResult retrieve(String query) {
@@ -191,6 +207,23 @@ public class RagRetrievalService {
     public RetrievalResult retrieve(String query, String conversationContext,
                                     String modalityContext, Map<String, Object> filters,
                                     boolean trackHit) {
+        return retrieve(query, conversationContext, modalityContext, filters,
+            Collections.emptyList(), trackHit);
+    }
+
+    /**
+     * Retrieves with deterministic supplemental variants while keeping {@code query}
+     * as the only source for exact matching, topic alignment, and final reranking.
+     */
+    public RetrievalResult retrieve(String query, String conversationContext,
+                                    String modalityContext, Map<String, Object> filters,
+                                    List<QueryVariant> supplementalVariants,
+                                    boolean trackHit) {
+        if (businessSafetyBoundaryService.checkRetrievalAuthorization(query).isBlocked()) {
+            return new RetrievalResult(false, false, null, null, 0,
+                "authorization_blocked", false,
+                Collections.emptyList(), Collections.emptyList());
+        }
         Map<String, Object> searchFilters = trustedFilters(filters);
         Map<String, Object> keywordMatch = keywordMatch(query, trackHit, searchFilters);
         boolean hasKeywordMatch = keywordMatch != null && keywordMatch.containsKey("answer");
@@ -205,7 +238,8 @@ public class RagRetrievalService {
             return directKeywordResult(keywordMatch, keywordScore);
         }
 
-        List<QueryVariant> queryVariants = queryVariants(query, exactKeywordMatch);
+        List<QueryVariant> queryVariants = queryVariants(
+            query, exactKeywordMatch, supplementalVariants);
         List<Map<String, Object>> candidates = new ArrayList<>();
         int recallLimit = Math.max(topK, candidateK);
         boolean semanticAvailable = false;
@@ -318,9 +352,8 @@ public class RagRetrievalService {
             candidate.put("exactMatch", candidateExactMatch);
             candidate.put("structuredQaExactMatch",
                 Boolean.TRUE.equals(candidate.get("structuredQa"))
-                    && Boolean.TRUE.equals(candidate.get("directAnswerEligible"))
                     && StructuredQaUtil.normalizeQuestion(query).equals(
-                        StructuredQaUtil.normalizeQuestion(string(candidate.get("question")))));
+                        StructuredQaUtil.normalizeQuestion(structuredQuestion(candidate))));
             TopicAlignment alignment = topicAlignment(query, candidate);
             candidate.put("topicMismatch", alignment.mismatch());
             candidate.put("topicAlignment", alignment.label());
@@ -337,10 +370,11 @@ public class RagRetrievalService {
         List<Map<String, Object>> selected = rerankConfidence.tier() == RerankConfidenceTier.LOW
             ? Collections.emptyList()
             : selectAcceptedCandidates(candidates, query, rerankConfidence.applied());
+        selected = isolateFocusedStructuredQa(query, selected);
         double topCombinedScore = selected.isEmpty()
             ? candidates.stream().mapToDouble(candidate -> number(candidate.get("combinedScore")))
                 .max().orElse(0)
-            : number(selected.get(0).get("combinedScore"));
+            : acceptedConfidence(selected.get(0));
         double confidence = rerankConfidence.applied()
             ? rerankConfidence.topScore() : topCombinedScore;
 
@@ -357,9 +391,14 @@ public class RagRetrievalService {
         StructuredQaDirectDecision qaDirect = directConfidenceAllowed && contextFree
             ? structuredQaDirectDecision(query, candidates, selected)
             : StructuredQaDirectDecision.noMatch();
-        boolean direct = directFaq || qaDirect.direct();
+        StructuredTableAnswerResolver.Decision tableDirect = directConfidenceAllowed && contextFree
+            ? structuredTableDirectDecision(query, selected)
+            : null;
+        boolean direct = directFaq || qaDirect.direct() || tableDirect != null;
         if (qaDirect.direct()) {
             selected.get(0).put("directMatchMode", qaDirect.matchMode());
+        } else if (tableDirect != null) {
+            selected.get(0).put("directMatchMode", tableDirect.mode());
         }
         List<Map<String, Object>> accepted = direct
             ? List.of(selected.get(0)) : expandAdjacentChunks(selected);
@@ -367,9 +406,11 @@ public class RagRetrievalService {
         String context = answerable ? buildContext(accepted, citations) : null;
         String directAnswer = directFaq ? firstNonBlank(
             string(selected.get(0).get("fullAnswer")), string(selected.get(0).get("answer")))
-            : qaDirect.direct() ? qaDirect.answer() : null;
+            : qaDirect.direct() ? qaDirect.answer()
+            : tableDirect != null ? tableDirect.answer() : null;
         String decision = directFaq ? "direct"
             : qaDirect.direct() ? "structured_qa_direct"
+            : tableDirect != null ? "structured_table_direct"
             : answerable ? "rag" : "no_answer";
 
         return new RetrievalResult(answerable, direct, directAnswer, context,
@@ -461,20 +502,30 @@ public class RagRetrievalService {
         return result.toString();
     }
 
-    private List<QueryVariant> queryVariants(String query, boolean exactMatch) {
+    private List<QueryVariant> queryVariants(String query, boolean exactMatch,
+                                             List<QueryVariant> supplementalVariants) {
         String original = query == null ? "" : query.trim();
         if (original.isEmpty()) return Collections.emptyList();
-        if (queryExpansionService == null) return List.of(QueryVariant.original(original));
-        List<QueryVariant> variants = queryExpansionService.expand(original, exactMatch);
-        if (variants == null || variants.isEmpty()) return List.of(QueryVariant.original(original));
-        if (variants.get(0).original() && original.equals(variants.get(0).query())) {
-            return variants;
-        }
+        List<QueryVariant> expanded = queryExpansionService == null
+            ? List.of() : queryExpansionService.expand(original, exactMatch);
         List<QueryVariant> normalized = new ArrayList<>();
         normalized.add(QueryVariant.original(original));
-        variants.stream().filter(variant -> variant != null && !variant.original())
-            .forEach(normalized::add);
+        Set<String> seen = new LinkedHashSet<>();
+        seen.add(StructuredQaUtil.normalizeQuestion(original));
+        appendSupplementalVariants(normalized, seen, supplementalVariants);
+        appendSupplementalVariants(normalized, seen, expanded);
         return List.copyOf(normalized);
+    }
+
+    private void appendSupplementalVariants(List<QueryVariant> target, Set<String> seen,
+                                            List<QueryVariant> variants) {
+        if (variants == null || variants.isEmpty()) return;
+        for (QueryVariant variant : variants) {
+            if (variant == null || variant.original()) continue;
+            String key = StructuredQaUtil.normalizeQuestion(variant.query());
+            if (key.isBlank() || !seen.add(key)) continue;
+            target.add(variant);
+        }
     }
 
     private List<QueryVariant> expandedVariants(List<QueryVariant> variants) {
@@ -677,6 +728,22 @@ public class RagRetrievalService {
         Set<String> queries = new LinkedHashSet<>();
         if (!normalized.isBlank()) queries.add(normalized);
 
+        String compact = normalized.replaceAll("\\s+", "");
+        boolean serviceTiming = compact.contains("多久") || compact.contains("小时")
+            || compact.contains("分钟") || compact.contains("天内")
+            || compact.contains("保证") || compact.contains("承诺");
+        boolean serviceAction = compact.contains("响应")
+            || compact.contains("解决") || compact.contains("处理");
+        if (serviceTiming && serviceAction) {
+            if (compact.contains("一小时") || compact.contains("1小时")) {
+                queries.add("1小时内响应");
+            } else if (compact.contains("远程")) {
+                queries.add("远程问题");
+            } else {
+                queries.add("响应");
+            }
+        }
+
         boolean introduction = normalized.contains("介绍")
             || normalized.contains("做什么") || normalized.contains("业务");
         if (normalized.contains("产品") && introduction) queries.add("产品介绍");
@@ -688,17 +755,38 @@ public class RagRetrievalService {
         if (normalized.contains("点签") && loginIntent) {
             queries.add("点签可以在哪里使用");
         }
+        boolean officialWebsiteIntent = compact.contains("官网")
+            || compact.contains("官方网站") || compact.contains("网址")
+            || compact.contains("网站地址") || compact.contains("网页地址")
+            || compact.contains("网页版地址");
+        if (compact.contains("点签") && officialWebsiteIntent) {
+            queries.add("点签可以在哪里使用");
+        }
         return List.copyOf(queries);
     }
 
     private List<Map<String, Object>> selectAcceptedCandidates(
             List<Map<String, Object>> candidates, String query, boolean rerankApplied) {
-        List<Map<String, Object>> eligible = candidates.stream()
-            .filter(candidate -> rerankApplied
-                ? Boolean.TRUE.equals(candidate.get("reranked"))
-                    && number(candidate.get("rerankScore")) >= rerankMediumMinScore
-                : number(candidate.get("combinedScore")) >= contextThreshold)
-            .toList();
+        List<Map<String, Object>> eligible = new ArrayList<>();
+        Set<String> seenStructuredGroups = new LinkedHashSet<>();
+        Map<String, Object> sparseFallback = rerankApplied
+            ? null : strongestSparseFallback(candidates, query);
+        if (sparseFallback != null) eligible.add(sparseFallback);
+        for (Map<String, Object> candidate : candidates) {
+            if (candidate == sparseFallback) continue;
+            boolean accepted = isReviewedExactStructuredQa(candidate)
+                || (rerankApplied
+                    ? Boolean.TRUE.equals(candidate.get("reranked"))
+                        && number(candidate.get("rerankScore")) >= rerankMediumMinScore
+                    : number(candidate.get("combinedScore")) >= contextThreshold);
+            if (!accepted) continue;
+            if (isStructuredQaCandidate(candidate)) {
+                String groupKey = firstNonBlank(string(candidate.get("qaGroupKey")),
+                    string(candidate.get("qaKey")));
+                if (!groupKey.isBlank() && !seenStructuredGroups.add(groupKey)) continue;
+            }
+            eligible.add(candidate);
+        }
         int limit = Math.min(Math.max(topK, 0), eligible.size());
         if (limit == 0) return Collections.emptyList();
 
@@ -714,6 +802,124 @@ public class RagRetrievalService {
         accepted.remove(accepted.size() - 1);
         accepted.add(bestImage);
         return List.copyOf(accepted);
+    }
+
+    /**
+     * BM25 is normally a ranking signal, not an absolute confidence score. During
+     * reranker outages, however, a clearly leading standard question with strong
+     * textual alignment is safer than accepting an unrelated vector hit at the
+     * context threshold. Keep this path deliberately narrow.
+     */
+    private Map<String, Object> strongestSparseFallback(
+            List<Map<String, Object>> candidates, String query) {
+        if (!bm25Enabled || candidates == null || candidates.isEmpty()) return null;
+        List<Map<String, Object>> sparse = candidates.stream()
+            .filter(candidate -> candidate.get("bm25Rank") instanceof Number)
+            .sorted(Comparator.comparingInt(candidate ->
+                ((Number) candidate.get("bm25Rank")).intValue()))
+            .toList();
+        if (sparse.isEmpty()) return null;
+
+        Map<String, Object> top = sparse.get(0);
+        double topScore = number(top.get("bm25Score"));
+        double secondScore = sparse.size() > 1 ? number(sparse.get(1).get("bm25Score")) : 0;
+        double similarity = questionSimilarity(query, firstNonBlank(
+            structuredQuestion(top), string(top.get("sectionPath")), string(top.get("title"))));
+        boolean leading = secondScore <= 0
+            || topScore / Math.max(secondScore, 0.000001) >= bm25FallbackMinGapRatio;
+        if (topScore < bm25FallbackMinScore || !leading
+                || similarity < bm25FallbackMinQuestionSimilarity
+                || Boolean.TRUE.equals(top.get("topicMismatch"))
+                || Boolean.TRUE.equals(top.get("qaConflict"))) {
+            return null;
+        }
+        top.put("sparseFallbackAccepted", true);
+        top.put("sparseFallbackQuestionSimilarity", round6(similarity));
+        top.put("sparseFallbackConfidence", round(bm25FallbackConfidence));
+        return top;
+    }
+
+    private double acceptedConfidence(Map<String, Object> candidate) {
+        if (Boolean.TRUE.equals(candidate.get("sparseFallbackAccepted"))) {
+            return number(candidate.get("sparseFallbackConfidence"));
+        }
+        return number(candidate.get("combinedScore"));
+    }
+
+    private double questionSimilarity(String left, String right) {
+        String first = StructuredQaUtil.normalizeQuestion(left);
+        String second = StructuredQaUtil.normalizeQuestion(right);
+        if (first.isBlank() || second.isBlank()) return 0;
+        int[][] lengths = new int[first.length() + 1][second.length() + 1];
+        for (int i = 1; i <= first.length(); i++) {
+            for (int j = 1; j <= second.length(); j++) {
+                lengths[i][j] = first.charAt(i - 1) == second.charAt(j - 1)
+                    ? lengths[i - 1][j - 1] + 1
+                    : Math.max(lengths[i - 1][j], lengths[i][j - 1]);
+            }
+        }
+        return 2.0 * lengths[first.length()][second.length()]
+            / (first.length() + second.length());
+    }
+
+    /**
+     * An exact standard-question hit is a complete evidence boundary. Similar Q&A
+     * candidates may be useful for paraphrases, but including them for an exact
+     * hit lets the model combine mutually exclusive rules from different answers.
+     */
+    private List<Map<String, Object>> isolateFocusedStructuredQa(
+            String query, List<Map<String, Object>> selected) {
+        if (selected == null || selected.isEmpty()) return selected;
+        Map<String, Object> top = selected.get(0);
+        if (!isStructuredQaCandidate(top)) return selected;
+        String normalizedQuery = StructuredQaUtil.normalizeQuestion(query);
+        String normalizedQuestion = StructuredQaUtil.normalizeQuestion(
+            structuredQuestion(top));
+        boolean exact = !normalizedQuery.isBlank()
+            && normalizedQuery.equals(normalizedQuestion);
+        boolean embeddedStandardQuestion = containsStandardQuestion(
+            normalizedQuery, top);
+        if (!exact && !embeddedStandardQuestion) {
+            if (isCompositeQuestion(query)) return selected;
+            double topScore = focusScore(top);
+            double competingScore = selected.stream()
+                .skip(1)
+                .filter(candidate -> !sameStructuredQaGroup(top, candidate))
+                .mapToDouble(this::focusScore)
+                .max().orElse(0);
+            if (topScore < contextThreshold
+                    || topScore - competingScore < structuredQaRerankMinGap) {
+                return selected;
+            }
+        }
+
+        String groupKey = firstNonBlank(string(top.get("qaGroupKey")),
+            string(top.get("qaKey")));
+        if (groupKey.isBlank()) return List.of(top);
+        List<Map<String, Object>> sameGroup = selected.stream()
+            .filter(candidate -> isStructuredQaCandidate(candidate)
+                && groupKey.equals(firstNonBlank(string(candidate.get("qaGroupKey")),
+                    string(candidate.get("qaKey")))))
+            .toList();
+        return sameGroup.isEmpty() ? List.of(top) : List.copyOf(sameGroup);
+    }
+
+    private boolean containsStandardQuestion(String normalizedQuery,
+                                             Map<String, Object> candidate) {
+        if (normalizedQuery == null || normalizedQuery.length() < 8
+                || isCompositeQuestion(normalizedQuery)
+                || !hasCompleteStructuredAnswer(candidate)) {
+            return false;
+        }
+        String normalizedAnswer = StructuredQaUtil.normalizeQuestion(firstNonBlank(
+            string(candidate.get("fullAnswer")), string(candidate.get("answer"))));
+        return normalizedAnswer.contains(normalizedQuery);
+    }
+
+    private double focusScore(Map<String, Object> candidate) {
+        return Boolean.TRUE.equals(candidate.get("reranked"))
+            ? number(candidate.get("rerankScore"))
+            : number(candidate.get("combinedScore"));
     }
 
     private List<Map<String, Object>> expandAdjacentChunks(
@@ -736,6 +942,11 @@ public class RagRetrievalService {
                 expanded.putIfAbsent(candidateIdentity(anchor), anchor);
                 continue;
             }
+            boolean structuredAnchor = isStructuredQaCandidate(anchor);
+            if (structuredAnchor && hasCompleteStructuredAnswer(anchor)) {
+                expanded.putIfAbsent(candidateIdentity(anchor), anchor);
+                continue;
+            }
             Long documentId = anchor.get("documentId") instanceof Number value
                 ? value.longValue() : null;
             Integer chunkIndex = anchor.get("chunkIndex") instanceof Number value
@@ -747,6 +958,12 @@ public class RagRetrievalService {
                         documentId, chunkIndex, neighborRadius,
                         string(anchor.get("sectionPath")))) {
                     Map<String, Object> evidence = new HashMap<>(neighbor);
+                    // A neighboring FAQ is not evidence for the current FAQ. Keep
+                    // adjacent expansion for plain prose, but only allow chunks
+                    // from the same structured answer group to continue a long QA.
+                    if (structuredAnchor && !sameStructuredQaGroup(anchor, evidence)) {
+                        continue;
+                    }
                     evidence.putIfAbsent("type", "chunk");
                     evidence.putIfAbsent("sourceType", anchor.get("sourceType"));
                     evidence.putIfAbsent("title", anchor.get("title"));
@@ -773,6 +990,26 @@ public class RagRetrievalService {
             }
         }
         return List.copyOf(expanded.values());
+    }
+
+    private boolean hasCompleteStructuredAnswer(Map<String, Object> candidate) {
+        return !firstNonBlank(string(candidate.get("fullAnswer")),
+            string(candidate.get("answer"))).isBlank();
+    }
+
+    private boolean isStructuredQaCandidate(Map<String, Object> candidate) {
+        return candidate != null && (Boolean.TRUE.equals(candidate.get("structuredQa"))
+            || "structured_qa".equalsIgnoreCase(string(candidate.get("knowledgeType"))));
+    }
+
+    private boolean sameStructuredQaGroup(Map<String, Object> anchor,
+                                          Map<String, Object> neighbor) {
+        if (!isStructuredQaCandidate(neighbor)) return false;
+        String anchorGroup = firstNonBlank(string(anchor.get("qaGroupKey")),
+            string(anchor.get("qaKey")));
+        String neighborGroup = firstNonBlank(string(neighbor.get("qaGroupKey")),
+            string(neighbor.get("qaKey")));
+        return !anchorGroup.isBlank() && anchorGroup.equals(neighborGroup);
     }
 
     private int chunkOrder(Map<String, Object> candidate) {
@@ -862,6 +1099,11 @@ public class RagRetrievalService {
         context.append("回答时先锁定客户明确询问的产品、业务或对象。")
             .append("如果事实范围比客户问题更宽，只提取与所问对象和意图直接相关的内容，")
             .append("不要照搬整段答案，不要罗列客户未询问的其他产品或业务。")
+            .append("事实包含表格时，必须按同一行的列关系回答；√表示支持，×表示不支持，")
+            .append("不得把其他行的条件或结论移到当前对象。")
+            .append("客户只给出一个大类，而表格把该类拆成多行且规则不同时，")
+            .append("不得自行假设客户属于其中某一行；应先说明这些行共同适用的结论，")
+            .append("再自然询问具体类型。不得补充事实未明确说明的手机号归属、审核材料或办理时效。")
             .append("请直接向客户陈述相关事实和适用条件，不要提及事实来自何处，")
             .append("不要输出引用或参考来源。");
         return context.toString();
@@ -899,6 +1141,10 @@ public class RagRetrievalService {
             copy.put("lexicalScore", candidate.get("lexicalScore"));
             copy.put("phoneticScore", candidate.get("phoneticScore"));
             copy.put("bm25Score", candidate.get("bm25Score"));
+            copy.put("sparseFallbackAccepted", candidate.get("sparseFallbackAccepted"));
+            copy.put("sparseFallbackQuestionSimilarity",
+                candidate.get("sparseFallbackQuestionSimilarity"));
+            copy.put("sparseFallbackConfidence", candidate.get("sparseFallbackConfidence"));
             copy.put("matchMode", candidate.get("matchMode"));
             copy.put("exactMatch", candidate.get("exactMatch"));
             copy.put("topicMismatch", candidate.get("topicMismatch"));
@@ -1119,12 +1365,33 @@ public class RagRetrievalService {
         boolean leftExactQa = Boolean.TRUE.equals(left.get("structuredQaExactMatch"));
         boolean rightExactQa = Boolean.TRUE.equals(right.get("structuredQaExactMatch"));
         if (leftExactQa != rightExactQa) return leftExactQa ? -1 : 1;
+        boolean leftEligibleExactQa = leftExactQa
+            && Boolean.TRUE.equals(left.get("directAnswerEligible"))
+            && !Boolean.TRUE.equals(left.get("qaConflict"));
+        boolean rightEligibleExactQa = rightExactQa
+            && Boolean.TRUE.equals(right.get("directAnswerEligible"))
+            && !Boolean.TRUE.equals(right.get("qaConflict"));
+        if (leftEligibleExactQa != rightEligibleExactQa) {
+            return leftEligibleExactQa ? -1 : 1;
+        }
         boolean leftReranked = Boolean.TRUE.equals(left.get("reranked"));
         boolean rightReranked = Boolean.TRUE.equals(right.get("reranked"));
         if (leftReranked != rightReranked) return leftReranked ? -1 : 1;
-        int ranking = Double.compare(number(right.get("rankScore")), number(left.get("rankScore")));
+        boolean leftExactLexical = number(left.get("lexicalScore")) >= 1.0;
+        boolean rightExactLexical = number(right.get("lexicalScore")) >= 1.0;
+        if (leftExactLexical != rightExactLexical) return leftExactLexical ? -1 : 1;
+        double leftRank = number(left.get("rankScore"));
+        double rightRank = number(right.get("rankScore"));
+        int ranking = Double.compare(rightRank, leftRank);
+        if (Math.abs(rightRank - leftRank) > 0.002) return ranking;
+        int priority = Double.compare(
+            number(right.get("documentPriority")), number(left.get("documentPriority")));
+        if (priority != 0) return priority;
         if (ranking != 0) return ranking;
-        return Double.compare(number(right.get("combinedScore")), number(left.get("combinedScore")));
+        int relevance = Double.compare(
+            number(right.get("combinedScore")), number(left.get("combinedScore")));
+        if (relevance != 0) return relevance;
+        return 0;
     }
 
     private double reciprocalRankScore(Map<String, Object> candidate) {
@@ -1171,13 +1438,16 @@ public class RagRetrievalService {
                 || Boolean.TRUE.equals(top.get("topicMismatch"))) {
             return StructuredQaDirectDecision.noMatch();
         }
-        String question = string(top.get("question"));
+        String question = structuredQuestion(top);
         String answer = firstNonBlank(string(top.get("fullAnswer")), string(top.get("answer")));
         if (question.isBlank() || answer.isBlank()) return StructuredQaDirectDecision.noMatch();
 
         boolean exact = StructuredQaUtil.normalizeQuestion(query)
             .equals(StructuredQaUtil.normalizeQuestion(question));
-        if (exact && number(top.get("combinedScore")) >= structuredQaExactMinScore) {
+        // Reviewed exact Q&A is deterministic evidence; its vector score is only
+        // a recall signal and must not block an approved answer.
+        if (exact && (number(top.get("combinedScore")) >= structuredQaExactMinScore
+                || isReviewedExactStructuredQa(top))) {
             return new StructuredQaDirectDecision(true, answer, "normalized_exact");
         }
         if (isCompositeQuestion(query)) return StructuredQaDirectDecision.noMatch();
@@ -1198,9 +1468,36 @@ public class RagRetrievalService {
         return new StructuredQaDirectDecision(true, answer, "rerank_high_confidence");
     }
 
+    private boolean isReviewedExactStructuredQa(Map<String, Object> candidate) {
+        return Boolean.TRUE.equals(candidate.get("structuredQaExactMatch"))
+            && Boolean.TRUE.equals(candidate.get("directAnswerEligible"))
+            && !Boolean.TRUE.equals(candidate.get("qaConflict"));
+    }
+
+    private String structuredQuestion(Map<String, Object> candidate) {
+        if (candidate == null) return "";
+        return firstNonBlank(string(candidate.get("question")),
+            string(candidate.get("qaQuestion")), string(candidate.get("sectionPath")));
+    }
+
+    private StructuredTableAnswerResolver.Decision structuredTableDirectDecision(
+            String query, List<Map<String, Object>> selected) {
+        if (!structuredQaEnabled || selected == null || selected.isEmpty()) return null;
+        Map<String, Object> top = selected.get(0);
+        if (!Boolean.TRUE.equals(top.get("structuredQa"))
+                || Boolean.TRUE.equals(top.get("qaConflict"))
+                || Boolean.TRUE.equals(top.get("topicMismatch"))) return null;
+        String question = string(top.get("question"));
+        String answer = firstNonBlank(string(top.get("fullAnswer")), string(top.get("answer")));
+        return StructuredTableAnswerResolver.resolve(query, question, answer).orElse(null);
+    }
+
     private boolean isCompositeQuestion(String query) {
         String normalized = query == null ? "" : query.replaceAll("\\s+", "");
-        return containsAny(normalized, List.of(
+        long questionMarks = normalized.codePoints()
+            .filter(value -> value == '?' || value == '？')
+            .count();
+        return questionMarks >= 2 || containsAny(normalized, List.of(
             "分别", "对比", "区别", "以及", "同时", "还有", "并且", "另外"));
     }
 

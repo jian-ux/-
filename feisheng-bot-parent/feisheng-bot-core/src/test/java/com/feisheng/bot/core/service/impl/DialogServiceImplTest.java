@@ -1,11 +1,14 @@
 package com.feisheng.bot.core.service.impl;
 
 import com.feisheng.bot.core.dto.ChatResponse;
+import com.feisheng.bot.core.dto.QueryVariant;
 import com.feisheng.bot.core.dto.SafetyResult;
 import com.feisheng.bot.core.entity.BotConversation;
 import com.feisheng.bot.core.entity.BotMessage;
 import com.feisheng.bot.core.mapper.BotAiReplyLogMapper;
+import com.feisheng.bot.core.service.BusinessSafetyBoundaryService;
 import com.feisheng.bot.core.service.ConversationServiceImpl;
+import com.feisheng.bot.core.service.CustomerServicePromptProvider;
 import com.feisheng.bot.core.service.EmotionService;
 import com.feisheng.bot.core.service.HandoffCoordinator;
 import com.feisheng.bot.core.service.IntentService;
@@ -28,9 +31,11 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -45,6 +50,27 @@ import static org.mockito.Mockito.when;
 class DialogServiceImplTest {
     private static final Map<String, Object> KNOWLEDGE_RETRIEVAL_FILTERS =
         Map.of("sourceScope", "KNOWLEDGE");
+    private static final String SCOPE_FALLBACK_REPLY =
+        "非常抱歉，我仅擅长处理点签电子合同相关业务。"
+            + "您刚才的问题不在我的服务范围内。如果您有合同方面的疑问，欢迎随时提出，"
+            + "我会全力为您解答；";
+    private static final String PARENT_COMPANY_REPLY = """
+        您好，非常抱歉，我们这边主要是做互联网电子合同业务的，不属于此项业务板块，建议您通过以下途径解决：
+        ① （推荐）添加QQ在线服务群，联系在线客服答疑QQ群：
+        一群：575467556
+        二群：769414652
+        三群：856201972
+        四群：795382083
+        五群：518585994
+        六群：745732151
+        七群：746835832
+        八群：786045605
+        九群：612640416
+        进入【江苏翔晟服务群】咨询在线客服。
+        ② 进入翔晟官网自助查询及办理
+        官网链接：http://www.share-sun.com.cn/index.php/zxfw/
+        ③ 拨打客服热线电话：025-66085508。
+        """.strip();
 
     @Mock private ConversationServiceImpl conversationService;
     @Mock private MessageServiceImpl messageService;
@@ -64,19 +90,26 @@ class DialogServiceImplTest {
     void setUp() {
         dialogService = new DialogServiceImpl(
             conversationService, messageService, aiModelService, safetyService,
+            new BusinessSafetyBoundaryService(),
+            new CustomerServicePromptProvider("v1", "rag-system-prompt"),
             aiReplyLogMapper, retrievalService, unmatchedQuestionService,
             businessToolOrchestrator, intentService,
             new NlpIntentClassifier(),
             new SensitiveDataService("18689633999"),
             handoffCoordinator, new EmotionService(), replyAttachmentService,
             new ContextualQueryResolver(), new ObjectMapper());
-        ReflectionTestUtils.setField(dialogService, "systemPromptFull", "rag-system-prompt");
-        ReflectionTestUtils.setField(dialogService, "noAnswerReply", "知识库暂无答案");
-        ReflectionTestUtils.setField(dialogService, "outOfScopeReply", "请联系总部售后");
+        ReflectionTestUtils.setField(dialogService, "noAnswerReply", SCOPE_FALLBACK_REPLY);
+        ReflectionTestUtils.setField(dialogService, "outOfScopeReply", PARENT_COMPANY_REPLY);
+        ReflectionTestUtils.setField(dialogService, "unrelatedReply", SCOPE_FALLBACK_REPLY);
+        ReflectionTestUtils.setField(dialogService, "errorReply", "当前查询出现异常，请稍后重试");
         ReflectionTestUtils.setField(dialogService, "outOfScopeKeywords",
             "CA锁,实体锁,UKey,U-Key,安全控件,守信签,总部电子签章,翔晟电子签章");
         ReflectionTestUtils.setField(dialogService, "transferOnNoAnswer", true);
         ReflectionTestUtils.setField(dialogService, "lowConfidenceThreshold", 0.55);
+        ReflectionTestUtils.setField(dialogService, "maxHistoryMessages", 6);
+        ReflectionTestUtils.setField(dialogService, "maxRetrievalHistoryMessages", 4);
+        ReflectionTestUtils.setField(dialogService, "maxRetrievalHistoryChars", 1200);
+        ReflectionTestUtils.setField(dialogService, "maxPromptTokens", 4000);
         ReflectionTestUtils.setField(dialogService, "nativeFallbackEnabled", false);
         ReflectionTestUtils.setField(dialogService, "nativeFallbackHighRiskKeywords",
             "合同条款,法律效力,违约责任,赔偿责任,合规承诺,保证结果,隐私泄露,个人信息泄露");
@@ -121,6 +154,16 @@ class DialogServiceImplTest {
                     : retrievalService.retrieve(
                         query, conversationContext, modalityContext, true);
             });
+        lenient().when(retrievalService.retrieve(
+                anyString(), nullable(String.class), nullable(String.class),
+                eq(KNOWLEDGE_RETRIEVAL_FILTERS), anyList(), eq(true)))
+            .thenAnswer(invocation -> {
+                List<QueryVariant> variants = invocation.getArgument(4);
+                String fallbackQuery = variants == null || variants.isEmpty()
+                    ? invocation.getArgument(0)
+                    : variants.get(0).query();
+                return retrievalService.retrieve(fallbackQuery);
+            });
     }
 
     @Test
@@ -155,6 +198,63 @@ class DialogServiceImplTest {
         assertEquals("在登录页点击忘记密码。", result.get("reply"));
         assertEquals("test-model", result.get("model"));
         assertEquals(20, result.get("inputTokens"));
+    }
+
+    @Test
+    void sendsExplicitV2SystemPromptAndReturnsResolvedVersion() {
+        String context = "【参考知识库内容】\n问题：合同能否直接修改\n答案：不能直接修改，需要撤回后重新发起。";
+        when(retrievalService.citationsForProvidedContext(context)).thenReturn(List.of(
+            citation("provided:v2", "provided_context", null, "调用方上下文")));
+        when(aiModelService.chatWithModel(anyString(), anyString(), isNull()))
+            .thenReturn(new ChatResponse("不能直接修改，需要撤回后重新发起。", true,
+                "test-model", "test", 20, 8));
+
+        Map<String, Object> result = dialogService.send(
+            "evaluation", "prompt-v2", "这个能直接改吗？", "V2 评测",
+            context, null, "v2");
+
+        ArgumentCaptor<String> systemPrompt = ArgumentCaptor.forClass(String.class);
+        verify(aiModelService).chatWithModel(anyString(), systemPrompt.capture(), isNull());
+        assertTrue(systemPrompt.getValue().contains("点签电子合同"));
+        assertTrue(systemPrompt.getValue().contains("未提及某项能力，不等于点签不支持"));
+        assertTrue(systemPrompt.getValue().contains("总数与随后明确列出的项目数量不一致"));
+        assertEquals("v2", result.get("promptVersion"));
+        assertEquals("rag_ai", result.get("source"));
+    }
+
+    @Test
+    void createsManualHandoffBeforeKnowledgeRetrieval() {
+        Map<String, Object> result = dialogService.send(
+            "dingtalk", "manual-handoff-user", "转人工", "咨询");
+
+        assertEquals("handoff", result.get("source"));
+        assertEquals("handoff_requested", result.get("answerStatus"));
+        assertEquals("HANDOFF", result.get("answerDecision"));
+        assertEquals("WAITING", result.get("handoffStatus"));
+        assertEquals(true, result.get("needsTransfer"));
+        assertTrue(((String) result.get("reply")).contains("人工客服请求"));
+        assertEquals(88L, ((Map<?, ?>) result.get("handoff")).get("ticketId"));
+
+        verify(handoffCoordinator).handoff(10L, "客户主动请求人工客服", "P1");
+        verify(retrievalService, never()).retrieve(anyString());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
+    void recognizesPoliteManualHandoffRequestAndDoesNotTreatCancellationAsRequest() {
+        Map<String, Object> request = dialogService.send(
+            "playground", "manual-handoff-request", "请帮我转人工处理", "试聊");
+
+        assertEquals("handoff_requested", request.get("answerStatus"));
+        assertTrue(((String) request.get("reply")).contains("人工客服请求"));
+        verify(handoffCoordinator).handoff(10L, "客户主动请求人工客服", "P1");
+
+        Map<String, Object> cancellation = dialogService.send(
+            "playground", "manual-handoff-cancel", "取消转人工", "试聊");
+
+        assertFalse("handoff".equals(cancellation.get("source")));
+        verify(handoffCoordinator, times(1))
+            .handoff(10L, "客户主动请求人工客服", "P1");
     }
 
     @Test
@@ -275,6 +375,125 @@ class DialogServiceImplTest {
     }
 
     @Test
+    void keepsExactSignedAttachmentQuestionOnItsCanonicalKnowledgeAnswer() {
+        String question = "合同签署完成后，发现附件漏传了，能补充上传附件吗？";
+        String answer = "已完成签署的合同无法直接补充附件。可发起附件补充协议。";
+        when(retrievalService.retrieve(question)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                true, true, answer, answer, 1.0, "structured_qa_direct", false,
+                List.of(citation("chunk:2398", "document", 50L, question)),
+                Collections.emptyList()));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "signed-attachment-exact", question, "合同咨询");
+
+        assertEquals("knowledge_qa", result.get("source"));
+        assertEquals(answer, result.get("reply"));
+        assertEquals("structured_qa_direct",
+            ((Map<?, ?>) result.get("retrieval")).get("decision"));
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+        verify(retrievalService).retrieve(question, KNOWLEDGE_RETRIEVAL_FILTERS, true);
+        verify(retrievalService, never()).mergeWithProvidedContext(any(), anyString(), any());
+    }
+
+    @Test
+    void answersSignedAttachmentFollowUpFromConversationHistoryWithGuardrail() {
+        String question = "那漏掉的附件怎么办？";
+        when(messageService.getByConversation(10L)).thenReturn(List.of(
+            message("user", "合同双方都已经签署完成了。"),
+            message("ai", "已完成签署的合同内容通常已经固定。"),
+            message("user", question)));
+        when(retrievalService.retrieve(anyString(), nullable(String.class),
+                nullable(String.class), eq(true)))
+            .thenReturn(new RagRetrievalService.RetrievalResult(
+                true, false, null, "附件应通过补充协议处理。", 0.9,
+                "rag", true, List.of(citation("chunk:3", "document", 3L, "附件")),
+                Collections.emptyList()));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "signed-attachment-follow-up", question, "合同咨询");
+
+        assertEquals("rag_guardrail", result.get("source"));
+        assertEquals("ANSWER", result.get("answerDecision"));
+        assertTrue(((String) result.get("reply")).contains("补充协议"));
+        assertFalse(((String) result.get("reply")).contains("直接补充附件"));
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
+    void answersMissingVerificationCodeWithoutInventingUnlockTimesOrPasswords() {
+        String question = "验证码一直收不着，咋办？";
+        when(retrievalService.retrieve(question)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                true, false, null, "检查手机信号，避免频繁发送，稍后重试。", 0.9,
+                "rag", true, List.of(citation("chunk:5", "document", 5L, "验证码")),
+                Collections.emptyList()));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "verification-code", question, "账号咨询");
+
+        assertEquals("rag_guardrail", result.get("source"));
+        assertEquals("ANSWER", result.get("answerDecision"));
+        assertTrue(((String) result.get("reply")).contains("手机信号"));
+        assertTrue(((String) result.get("reply")).contains("稍后"));
+        assertFalse(((String) result.get("reply")).contains("24小时"));
+        assertFalse(((String) result.get("reply")).contains("签约密码"));
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
+    void answersCompetitorComparisonWithoutUnsupportedSuperiorityClaims() {
+        String question = "e签宝和点签到底哪个更安全、更有法律效力？";
+        when(retrievalService.retrieve(question)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                true, false, null, "点签具备电子签名与存证能力。", 0.9,
+                "rag", true, List.of(citation("chunk:4", "document", 4L, "安全合规")),
+                Collections.emptyList()));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "competitor-comparison", question, "产品咨询");
+
+        assertEquals("rag_guardrail", result.get("source"));
+        assertEquals("ANSWER", result.get("answerDecision"));
+        assertTrue(((String) result.get("reply")).contains("具体需求"));
+        assertTrue(((String) result.get("reply")).contains("不作优劣判断"));
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
+    void retainsQuantityKeywordsWhenIntentRewriteDropsThem() {
+        String question = "批量发起合同支持多少份同时操作？";
+        String rewritten = "点签 是否支持签署 合同";
+        String answer = "支持同时发起10份";
+        when(retrievalService.retrieve(
+                eq(question), isNull(), isNull(), eq(KNOWLEDGE_RETRIEVAL_FILTERS),
+                anyList(), eq(true)))
+            .thenReturn(new RagRetrievalService.RetrievalResult(
+                true, true, answer, question + "\n" + answer, 1.0,
+                "structured_qa_direct", false,
+                List.of(citation("chunk:4192", "document", 4192L, question)),
+                Collections.emptyList()));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "batch-contract-limit", question, "合同咨询");
+
+        assertEquals(answer, result.get("reply"));
+        assertEquals("knowledge_qa", result.get("source"));
+        assertEquals(question, result.get("retrievalPrimaryQuery"));
+        assertEquals(List.of(question, rewritten), result.get("retrievalVariants"));
+        assertEquals(rewritten, result.get("retrievalQuery"));
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<QueryVariant>> variantsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(retrievalService).retrieve(
+            eq(question), isNull(), isNull(), eq(KNOWLEDGE_RETRIEVAL_FILTERS),
+            variantsCaptor.capture(), eq(true));
+        assertEquals(1, variantsCaptor.getValue().size());
+        assertEquals(rewritten, variantsCaptor.getValue().get(0).query());
+        assertEquals(0.85, variantsCaptor.getValue().get(0).weight());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
     void keepsContractLaunchMethodsSeparateFromServiceModes() {
         String question = "发起合同有几种方式？";
         when(retrievalService.retrieve(question)).thenReturn(
@@ -349,6 +568,40 @@ class DialogServiceImplTest {
         verify(handoffCoordinator).recordUserMessage(10L, "我刚才问你什么问题了");
         verify(retrievalService, never()).retrieve(anyString());
         verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
+    void answersPreviousQuestionInNormalConversationWithoutRag() {
+        when(messageService.getByConversation(10L)).thenReturn(List.of(
+            message("user", "点签怎么使用？"),
+            message("ai", "可以通过微信、PC网页端和钉钉使用。"),
+            message("user", "我上面问你什么问题了？")));
+
+        Map<String, Object> result = dialogService.send(
+            "playground", "normal-session", "我上面问你什么问题了？", "试聊");
+
+        assertEquals("conversation_context", result.get("source"));
+        assertEquals("previous_question", result.get("fallbackDecision"));
+        assertEquals("answered", result.get("answerStatus"));
+        assertTrue(((String) result.get("reply")).contains("点签怎么使用？"));
+        assertEquals(false, result.get("needsTransfer"));
+        verify(retrievalService, never()).retrieve(anyString());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
+    void recognizesPreviousQuestionAliasInNormalConversation() {
+        when(messageService.getByConversation(10L)).thenReturn(List.of(
+            message("user", "企业认证怎么认证？"),
+            message("ai", "企业认证有三种方式。"),
+            message("user", "上一个问题是什么？")));
+
+        Map<String, Object> result = dialogService.send(
+            "playground", "normal-session", "上一个问题是什么？", "试聊");
+
+        assertEquals("conversation_context", result.get("source"));
+        assertTrue(((String) result.get("reply")).contains("企业认证怎么认证？"));
+        verify(retrievalService, never()).retrieve(anyString());
     }
 
     @Test
@@ -467,7 +720,7 @@ class DialogServiceImplTest {
 
         assertEquals("no_answer", result.get("source"));
         assertEquals("no_answer", result.get("answerStatus"));
-        assertEquals("知识库暂无答案", result.get("reply"));
+        assertEquals(SCOPE_FALLBACK_REPLY, result.get("reply"));
         assertEquals(Collections.emptyList(), result.get("citations"));
         verify(unmatchedQuestionService).record("火星办公室几点开门");
         verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
@@ -632,26 +885,267 @@ class DialogServiceImplTest {
     }
 
     @Test
-    void routesLowConfidenceOutOfScopeQuestionWithoutCallingTheModel() {
+    void routesConfiguredOutOfScopeQuestionBeforeKnowledgeRetrieval() {
         ReflectionTestUtils.setField(dialogService, "transferOnNoAnswer", false);
-        when(retrievalService.retrieve("实体锁怎么续期")).thenReturn(
-            new RagRetrievalService.RetrievalResult(
-                true, false, null, "弱相关知识", 0.52, "rag", true,
-                List.of(citation("chunk:12", "document", 12L, "点签说明")),
-                Collections.emptyList()));
 
-        Map<String, Object> result = dialogService.send(
-            "wecom", "user-out-of-scope", "实体锁怎么续期", "咨询");
+        for (String question : List.of(
+                "实体锁怎么续期", "安徽CA锁延期怎么延期", "CA证书到期怎么办")) {
+            Map<String, Object> result = dialogService.send(
+                "wecom", "parent-company-" + question.hashCode(), question, "咨询");
 
-        assertEquals("请联系总部售后", result.get("reply"));
-        assertEquals("out_of_scope", result.get("source"));
-        assertEquals("out_of_scope", result.get("answerStatus"));
-        assertEquals(true, result.get("lowConfidence"));
-        assertEquals(false, result.get("needsTransfer"));
-        assertEquals(Collections.emptyList(), result.get("citations"));
+            assertEquals(PARENT_COMPANY_REPLY, result.get("reply"));
+            assertEquals("out_of_scope", result.get("source"));
+            assertEquals("out_of_scope", result.get("answerStatus"));
+            assertEquals("parent_company_out_of_scope", result.get("fallbackDecision"));
+            assertEquals("NO_KNOWLEDGE", result.get("answerDecision"));
+            assertEquals(false, result.get("lowConfidence"));
+            assertEquals(false, result.get("needsTransfer"));
+            assertEquals(Collections.emptyList(), result.get("citations"));
+        }
+
+        verify(retrievalService, never()).retrieve(anyString());
         verify(unmatchedQuestionService, never()).record(anyString());
         verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
         verify(handoffCoordinator, never()).handoff(any(), anyString(), anyString());
+    }
+
+    @Test
+    void routesClearlyUnrelatedTimeAndWeatherQuestionsBeforeKnowledgeRetrieval() {
+        for (String question : List.of(
+                "现在是多少点？", "海口明天会下雨吗？", "今天哪只股票会涨？")) {
+            Map<String, Object> result = dialogService.send(
+                "web", "unrelated-" + question.hashCode(), question, "咨询");
+
+            assertEquals(SCOPE_FALLBACK_REPLY, result.get("reply"));
+            assertEquals("out_of_scope", result.get("source"));
+            assertEquals("out_of_scope", result.get("answerStatus"));
+            assertEquals("out_of_scope", result.get("fallbackDecision"));
+            assertEquals("NO_KNOWLEDGE", result.get("answerDecision"));
+            assertEquals(0.0, result.get("confidence"));
+            assertEquals(Collections.emptyList(), result.get("citations"));
+        }
+
+        verify(retrievalService, never()).retrieve(anyString());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
+    void answersBasicConversationWithoutKnowledgeRetrievalOrChatModel() {
+        Map<String, String> expectedReplies = new LinkedHashMap<>();
+        expectedReplies.put("你是谁？", "我是点签电子合同官方智能客服，可以为您解答点签产品和使用相关问题。");
+        expectedReplies.put("你能帮我做什么？",
+            "我可以为您解答点签电子合同的产品功能、使用操作、合同发起与签署、企业认证、"
+                + "电子印章和合同管理等问题。涉及价格优惠、个案法律判断或需要核验身份与账户数据的操作，"
+                + "我会交由人工客服进一步确认。");
+        expectedReplies.put("您好！",
+            "您好，我是点签电子合同官方智能客服。请问您想咨询产品功能、使用操作，还是合同签署相关问题？");
+        expectedReplies.put("谢谢你", "不客气，很高兴能帮到您。");
+        expectedReplies.put("再见", "好的，再见。需要咨询点签电子合同时，欢迎随时联系。");
+
+        for (Map.Entry<String, String> entry : expectedReplies.entrySet()) {
+            Map<String, Object> result = dialogService.send(
+                "web", "basic-" + entry.getKey().hashCode(), entry.getKey(), "咨询");
+
+            assertEquals(entry.getValue(), result.get("reply"));
+            assertEquals("basic_conversation", result.get("source"));
+            assertEquals("answered", result.get("answerStatus"));
+            assertEquals("basic", result.get("answerMode"));
+            assertEquals("ANSWER", result.get("answerDecision"));
+            assertEquals(1.0, result.get("confidence"));
+            assertEquals(false, result.get("ragSource"));
+            assertEquals(0, result.get("ragContextChars"));
+            assertEquals(false, result.get("needsTransfer"));
+        }
+
+        verify(retrievalService, never()).retrieve(anyString());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+        verify(unmatchedQuestionService, never()).record(anyString());
+    }
+
+    @Test
+    void recognizesNaturalIdentityAndCapabilityVariantsWithoutKnowledgeRetrieval() {
+        Map<String, Object> identity = dialogService.send(
+            "web", "basic-identity-particle", "请问你是谁呀？", "咨询");
+        Map<String, Object> capability = dialogService.send(
+            "web", "basic-capability-natural", "你都能帮客户处理哪些事？", "咨询");
+
+        assertEquals("basic_conversation", identity.get("source"));
+        assertTrue(((String) identity.get("reply")).contains("点签电子合同官方智能客服"));
+        assertEquals("basic_conversation", capability.get("source"));
+        assertTrue(((String) capability.get("reply")).contains("产品功能"));
+        assertTrue(((String) capability.get("reply")).contains("合同发起与签署"));
+        assertTrue(((String) capability.get("reply")).contains("企业认证"));
+        verify(retrievalService, never()).retrieve(anyString());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
+    void answersCompoundRenewalQuestionFromMergedEvidenceWithoutModelGuessing() {
+        String question = "明年不买套餐了，账号和以前签完的合同还能看吗？还能继续发新合同吗？";
+        String accountContext = "套餐到期不续费后，点签账号依旧可以正常登录使用。";
+        String contractContext = "之前的数据和签署完成的合同会一直保存，可以持续查阅、下载。";
+        String launchContext = "不续费后不能进行合同的发起，如需签新的合同需要续费购买。";
+        RagRetrievalService.RetrievalResult account = retrieval(accountContext, 0.93);
+        RagRetrievalService.RetrievalResult contract = retrieval(contractContext, 0.92);
+        RagRetrievalService.RetrievalResult launch = retrieval(launchContext, 0.91);
+        RagRetrievalService.RetrievalResult accountAndContract = retrieval(
+            accountContext + "\n" + contractContext, 0.93);
+        RagRetrievalService.RetrievalResult allEvidence = retrieval(
+            accountContext + "\n" + contractContext + "\n" + launchContext, 0.93);
+
+        when(retrievalService.retrieve(
+                "点签套餐到期不续费后，账号还能正常登录吗？",
+                KNOWLEDGE_RETRIEVAL_FILTERS, true)).thenReturn(account);
+        when(retrievalService.retrieve(
+                "点签套餐到期不续费后，历史合同还能查阅和下载吗？",
+                KNOWLEDGE_RETRIEVAL_FILTERS, true)).thenReturn(contract);
+        when(retrievalService.retrieve(
+                "点签套餐到期不续费后，还能继续发起新合同吗？",
+                KNOWLEDGE_RETRIEVAL_FILTERS, true)).thenReturn(launch);
+        when(retrievalService.mergeWithProvidedContext(
+                account, contractContext, contract.citations())).thenReturn(accountAndContract);
+        when(retrievalService.mergeWithProvidedContext(
+                accountAndContract, launchContext, launch.citations())).thenReturn(allEvidence);
+
+        Map<String, Object> result = dialogService.send(
+            "web", "compound-renewal", question, "咨询");
+
+        assertEquals("rag_guardrail", result.get("source"));
+        assertEquals("evidence_consistency_guardrail", result.get("fallbackDecision"));
+        assertTrue(((String) result.get("reply")).contains("账号仍可正常登录"));
+        assertTrue(((String) result.get("reply")).contains("查阅、下载"));
+        assertTrue(((String) result.get("reply")).contains("不能进行合同的发起"));
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
+    void keepsAutomaticAndManualSigningReminderFactsConsistent() {
+        String question = "对方老忘签，系统能自动催吗？我自己还能把链接或者码发过去不？";
+        String context = "合同发起后有签约提醒。自动方式包括短信、微信、钉钉消息提醒；"
+            + "手动方式包括发送签约链接和二维码。";
+        when(retrievalService.retrieve(question)).thenReturn(retrieval(context, 0.88));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "signing-reminder-consistency", question, "咨询");
+
+        assertEquals("rag_guardrail", result.get("source"));
+        assertEquals("evidence_consistency_guardrail", result.get("fallbackDecision"));
+        assertTrue(((String) result.get("reply")).contains("短信、微信和钉钉"));
+        assertTrue(((String) result.get("reply")).contains("链接或二维码"));
+        assertFalse(((String) result.get("reply")).contains("不会自动"));
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
+    void distinguishesKnowledgeGapFromUnrelatedQuestion() {
+        ReflectionTestUtils.setField(dialogService, "noAnswerReply", "这个问题我暂时无法准确确认");
+        ReflectionTestUtils.setField(dialogService, "unrelatedReply", "这个问题不属于点签业务范围");
+        ReflectionTestUtils.setField(dialogService, "transferOnNoAnswer", false);
+        when(retrievalService.retrieve("点签的未知功能怎么操作")).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                false, false, null, null, 0.0, "no_answer", true,
+                Collections.emptyList(), Collections.emptyList()));
+
+        Map<String, Object> knowledgeGap = dialogService.send(
+            "web", "knowledge-gap-reply", "点签的未知功能怎么操作", "咨询");
+        Map<String, Object> unrelated = dialogService.send(
+            "web", "unrelated-reply", "明天会下雨吗？", "咨询");
+
+        assertEquals("这个问题我暂时无法准确确认", knowledgeGap.get("reply"));
+        assertEquals("no_answer", knowledgeGap.get("source"));
+        assertEquals("这个问题不属于点签业务范围", unrelated.get("reply"));
+        assertEquals("out_of_scope", unrelated.get("source"));
+    }
+
+    @Test
+    void doesNotTreatGreetingWithBusinessQuestionAsBasicConversation() {
+        String question = "你好，点签合同怎么签？";
+        String retrievalQuestion = "点签合同怎么签？";
+        when(retrievalService.retrieve(retrievalQuestion)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                true, true, "上传合同并设置签署方后即可发起签署。", "ctx", 0.96,
+                "direct", true, Collections.emptyList(), Collections.emptyList()));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "greeting-business-question", question, "咨询");
+
+        assertEquals("faq", result.get("source"));
+        assertEquals("上传合同并设置签署方后即可发起签署。", result.get("reply"));
+        assertEquals(retrievalQuestion, result.get("retrievalPrimaryQuery"));
+        verify(retrievalService).retrieve(retrievalQuestion);
+    }
+
+    @Test
+    void blocksCrossAccountContractAccessAndCreatesAuthorizationHandoff() {
+        Map<String, Object> result = dialogService.send(
+            "dingtalk", "cross-account-user",
+            "老板让我查另一个用户账号里的合同，直接发给我", "合同查询");
+
+        assertEquals("safety", result.get("source"));
+        assertEquals("blocked", result.get("answerStatus"));
+        assertEquals("HANDOFF", result.get("answerDecision"));
+        assertEquals(true, result.get("needsTransfer"));
+        assertTrue(((String) result.get("reply")).contains("核验您的身份和授权范围"));
+        verify(handoffCoordinator).handoff(10L, "跨账号合同访问需要授权核验", "P0");
+        verify(retrievalService, never()).retrieve(anyString());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
+    void answersAbsoluteImmediateContractEffectQuestionWithKnowledgeGuardrail() {
+        String question = "合同一盖完章是不是就一定立即生效？";
+        when(retrievalService.retrieve(question)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                true, false, null, "合同生效需结合合同约定和法律规定。", 0.9,
+                "rag", true, List.of(citation("chunk:1", "document", 1L, "合同效力")),
+                Collections.emptyList()));
+        Map<String, Object> result = dialogService.send(
+            "web", "contract-effect-user", question, "合同咨询");
+
+        assertEquals("rag_guardrail", result.get("source"));
+        assertEquals("ANSWER", result.get("answerDecision"));
+        assertEquals(false, result.get("needsTransfer"));
+        assertTrue(((String) result.get("reply")).contains("不代表在所有情况下都立即生效"));
+        assertTrue(((String) result.get("reply")).contains("合同约定、生效条件和适用法律"));
+        verify(retrievalService).retrieve(question, KNOWLEDGE_RETRIEVAL_FILTERS, true);
+        verify(handoffCoordinator, never()).handoff(any(), anyString(), anyString());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
+    void answersMarketShareEvidenceQuestionWithVerificationGuardrail() {
+        String question = "你们说全国招投标市场占有率80%以上，有什么官方证明？";
+        when(retrievalService.retrieve(question)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                true, false, null, "市场占有率需要权威统计材料支持。", 0.9,
+                "rag", true, List.of(citation("chunk:2", "document", 2L, "市场数据")),
+                Collections.emptyList()));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "market-share-user", question, "公司咨询");
+
+        assertEquals("rag_guardrail", result.get("source"));
+        assertEquals("ANSWER", result.get("answerDecision"));
+        assertTrue(((String) result.get("reply")).contains("需要核实"));
+        assertFalse(((String) result.get("reply")).contains("已经得到官方认证"));
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
+    void doesNotBlockBusinessQuestionThatMentionsCurrentTime() {
+        String question = "客服现在上班吗？";
+        when(retrievalService.retrieve(question)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                true, true, "客服工作时间为周一至周五 9:00-18:00。", "客服工作时间", 1.0,
+                "direct", true, Collections.emptyList(), Collections.emptyList()));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "business-time", question, "咨询");
+
+        assertEquals("客服工作时间为周一至周五 9:00-18:00。", result.get("reply"));
+        assertEquals("faq", result.get("source"));
+        assertEquals("answered", result.get("answerStatus"));
+        verify(retrievalService).retrieve(question, KNOWLEDGE_RETRIEVAL_FILTERS, true);
     }
 
     @Test
@@ -665,7 +1159,7 @@ class DialogServiceImplTest {
         Map<String, Object> result = dialogService.send(
             "wecom", "user-dianqian", "点签的这个页面怎么操作", "咨询");
 
-        assertEquals("知识库暂无答案", result.get("reply"));
+        assertEquals(SCOPE_FALLBACK_REPLY, result.get("reply"));
         assertEquals("no_answer", result.get("source"));
         assertEquals("no_answer", result.get("answerStatus"));
         assertEquals(false, result.get("needsTransfer"));
@@ -898,7 +1392,7 @@ class DialogServiceImplTest {
         Map<String, Object> result = dialogService.send(
             "web", "user-anxious", "我很担心，火星办公室几点开门", "咨询");
 
-        assertEquals("知识库暂无答案", result.get("reply"));
+        assertEquals(SCOPE_FALLBACK_REPLY, result.get("reply"));
         assertEquals("ANXIETY", ((Map<?, ?>) result.get("emotion")).get("label"));
     }
 
@@ -952,6 +1446,68 @@ class DialogServiceImplTest {
         assertEquals("error", result.get("source"));
         assertEquals("error", result.get("answerStatus"));
         assertEquals(false, result.get("ragSource"));
+        assertEquals(Collections.emptyList(), result.get("citations"));
+        assertEquals(true, result.get("needsTransfer"));
+    }
+
+    @Test
+    void returnsSingleStructuredAnswerWhenModelFailsAfterRetrieval() {
+        Map<String, Object> citation = citation(
+            "chunk:9", "document", 9L, "企业怎么认证？");
+        String context = """
+            【企业内部事实】
+            事实：企业怎么认证？
+            问题：企业怎么认证？
+            答案：企业认证支持法人认证、法人授权和对公打款三种方式。
+            回答时先锁定客户明确询问的产品、业务或对象。
+            """;
+        when(retrievalService.retrieve("企业怎么认证？")).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                true, false, null, context, 0.74, "rag", true,
+                List.of(citation), Collections.emptyList()));
+        when(aiModelService.chatWithModel(anyString(), eq("rag-system-prompt"), eq(null)))
+            .thenReturn(new ChatResponse(
+                "AI服务暂时不可用", false, "fallback", "fallback", 0, 0));
+        when(safetyService.checkAiOutput(anyString())).thenReturn(SafetyResult.pass());
+
+        Map<String, Object> result = dialogService.send(
+            "web", "user-structured-fallback", "企业怎么认证？", "咨询");
+
+        assertEquals("knowledge_qa", result.get("source"));
+        assertEquals("answered", result.get("answerStatus"));
+        assertEquals("model_failure_knowledge", result.get("fallbackDecision"));
+        assertEquals("企业认证支持法人认证、法人授权和对公打款三种方式。", result.get("reply"));
+        assertEquals(List.of(citation), result.get("citations"));
+        assertEquals(true, result.get("ragSource"));
+        assertEquals(false, result.get("needsTransfer"));
+    }
+
+    @Test
+    void doesNotChooseBetweenConflictingStructuredAnswersWhenModelFails() {
+        Map<String, Object> citation = citation(
+            "chunk:9", "document", 9L, "认证说明");
+        String context = """
+            【企业内部事实】
+            事实：认证方式一
+            问题：企业怎么认证？
+            答案：可以通过法人认证。
+            事实：认证方式二
+            问题：企业怎么认证？
+            答案：必须通过对公打款认证。
+            回答时先锁定客户明确询问的产品、业务或对象。
+            """;
+        when(retrievalService.retrieve("企业怎么认证？")).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                true, false, null, context, 0.74, "rag", true,
+                List.of(citation), Collections.emptyList()));
+        when(aiModelService.chatWithModel(anyString(), eq("rag-system-prompt"), eq(null)))
+            .thenReturn(new ChatResponse(
+                "AI服务暂时不可用", false, "fallback", "fallback", 0, 0));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "user-conflicting-fallback", "企业怎么认证？", "咨询");
+
+        assertEquals("error", result.get("source"));
         assertEquals(Collections.emptyList(), result.get("citations"));
         assertEquals(true, result.get("needsTransfer"));
     }
@@ -1096,6 +1652,31 @@ class DialogServiceImplTest {
     }
 
     @Test
+    void usesCanonicalFeatureQueryAfterProductFollowUpResolution() {
+        String canonicalQuery = "点签电子合同主要包含的7大功能";
+        when(messageService.getByConversation(10L)).thenReturn(List.of(
+            message("user", "点签是什么？"),
+            message("ai", "点签是一款电子合同应用。"),
+            message("user", "有什么功能？")));
+        when(retrievalService.retrieve(canonicalQuery)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                true, true, "点签提供印章、权限和合同管理等功能。",
+                "点签提供印章、权限和合同管理等功能。", 0.95,
+                "structured_qa_direct", true,
+                Collections.emptyList(), Collections.emptyList()));
+
+        Map<String, Object> result = dialogService.send(
+            "playground", "feature-follow-up", "有什么功能？", "试聊");
+
+        verify(retrievalService).retrieve(canonicalQuery);
+        assertEquals(canonicalQuery, result.get("retrievalPrimaryQuery"));
+        assertEquals(canonicalQuery, result.get("retrievalQuery"));
+        assertEquals(true, result.get("queryRewritten"));
+        assertEquals("knowledge_qa", result.get("source"));
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
     void doesNotPolluteStandaloneQuestionWithPreviousTopic() {
         when(messageService.getByConversation(10L)).thenReturn(List.of(
             message("user", "套餐是多少钱"),
@@ -1229,6 +1810,12 @@ class DialogServiceImplTest {
         value.put("score", 1.0);
         value.put("snippet", "测试片段");
         return value;
+    }
+
+    private RagRetrievalService.RetrievalResult retrieval(String context, double confidence) {
+        return new RagRetrievalService.RetrievalResult(
+            true, false, null, context, confidence, "rag", true,
+            Collections.emptyList(), Collections.emptyList());
     }
 
     private BotMessage message(String role, String content) {

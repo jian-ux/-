@@ -110,6 +110,42 @@ class KnowledgeItemControllerTest {
     }
 
     @Test
+    void treatsAnExplicitQuestionKeywordAsAnExactFaqAlias() {
+        BotKnowledgeItem hotline = item(290L, "客服热线是多少？",
+            "客服热线：025-66085508。",
+            "人工联系方式是什么？ 怎么联系人工客服？ 人工客服电话是多少？");
+        hotline.setDirectAnswerEnabled(1);
+        when(mapper.selectList(any())).thenReturn(List.of(hotline));
+
+        R<Map<String, Object>> response = controller.match(Map.of(
+            "text", "人工联系方式是什么?",
+            "trackHit", false,
+            "filters", Map.of("sourceScope", "KNOWLEDGE")));
+
+        assertEquals(290L, response.getData().get("itemId"));
+        assertEquals(1.0, response.getData().get("score"));
+        assertTrue((Boolean) response.getData().get("exactMatch"));
+        assertEquals("exact_alias", response.getData().get("matchMode"));
+        assertEquals(true, response.getData().get("directAnswerEnabled"));
+    }
+
+    @Test
+    void keepsOrdinaryKeywordsAsRecallOnly() {
+        BotKnowledgeItem hotline = item(290L, "客服热线是多少？",
+            "客服热线：025-66085508。", "人工,联系方式,热线");
+        hotline.setDirectAnswerEnabled(1);
+        when(mapper.selectList(any())).thenReturn(List.of(hotline));
+
+        R<Map<String, Object>> response = controller.match(Map.of(
+            "text", "人工",
+            "trackHit", false));
+
+        assertEquals(290L, response.getData().get("itemId"));
+        assertFalse((Boolean) response.getData().get("exactMatch"));
+        assertEquals("keyword", response.getData().get("matchMode"));
+    }
+
+    @Test
     void doesNotReturnExactFaqOutsideRequestedCategory() {
         BotKnowledgeItem faq = item(
             31L, "How do I reset my password?", "Use the reset link.", "password reset");
@@ -135,11 +171,13 @@ class KnowledgeItemControllerTest {
             "text", "How do I reset my password?",
             "trackHit", false,
             "filters", Map.of(
-                "type", "item", "sourceType", "faq", "categoryId", 20)));
+                "type", "item", "sourceType", "faq", "sourceScope", "KNOWLEDGE",
+                "categoryId", 20)));
 
         assertEquals(31L, response.getData().get("itemId"));
         assertEquals("item", response.getData().get("type"));
         assertEquals("faq", response.getData().get("sourceType"));
+        assertEquals("KNOWLEDGE", response.getData().get("sourceScope"));
         assertEquals(20L, response.getData().get("categoryId"));
         assertEquals(1.0, response.getData().get("score"));
     }
@@ -161,6 +199,28 @@ class KnowledgeItemControllerTest {
             .map(value -> ((Number) value.get("chunkId")).longValue()).toList());
         assertTrue(response.getData().stream()
             .allMatch(value -> "chunk".equals(value.get("type"))));
+    }
+
+    @Test
+    void exposesStructuredQaMetadataForNeighborFiltering() {
+        BotKnowledgeChunk before = chunk(90L, 8L, 3, "bank-card or manual review");
+        before.setContentType("QA");
+        before.setQaQuestion("foreign enterprise authentication");
+        before.setQaAnswer("bank-card or manual review");
+        before.setQaKey("foreign-key");
+        before.setQaGroupKey("foreign-group");
+        before.setQaVersion(1);
+        BotKnowledgeChunk anchor = chunk(91L, 8L, 4, "anchor");
+        when(chunkMapper.selectList(any())).thenReturn(List.of(before, anchor));
+
+        R<List<Map<String, Object>>> response = controller.neighbors(Map.of(
+            "documentId", 8L, "chunkIndex", 4, "radius", 1));
+
+        Map<String, Object> value = response.getData().get(0);
+        assertEquals(true, value.get("structuredQa"));
+        assertEquals("foreign-group", value.get("qaGroupKey"));
+        assertEquals("foreign-key", value.get("qaKey"));
+        assertEquals("bank-card or manual review", value.get("fullAnswer"));
     }
 
     @Test

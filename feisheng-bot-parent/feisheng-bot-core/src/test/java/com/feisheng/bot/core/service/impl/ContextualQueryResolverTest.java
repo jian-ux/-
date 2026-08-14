@@ -71,6 +71,30 @@ class ContextualQueryResolverTest {
     }
 
     @Test
+    void inheritsProductForFeatureFollowUp() {
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", "点签是什么？"),
+            message("ai", "点签是一款电子合同应用。"),
+            message("user", "有什么功能？")), "有什么功能？");
+
+        assertTrue(result.contextDependent());
+        assertTrue(result.rewritten());
+        assertEquals("点签电子合同 有什么功能？", result.query());
+        assertEquals("点签电子合同", result.inheritedProduct());
+    }
+
+    @Test
+    void inheritsProductForUsageChannelFollowUp() {
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", "点签是什么？"),
+            message("ai", "点签是一款电子合同应用。"),
+            message("user", "可以在哪里使用？")), "可以在哪里使用？");
+
+        assertEquals("点签电子合同 可以在哪里使用？", result.query());
+        assertEquals("点签电子合同", result.inheritedProduct());
+    }
+
+    @Test
     void doesNotCarryProductIntoUnrelatedStandaloneQuestion() {
         ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
             message("user", "点签电子合同怎么签？"),
@@ -91,6 +115,17 @@ class ContextualQueryResolverTest {
         assertFalse(result.contextDependent());
         assertFalse(result.rewritten());
         assertEquals("电子合同有法律效力吗？", result.query());
+    }
+
+    @Test
+    void carriesHistoryForAnaphoricAttachmentFollowUp() {
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", "合同双方都已经签署完成了。"),
+            message("ai", "已完成签署的合同内容通常不能直接修改。"),
+            message("user", "那漏掉的附件怎么办？")), "那漏掉的附件怎么办？");
+
+        assertTrue(result.contextDependent());
+        assertEquals("合同双方都已经签署完成了。", result.previousQuestion());
     }
 
     private BotMessage message(String role, String content) {

@@ -61,10 +61,20 @@ class KnowledgeIndexServiceTest {
             values.get(0).get("chunkId"))));
         assertTrue(results.stream().allMatch(values ->
             "2027-01-02T03:04:05Z".equals(values.get(0).get("expiresAt"))));
-        java.util.Map<String, Object> faqResult = service.search(
-            List.of(1.0, 0.0), 1, 0.5, Map.of("categoryId", 10)).get(0);
-        assertEquals(1L, faqResult.get("itemId"));
-        assertEquals(10L, faqResult.get("categoryId"));
+        Map<String, Object> faqFilters = Map.of(
+            "categoryId", 10, "sourceScope", "KNOWLEDGE");
+        List<List<java.util.Map<String, Object>>> faqResults = List.of(
+            service.search(List.of(1.0, 0.0), 1, 0.5, faqFilters),
+            service.searchLexical("password reset instructions", 1, 0.5, faqFilters),
+            service.searchPhonetic("password reset instructions", 1, 0.5, faqFilters),
+            service.searchBm25("password reset instructions", 1, 0.0, faqFilters));
+        assertTrue(faqResults.stream().allMatch(values -> values.size() == 1));
+        assertTrue(faqResults.stream().allMatch(values -> Long.valueOf(1L).equals(
+            values.get(0).get("itemId"))));
+        assertTrue(faqResults.stream().allMatch(values -> "KNOWLEDGE".equals(
+            values.get(0).get("sourceScope"))));
+        assertTrue(faqResults.stream().allMatch(values -> Long.valueOf(10L).equals(
+            values.get(0).get("categoryId"))));
     }
 
     @Test
@@ -90,11 +100,12 @@ class KnowledgeIndexServiceTest {
 
         KnowledgeIndexService.SyncReport report = service.sync();
         List<java.util.Map<String, Object>> result = service.search(
-            List.of(0.0, 1.0), 1, 0.5);
+            List.of(0.0, 1.0), 1, 0.5, Map.of("sourceScope", "KNOWLEDGE"));
 
         assertEquals(2, report.faqVectors());
         assertEquals(7L, result.get(0).get("itemId"));
         assertEquals(70L, result.get(0).get("faqChunkId"));
+        assertEquals("KNOWLEDGE", result.get(0).get("sourceScope"));
         assertEquals("答案尾部的专项检索词", result.get(0).get("answer"));
     }
 
@@ -384,6 +395,44 @@ class KnowledgeIndexServiceTest {
         assertEquals(false, oldResult.get("directAnswerEligible"));
         assertEquals("eligible", currentResult.get("qaDirectStatus"));
         assertEquals(true, currentResult.get("directAnswerEligible"));
+    }
+
+    @Test
+    void indexesOnlyPublishedAndEffectiveDocumentVersions() {
+        BotKnowledgeItemMapper itemMapper = mock(BotKnowledgeItemMapper.class);
+        BotKnowledgeChunkMapper chunkMapper = mock(BotKnowledgeChunkMapper.class);
+        BotKnowledgeDocumentMapper documentMapper = mock(BotKnowledgeDocumentMapper.class);
+        BotKnowledgeChunk publishedChunk = chunk(31L, 11L, 0, "线上有效答案", "[1,0]");
+        BotKnowledgeChunk draftChunk = chunk(32L, 12L, 0, "尚未发布答案", "[0,1]");
+        BotKnowledgeChunk expiredChunk = chunk(33L, 13L, 0, "已经过期答案", "[0.5,0.5]");
+        when(itemMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(chunkMapper.selectList(any())).thenReturn(
+            List.of(publishedChunk, draftChunk, expiredChunk));
+
+        BotKnowledgeDocument published = document(11L, "产品手册 v1");
+        published.setPublishStatus("PUBLISHED");
+        published.setKnowledgeSetKey("product-manual");
+        published.setDocumentVersion(1);
+        published.setPriority(10);
+        BotKnowledgeDocument draft = document(12L, "产品手册 v2");
+        draft.setPublishStatus("DRAFT");
+        BotKnowledgeDocument expired = document(13L, "产品手册旧版");
+        expired.setPublishStatus("PUBLISHED");
+        expired.setEffectiveTo(Date.from(Instant.now().minusSeconds(60)));
+        when(documentMapper.selectList(null)).thenReturn(List.of(published, draft, expired));
+
+        KnowledgeIndexService service = new KnowledgeIndexService(
+            itemMapper, chunkMapper, documentMapper, new ObjectMapper(), disabledQdrant());
+        KnowledgeIndexService.SyncReport report = service.sync();
+        List<java.util.Map<String, Object>> results = service.search(
+            List.of(1.0, 0.0), 10, -1.0);
+
+        assertEquals(1, report.chunkVectors());
+        assertEquals(1, results.size());
+        assertEquals(31L, results.get(0).get("chunkId"));
+        assertEquals("product-manual", results.get(0).get("knowledgeSetKey"));
+        assertEquals(1, results.get(0).get("documentVersion"));
+        assertEquals(10, results.get(0).get("documentPriority"));
     }
 
     private QdrantVectorStore disabledQdrant() {

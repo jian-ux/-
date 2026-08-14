@@ -16,6 +16,7 @@ public class ContextualQueryResolver {
     private static final List<String> SUBJECTLESS_FOLLOW_UPS = List.of(
         "包邮吗", "包不包邮", "有货吗", "现货吗", "多少钱", "多久", "几天能到",
         "怎么弄", "怎么办", "可以吗", "行吗", "能退吗", "支持吗", "还有吗", "然后呢");
+    private static final List<String> FOLLOW_UP_PREFIXES = List.of("那", "那么", "然后");
     private static final List<String> BUSINESS_SUBJECTS = List.of(
         "管理员", "企业", "公司", "单位", "机构", "组织", "个人", "员工", "用户", "法人");
     private static final List<String> ACCESS_CHANNELS = List.of(
@@ -29,6 +30,12 @@ public class ContextualQueryResolver {
         "登录", "登陆", "注册", "认证", "操作", "使用", "发起", "签署", "盖章",
         "下载", "查看", "查询", "续费", "购买", "开通", "管理", "配置", "设置",
         "修改", "解绑", "注销", "切换");
+    private static final Pattern PRODUCT_ATTRIBUTE_FOLLOW_UP = Pattern.compile(
+        "^(?:(?:主要)?有(?:什么|哪些)(?:功能|作用|能力|优势|特点|用途)|"
+            + "(?:主要)?(?:功能|作用|能力|优势|特点|用途)(?:是什么|有哪些|呢)|"
+            + "(?:可以|能|支持)?(?:在)?(?:哪里|哪儿|哪些地方)(?:可以)?使用|"
+            + "(?:可以|能)?在哪(?:里|儿)?使用|"
+            + "(?:支持|可以用)(?:哪些|什么)(?:方式|平台|渠道|终端|端))$");
     private static final List<String> BUSINESS_OBJECTS = List.of(
         "企业", "公司", "单位", "个人", "员工", "管理员", "用户", "账号", "账户",
         "合同", "签名", "签章", "印章", "文件", "数据", "套餐", "会员");
@@ -67,6 +74,14 @@ public class ContextualQueryResolver {
         String normalized = normalize(question);
         if (REFERENCE_MARKERS.stream().anyMatch(normalized::contains)) return true;
         if (SUBJECTLESS_FOLLOW_UPS.contains(normalized)) return true;
+        if (normalized.length() <= 24
+                && SUBJECTLESS_FOLLOW_UPS.stream().anyMatch(normalized::endsWith)) {
+            return true;
+        }
+        if (normalized.length() <= 24
+                && FOLLOW_UP_PREFIXES.stream().anyMatch(normalized::startsWith)) {
+            return true;
+        }
         if (switchEntity(normalized) != null) return true;
         return normalized.length() <= 12 && normalized.endsWith("呢");
     }
@@ -136,6 +151,7 @@ public class ContextualQueryResolver {
                 || containsAny(normalized, OTHER_PRODUCT_MARKERS)) {
             return false;
         }
+        if (PRODUCT_ATTRIBUTE_FOLLOW_UP.matcher(normalized).matches()) return true;
         boolean operation = containsAny(normalized, OPERATION_TERMS);
         boolean businessObject = containsAny(normalized, BUSINESS_OBJECTS);
         if (operation && businessObject) return true;

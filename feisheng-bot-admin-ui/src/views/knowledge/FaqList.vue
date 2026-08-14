@@ -58,7 +58,7 @@
         <el-input v-model="form.answer" type="textarea" :rows="6" maxlength="20000" show-word-limit />
       </el-form-item>
       <el-form-item label="关键词" prop="keywords">
-        <el-input v-model="form.keywords" placeholder="用逗号分隔" maxlength="500" show-word-limit />
+        <el-input v-model="form.keywords" placeholder="短关键词用逗号分隔；完整问法须以问号结尾" maxlength="500" show-word-limit />
       </el-form-item>
       <el-form-item label="原文直答">
         <el-switch v-model="form.directAnswerEnabled" />

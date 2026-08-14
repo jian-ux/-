@@ -15,7 +15,7 @@ import java.util.regex.Pattern;
 /** Chinese-friendly, structure-aware text chunking. */
 @Service
 public class ChunkingService {
-    public static final String STRATEGY_VERSION = "chunk-v3";
+    public static final String STRATEGY_VERSION = "chunk-v7";
     private static final int DEFAULT_MAX_CHARS = 600;
     private static final int DEFAULT_MIN_CHARS = 50;
     private static final int DEFAULT_OVERLAP = 80;
@@ -35,17 +35,6 @@ public class ChunkingService {
         "^[（(][一二三四五六七八九十]+[）)]|" +
         "^第\\s*[一二三四五六七八九十百零\\d]+\\s*[章节部分条]|" +
         "^\\d+[、.．]");
-    private static final Pattern QUESTION_LABEL_RE = Pattern.compile(
-        "^(?:问题|问|Q)(?:\\s*\\d+)?\\s*[:：、.．]\\s*(.+)$",
-        Pattern.CASE_INSENSITIVE);
-    private static final Pattern ANSWER_LABEL_RE = Pattern.compile(
-        "^(?:答案|答|A)(?:\\s*\\d+)?\\s*[:：、.．]\\s*(.*)$",
-        Pattern.CASE_INSENSITIVE);
-    private static final Pattern QUESTION_SIGNAL_RE = Pattern.compile(
-        "^(?:怎么|如何|为什么|为何|是否|能否|可否|有没有|哪里|哪种|哪些|什么|谁|多久|多少)|" +
-        "(?:是什么|怎么办|能不能|可不可以|会不会|有没有|收费标准|法律效力|安全吗|靠谱吗|支持.+吗)$");
-    private static final Pattern OBJECTION_RE = Pattern.compile(
-        "(?:小平台|没听过|没有听过|太贵|价格高|还是签纸质|别人家|别的平台|竞品|不需要电子合同)");
 
     public List<Chunk> chunk(String text) {
         return chunk(text, defaultMaxChars, defaultMinChars, defaultOverlap);
@@ -53,6 +42,36 @@ public class ChunkingService {
 
     public List<Chunk> chunkImage(String text) {
         return chunk(text, defaultMaxChars, 1, defaultOverlap);
+    }
+
+    /** Chunk parser-confirmed table rows without relying on question heuristics. */
+    public List<Chunk> chunk(DocumentParseService.ParsedDocument document) {
+        List<Chunk> chunks = new ArrayList<>();
+        if (document == null) return chunks;
+
+        for (DocumentParseService.QaRow row : document.qaRows()) {
+            List<QaBoundaryDetector.NestedQa> nested =
+                QaBoundaryDetector.nestedQuestionAnswers(row.question(), row.answer());
+            if (nested.isEmpty()) {
+                appendQaChunks(row.question(), row.answer(), defaultMaxChars, chunks);
+            } else {
+                for (QaBoundaryDetector.NestedQa unit : nested) {
+                    appendQaChunks(unit.question(), unit.answer(), defaultMaxChars, chunks);
+                }
+            }
+        }
+        if (!document.unstructuredText().isBlank()) {
+            // The parser has already made the structural Q&A decision for this
+            // document. Do not run the looser paragraph heuristic again on the
+            // remaining text and recreate false QA boundaries.
+            chunks.addAll(chunkPlainText(document.unstructuredText()));
+        }
+        for (int index = 0; index < chunks.size(); index++) {
+            chunks.get(index).position = index;
+        }
+        log.info("Chunked parsed document into {} chunks from {} confirmed Q&A rows",
+            chunks.size(), document.qaRows().size());
+        return chunks;
     }
 
     public List<Chunk> chunk(String text, int maxChars, int minChars, int overlap) {
@@ -76,6 +95,14 @@ public class ChunkingService {
 
         appendPlainChunks(normalized, maxChars, minChars, overlap, chunks);
         log.info("Chunked into {} chunks", chunks.size());
+        return chunks;
+    }
+
+    private List<Chunk> chunkPlainText(String text) {
+        List<Chunk> chunks = new ArrayList<>();
+        if (text == null || text.isBlank()) return chunks;
+        appendPlainChunks(normalize(text), defaultMaxChars, defaultMinChars,
+            defaultOverlap, chunks);
         return chunks;
     }
 
@@ -250,7 +277,7 @@ public class ChunkingService {
         for (String rawLine : rawLines) {
             String line = rawLine.trim();
             if (line.isEmpty()) continue;
-            if (QUESTION_LABEL_RE.matcher(line).matches()) hasExplicitLabel = true;
+            if (QaBoundaryDetector.hasExplicitQuestionLabel(line)) hasExplicitLabel = true;
             if (questionText(line) != null) questionCount++;
         }
         if (!hasExplicitLabel && questionCount < 2) return List.of();
@@ -282,8 +309,7 @@ public class ChunkingService {
                 continue;
             }
 
-            Matcher answerMatcher = ANSWER_LABEL_RE.matcher(line);
-            String answerLine = answerMatcher.matches() ? answerMatcher.group(1).trim() : line;
+            String answerLine = QaBoundaryDetector.answerText(line);
             if (question != null) {
                 if (!answerLine.isEmpty()) {
                     if (answer.length() > 0) answer.append('\n');
@@ -300,12 +326,7 @@ public class ChunkingService {
     }
 
     private String questionText(String line) {
-        Matcher labelMatcher = QUESTION_LABEL_RE.matcher(line);
-        if (labelMatcher.matches()) return labelMatcher.group(1).trim();
-        if (line.length() > 200) return null;
-        if (line.endsWith("？") || line.endsWith("?")) return line;
-        if (QUESTION_SIGNAL_RE.matcher(line).find() || OBJECTION_RE.matcher(line).find()) return line;
-        return null;
+        return QaBoundaryDetector.questionText(line);
     }
 
     private void appendQaChunks(String question, String answer, int maxChars,

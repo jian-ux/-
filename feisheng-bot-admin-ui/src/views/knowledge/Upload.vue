@@ -13,44 +13,90 @@
       <template #tip><div style="font-size:12px;color:#999">支持常用文档和图片格式；图片会自动识别文字</div></template>
     </el-upload>
 
-    <el-table :data="documents" row-key="id" border stripe v-loading="loading" @expand-change="handleExpandChange">
+    <el-table ref="documentTable" :data="documents" row-key="id" border stripe
+      v-loading="loading" @expand-change="handleExpandChange">
       <el-table-column type="expand">
         <template #default="{row}">
-          <div style="padding:10px 20px" v-loading="row._loading">
-            <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
-              <span style="font-weight:bold">切片列表 ({{ row._chunks?.length || 0 }})</span>
-              <el-tag size="small" type="info">仅已审核内容参与检索</el-tag>
-              <el-tag size="small" :type="vectorTag(row)">{{ vectorText(row) }}</el-tag>
-              <el-button size="small" type="success" @click.stop="approveAll(row)" v-if="row._chunks?.some(c=>c.status!=='APPROVED')">全部通过</el-button>
+          <div class="chunk-workspace" v-loading="row._loading">
+            <div class="chunk-heading">
+              <div class="chunk-summary">
+                <strong>切片列表</strong>
+                <span class="chunk-count">{{ filteredChunks(row).length }}/{{ row._chunks?.length || 0 }}</span>
+                <el-tag size="small" type="info">已发布且已审核内容参与检索</el-tag>
+                <el-tag size="small" :type="vectorTag(row)">{{ vectorText(row) }}</el-tag>
+              </div>
+              <div class="chunk-heading-actions">
+                <el-button size="small" type="success" @click.stop="approveAll(row)"
+                  v-if="canReview(row) && row._chunks?.some(c=>c.status!=='APPROVED')">
+                  <el-icon><CircleCheck /></el-icon>全部通过
+                </el-button>
+                <el-button size="small" @click.stop="collapseDocument(row)">
+                  <el-icon><ArrowUp /></el-icon>收起
+                </el-button>
+              </div>
             </div>
-            <div v-if="!row._chunks || row._chunks.length===0" style="color:#999">暂无切片</div>
-            <div v-for="chunk in row._chunks" :key="chunk.id" style="margin-bottom:8px;padding:8px;background:#fafafa;border-radius:6px;display:flex;gap:10px;align-items:flex-start">
-              <div style="flex:1;min-width:0">
-                <div style="font-size:12px;color:#999;margin-bottom:4px;display:flex;gap:6px;align-items:center">
-                  <span>#{{ chunk.chunkIndex }} · {{ chunk.content?.length || 0 }} 字</span>
-                  <el-tag v-if="chunk.contentType === 'QA'" size="small" type="primary">
-                    结构化问答 v{{ chunk.qaVersion || 1 }}
+            <el-alert v-if="isQualityBlocked(row)" type="error" :closable="false"
+              show-icon :title="contentText(row.qualityMessage, '文档结构检查未通过，请修正文档后重新上传')"
+              style="margin-bottom:10px" />
+            <div v-if="row._chunks?.length" class="chunk-toolbar">
+              <el-input v-model="row._chunkQuery" clearable placeholder="搜索问题或切片内容"
+                class="chunk-search" @input="resetChunkPage(row)">
+                <template #prefix><el-icon><Search /></el-icon></template>
+              </el-input>
+              <el-select v-model="row._chunkStatus" class="chunk-filter" @change="resetChunkPage(row)">
+                <el-option label="全部状态" value="ALL" />
+                <el-option label="待审核" value="PENDING" />
+                <el-option label="已审核" value="APPROVED" />
+                <el-option label="已拒绝" value="REJECTED" />
+              </el-select>
+              <el-select v-model="row._chunkType" class="chunk-filter" @change="resetChunkPage(row)">
+                <el-option label="全部类型" value="ALL" />
+                <el-option label="结构化问答" value="QA" />
+                <el-option label="普通文本" value="TEXT" />
+              </el-select>
+              <el-button v-if="hasChunkFilters(row)" @click="clearChunkFilters(row)">
+                <el-icon><RefreshLeft /></el-icon>重置
+              </el-button>
+            </div>
+            <el-empty v-if="!row._loading && !row._chunks?.length" description="暂无切片" :image-size="64" />
+            <el-empty v-else-if="!row._loading && filteredChunks(row).length===0"
+              description="没有符合条件的切片" :image-size="64" />
+            <div v-else class="chunk-list">
+              <div v-for="chunk in visibleChunks(row)" :key="chunk.id" class="chunk-item">
+                <div class="chunk-content">
+                  <div class="chunk-meta">
+                    <span>#{{ chunk.chunkIndex }} · {{ chunk.content?.length || 0 }} 字</span>
+                    <el-tag v-if="chunk.contentType === 'QA'" size="small" type="primary">
+                      结构化问答 v{{ chunk.qaVersion || 1 }}
+                    </el-tag>
+                  </div>
+                  <div v-if="chunk.contentType === 'QA'" class="qa-question">
+                    {{ contentText(chunk.qaQuestion, '未识别问题') }}
+                  </div>
+                  <div class="chunk-preview" v-html="highlightChunk(chunk.content)"></div>
+                </div>
+                <div class="chunk-actions">
+                  <el-tag size="small" :type="chunk.status==='APPROVED'?'success':chunk.status==='REJECTED'?'danger':'warning'">
+                    {{ chunk.status==='APPROVED'?'已审核':chunk.status==='REJECTED'?'已拒绝':'待审核' }}
                   </el-tag>
+                  <el-switch v-if="isQaGroupHead(row, chunk)"
+                    :model-value="chunk.directAnswerEnabled === 1"
+                    :loading="chunk._directUpdating"
+                    :disabled="isQualityBlocked(row) || (chunk.directAnswerEnabled !== 1 && !canEnableDirectQa(row, chunk))"
+                    active-text="直答"
+                    @click.stop
+                    @change="enabled => toggleDirectAnswer(row, chunk, enabled)" />
+                  <el-button v-if="canReview(row) && chunk.status!=='APPROVED'" size="small"
+                    type="success" @click.stop="approve(row,chunk)">通过</el-button>
+                  <el-button v-if="chunk.status!=='REJECTED'" size="small" type="danger"
+                    @click.stop="reject(row,chunk)">拒绝</el-button>
                 </div>
-                <div v-if="chunk.contentType === 'QA'" class="qa-question">
-                  {{ contentText(chunk.qaQuestion, '未识别问题') }}
-                </div>
-                <div style="font-size:13px;line-height:1.5;white-space:pre-wrap;max-height:120px;overflow:hidden" v-html="highlightChunk(chunk.content)"></div>
               </div>
-              <div style="display:flex;gap:4px;align-items:center;flex-shrink:0">
-                <el-tag size="small" :type="chunk.status==='APPROVED'?'success':chunk.status==='REJECTED'?'danger':'warning'">
-                  {{ chunk.status==='APPROVED'?'已审核':chunk.status==='REJECTED'?'已拒绝':'待审核' }}
-                </el-tag>
-                <el-switch v-if="isQaGroupHead(row, chunk)"
-                  :model-value="chunk.directAnswerEnabled === 1"
-                  :loading="chunk._directUpdating"
-                  :disabled="chunk.directAnswerEnabled !== 1 && !canEnableDirectQa(row, chunk)"
-                  active-text="直答"
-                  @click.stop
-                  @change="enabled => toggleDirectAnswer(row, chunk, enabled)" />
-                <el-button v-if="chunk.status!=='APPROVED'" size="small" type="success" @click.stop="approve(row,chunk)">通过</el-button>
-                <el-button v-if="chunk.status!=='REJECTED'" size="small" type="danger" @click.stop="reject(row,chunk)">拒绝</el-button>
-              </div>
+            </div>
+            <div v-if="filteredChunks(row).length > 0" class="chunk-pagination">
+              <el-pagination v-model:current-page="row._chunkPage" v-model:page-size="row._chunkPageSize"
+                :page-sizes="[20, 50, 100]" :total="filteredChunks(row).length"
+                layout="total, sizes, prev, pager, next" @size-change="resetChunkPage(row)" />
             </div>
           </div>
         </template>
@@ -71,6 +117,13 @@
           <el-tag :type="processingTag(row)" size="small">{{ processingText(row) }}</el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="导入质量" width="210">
+        <template #default="{row}">
+          <el-tooltip :content="contentText(row.qualityMessage, qualityText(row))" placement="top" :show-after="300">
+            <el-tag :type="qualityTag(row)" size="small">{{ qualityText(row) }}</el-tag>
+          </el-tooltip>
+        </template>
+      </el-table-column>
       <el-table-column label="向量状态" width="130">
         <template #default="{row}">
           <el-tag :type="vectorTag(row)" size="small">{{ vectorText(row) }}</el-tag>
@@ -79,6 +132,20 @@
       <el-table-column label="审核状态" width="120">
         <template #default="{row}">
           <el-tag :type="reviewTag(row)" size="small">{{ reviewText(row) }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="发布状态" width="140">
+        <template #default="{row}">
+          <el-tag :type="publicationTag(row)" size="small">
+            {{ publicationText(row) }} · v{{ row.documentVersion || 1 }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="优先级" width="130">
+        <template #default="{row}">
+          <el-input-number v-model="row.priority" :min="-100" :max="100" size="small"
+            class="priority-input"
+            controls-position="right" @change="value => updatePriority(row, value)" />
         </template>
       </el-table-column>
       <el-table-column label="文字识别" width="130">
@@ -90,12 +157,20 @@
       <el-table-column prop="createTime" label="上传时间" width="180">
         <template #default="{row}">{{ formatDateTime(row.createTime) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="260">
+      <el-table-column label="操作" width="360">
         <template #default="{row}">
           <el-button v-if="row.mediaType==='IMAGE' && row.ocrStatus==='FAILED'" size="small" @click.stop="retryOcr(row)">重试</el-button>
           <el-button v-if="canRetryEmbedding(row)" size="small" type="warning"
             :loading="row._embeddingRetrying" @click.stop="retryEmbedding(row)">
             <el-icon><Refresh /></el-icon>补齐向量
+          </el-button>
+          <el-button v-if="canPublish(row)" size="small" type="success"
+            :loading="row._publishing" @click.stop="publishDocument(row)">
+            <el-icon><Promotion /></el-icon>发布
+          </el-button>
+          <el-button v-if="row.publishStatus === 'PUBLISHED'" size="small"
+            :loading="row._archiving" @click.stop="archiveDocument(row)">
+            <el-icon><FolderRemove /></el-icon>归档
           </el-button>
           <el-button size="small" type="danger" @click.stop="del(row.id)">删除</el-button>
         </template>
@@ -105,16 +180,19 @@
 </template>
 <script setup>
 import { ref, onMounted } from 'vue'
-import { Upload, Picture, Document, Refresh } from '@element-plus/icons-vue'
+import {
+  ArrowUp, CircleCheck, Document, FolderRemove, Picture, Promotion,
+  Refresh, RefreshLeft, Search, Upload
+} from '@element-plus/icons-vue'
 import request from '../../api/index.js'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { contentText, formatDateTime } from '../../utils/displayText.js'
 
 const documents = ref([])
 const loading = ref(false)
+const documentTable = ref(null)
 const uploadUrl = '/api/admin/doc/upload'
 const uploadHeaders = { Authorization: 'Bearer ' + (localStorage.getItem('token') || '') }
-const expandedRows = ref({})
 
 function formatFileSize(size) {
   if (size == null) return '-'
@@ -161,15 +239,65 @@ function reviewText(row) {
 
 function processingTag(row) {
   if (row.status === 1) return 'warning'
-  if (row.status === 3) return 'danger'
+  if (row.status === 3 || row.status === 4) return 'danger'
   return row.status === 2 ? 'success' : 'info'
 }
 
 function processingText(row) {
   if (row.status === 1) return '解析中'
   if (row.status === 3) return '处理失败'
+  if (row.status === 4) return '结构异常'
   if (row.status === 2) return '处理完成'
   return '未知'
+}
+
+function isQualityBlocked(row) {
+  return row.status === 4 || row.qualityStatus === 'BLOCKED'
+}
+
+function canReview(row) {
+  return row.status === 2 && !isQualityBlocked(row)
+}
+
+function publicationTag(row) {
+  if (row.publishStatus === 'PUBLISHED') return 'success'
+  if (row.publishStatus === 'ARCHIVED') return 'info'
+  return 'warning'
+}
+
+function publicationText(row) {
+  if (row.publishStatus === 'PUBLISHED') return '已发布'
+  if (row.publishStatus === 'ARCHIVED') return '已归档'
+  return '草稿'
+}
+
+function canPublish(row) {
+  if (row.publishStatus === 'PUBLISHED' || row.status !== 2 || isQualityBlocked(row)) return false
+  const { total, embedded } = vectorCounts(row)
+  const chunks = row._chunks
+  const approved = chunks
+    ? chunks.filter(chunk => chunk.status === 'APPROVED').length
+    : row.approvedCount ?? 0
+  return total > 0 && embedded === total && approved === total
+}
+
+function qualityTag(row) {
+  if (isQualityBlocked(row) || row.qualityStatus === 'FAILED') return 'danger'
+  if (row.qualityStatus === 'WARNING' || row.qualityStatus === 'PROCESSING') return 'warning'
+  if (row.qualityStatus === 'PASSED') return 'success'
+  return 'info'
+}
+
+function qualityText(row) {
+  if (row.qualityStatus === 'PROCESSING') return '检查中'
+  if (isQualityBlocked(row)) return '未通过'
+  if (row.qualityStatus === 'FAILED') return '检查失败'
+  if ((row.sourceRowCount || 0) > 0) {
+    return `${row.sourceRowCount} 行 / ${row.detectedQaCount || 0} 问答`
+  }
+  if (row.qualityStatus === 'WARNING') return '通过，有提示'
+  if (row.qualityStatus === 'PASSED') return '检查通过'
+  return '未检查'
 }
 
 function vectorCounts(row) {
@@ -177,9 +305,59 @@ function vectorCounts(row) {
   return {
     total: chunks?.length ?? row.chunkCount ?? 0,
     embedded: chunks
-      ? chunks.filter(c => !!c.embedding).length
+      ? chunks.filter(c => c.hasEmbedding ?? !!c.embedding).length
       : row.embeddingCount ?? 0
   }
+}
+
+function initializeChunkWorkspace(row) {
+  row._chunkQuery ??= ''
+  row._chunkStatus ??= 'ALL'
+  row._chunkType ??= 'ALL'
+  row._chunkPage ??= 1
+  row._chunkPageSize ??= 20
+}
+
+function filteredChunks(row) {
+  const chunks = row._chunks || []
+  const query = (row._chunkQuery || '').trim().toLocaleLowerCase()
+  return chunks.filter(chunk => {
+    if (row._chunkStatus && row._chunkStatus !== 'ALL' && chunk.status !== row._chunkStatus) return false
+    if (row._chunkType && row._chunkType !== 'ALL' && chunk.contentType !== row._chunkType) return false
+    if (!query) return true
+    return [chunk.qaQuestion, chunk.sectionPath, chunk.content]
+      .some(value => String(value || '').toLocaleLowerCase().includes(query))
+  })
+}
+
+function visibleChunks(row) {
+  const filtered = filteredChunks(row)
+  const size = row._chunkPageSize || 20
+  const lastPage = Math.max(1, Math.ceil(filtered.length / size))
+  const page = Math.min(row._chunkPage || 1, lastPage)
+  const start = (page - 1) * size
+  return filtered.slice(start, start + size)
+}
+
+function resetChunkPage(row) {
+  row._chunkPage = 1
+}
+
+function hasChunkFilters(row) {
+  return Boolean((row._chunkQuery || '').trim())
+    || !['', 'ALL'].includes(row._chunkStatus)
+    || !['', 'ALL'].includes(row._chunkType)
+}
+
+function clearChunkFilters(row) {
+  row._chunkQuery = ''
+  row._chunkStatus = 'ALL'
+  row._chunkType = 'ALL'
+  resetChunkPage(row)
+}
+
+function collapseDocument(row) {
+  documentTable.value?.toggleRowExpansion(row, false)
 }
 
 function vectorTag(row) {
@@ -196,7 +374,7 @@ function vectorText(row) {
 
 function canRetryEmbedding(row) {
   const { total, embedded } = vectorCounts(row)
-  return row.status !== 1 && total > 0 && embedded < total
+  return row.status !== 1 && !isQualityBlocked(row) && total > 0 && embedded < total
 }
 
 function ocrTag(status) {
@@ -226,6 +404,7 @@ async function handleExpandChange(row, expandedRows) {
     ? expandedRows.some(item => item.id === row.id)
     : Boolean(expandedRows)
   if (!expanded || row._chunks) return
+  initializeChunkWorkspace(row)
   row._loading = true
   try {
     const r = await request.get('/admin/doc/' + row.id + '/chunks')
@@ -238,6 +417,7 @@ async function approve(row, chunk) {
   try {
     await request.post('/admin/doc/chunks/' + chunk.id + '/approve')
     chunk.status = 'APPROVED'
+    resetChunkPage(row)
     ElMessage.success('已通过')
   } catch(e) {}
 }
@@ -247,6 +427,7 @@ async function reject(row, chunk) {
     await request.post('/admin/doc/chunks/' + chunk.id + '/reject')
     chunk.status = 'REJECTED'
     qaGroupChunks(row, chunk).forEach(item => { item.directAnswerEnabled = 0 })
+    resetChunkPage(row)
     ElMessage.success('已拒绝')
   } catch(e) {}
 }
@@ -290,12 +471,12 @@ async function toggleDirectAnswer(row, chunk, enabled) {
 async function approveAll(row) {
   try {
     await ElMessageBox.confirm('确认通过该文档所有切片？', '提示', { type: 'info' })
-    const pending = (row._chunks || []).filter(c => c.status !== 'APPROVED')
-    for (const c of pending) {
-      await request.post('/admin/doc/chunks/' + c.id + '/approve')
-      c.status = 'APPROVED'
-    }
-    ElMessage.success(`已通过 ${pending.length} 条切片`)
+    const r = await request.post('/admin/doc/' + row.id + '/approve-all', {}, { timeout: 180000 })
+    const chunks = row._chunks || []
+    chunks.forEach(chunk => { chunk.status = 'APPROVED' })
+    row.approvedCount = row.chunkCount || row._chunks?.length || 0
+    resetChunkPage(row)
+    ElMessage.success(`已通过 ${r.data?.approved || 0} 条切片`)
   } catch(e) {}
 }
 
@@ -327,6 +508,50 @@ async function retryEmbedding(row) {
   }
 }
 
+async function publishDocument(row) {
+  row._publishing = true
+  try {
+    await ElMessageBox.confirm(
+      `确认发布 v${row.documentVersion || 1}？同一知识集的旧版本将自动归档。`,
+      '发布知识库', { type: 'warning' })
+    const r = await request.post('/admin/doc/' + row.id + '/publish')
+    row.publishStatus = 'PUBLISHED'
+    row.documentVersion = r.data?.documentVersion || row.documentVersion || 1
+    ElMessage.success('知识库已发布，客服检索索引已刷新')
+    await fetch()
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.message || '发布失败')
+  } finally {
+    row._publishing = false
+  }
+}
+
+async function archiveDocument(row) {
+  row._archiving = true
+  try {
+    await ElMessageBox.confirm('归档后客服将不再检索该版本，确认继续？', '归档知识库', {
+      type: 'warning'
+    })
+    await request.post('/admin/doc/' + row.id + '/archive')
+    row.publishStatus = 'ARCHIVED'
+    ElMessage.success('知识库已归档')
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.message || '归档失败')
+  } finally {
+    row._archiving = false
+  }
+}
+
+async function updatePriority(row, value) {
+  try {
+    await request.put('/admin/doc/' + row.id + '/priority', { priority: value })
+    ElMessage.success('优先级已更新')
+  } catch (e) {
+    ElMessage.error(e?.message || '优先级更新失败')
+    await fetch()
+  }
+}
+
 function handleSuccess() {
   ElMessage.success('上传成功，正在解析...')
   setTimeout(fetch, 2000)
@@ -350,5 +575,58 @@ onMounted(fetch)
 <style scoped>
 .file-cell { display:flex; align-items:center; gap:8px; min-width:0; }
 .file-cell span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chunk-workspace { padding:12px 20px 16px; background:#f7f8fa; }
+.chunk-heading,
+.chunk-summary,
+.chunk-heading-actions,
+.chunk-toolbar,
+.chunk-actions { display:flex; align-items:center; gap:8px; }
+.chunk-heading { justify-content:space-between; margin-bottom:10px; }
+.chunk-summary { min-width:0; flex-wrap:wrap; }
+.chunk-count { color:#606266; font-size:13px; font-variant-numeric:tabular-nums; }
+.chunk-heading-actions { flex-shrink:0; }
+.chunk-toolbar {
+  position:sticky;
+  top:0;
+  z-index:2;
+  flex-wrap:wrap;
+  padding:10px 0;
+  background:#f7f8fa;
+}
+.chunk-search { width:320px; max-width:100%; }
+.chunk-filter { width:140px; }
+.priority-input { width:104px; }
+.chunk-list {
+  max-height:min(58vh, 620px);
+  overflow:auto;
+  padding-right:6px;
+  scrollbar-gutter:stable;
+}
+.chunk-item {
+  display:flex;
+  align-items:flex-start;
+  gap:12px;
+  min-height:96px;
+  margin-bottom:8px;
+  padding:12px;
+  border:1px solid #e4e7ed;
+  border-radius:6px;
+  background:#fff;
+}
+.chunk-content { flex:1; min-width:0; }
+.chunk-meta { display:flex; align-items:center; gap:6px; margin-bottom:4px; color:#909399; font-size:12px; }
+.chunk-preview { max-height:120px; overflow:hidden; white-space:pre-wrap; font-size:13px; line-height:1.5; }
+.chunk-actions { flex-shrink:0; flex-wrap:wrap; justify-content:flex-end; max-width:280px; }
+.chunk-pagination { display:flex; justify-content:flex-end; padding-top:10px; }
 .qa-question { margin-bottom:4px; font-size:13px; font-weight:600; color:#303133; }
+
+@media (max-width: 900px) {
+  .chunk-workspace { padding:10px; }
+  .chunk-heading { align-items:flex-start; }
+  .chunk-item { flex-direction:column; }
+  .chunk-actions { max-width:none; width:100%; justify-content:flex-start; }
+  .chunk-search { width:100%; }
+  .chunk-filter { flex:1; min-width:120px; }
+  .chunk-pagination { justify-content:flex-start; overflow-x:auto; }
+}
 </style>

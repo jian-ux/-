@@ -73,6 +73,8 @@ public class KnowledgeItemController {
         "\u4e0d", "\u6ca1", "\u672a", "\u975e", "\u65e0", "\u522b", "\u83ab", "\u52ff"
     );
     private static final Pattern QUESTION_SEPARATORS = Pattern.compile("[\\p{P}\\p{S}\\s]+");
+    private static final Pattern EXPLICIT_QUESTION_ALIAS =
+        Pattern.compile("[^?？,，;；\\r\\n]+[?？]");
     private static final Pattern LEADING_CONNECTORS = Pattern.compile("^[的地得]+");
     private static final List<String> QUESTION_FILLER_PREFIXES = List.of(
         "请问一下", "麻烦问下", "想问一下", "我想问", "请问",
@@ -136,6 +138,7 @@ public class KnowledgeItemController {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("type", "item");
         payload.put("sourceType", "faq");
+        payload.put("sourceScope", "KNOWLEDGE");
         payload.put("sourceId", item.getId());
         payload.put("itemId", item.getId());
         if (item.getCategoryId() != null) payload.put("categoryId", item.getCategoryId());
@@ -159,11 +162,17 @@ public class KnowledgeItemController {
 
         String normalizedText = normalizeQuestion(lowerText);
         String normalizedQuestion = normalizeQuestion(item.getQuestion());
-        boolean exactQuestion = !normalizedText.isEmpty()
+        String kw = item.getKeywords();
+        boolean exactStandardQuestion = !normalizedText.isEmpty()
             && normalizedText.equals(normalizedQuestion);
-        if (exactQuestion) {
+        boolean exactAlias = matchesExplicitQuestionAlias(normalizedText, kw);
+        boolean exactQuestion = exactStandardQuestion || exactAlias;
+        if (exactStandardQuestion) {
             score = 1.0;
             matchMode = "exact_question";
+        } else if (exactAlias) {
+            score = 1.0;
+            matchMode = "exact_alias";
         } else if (normalizedText.length() >= 4 && normalizedQuestion.length() >= 4
                 && (normalizedText.contains(normalizedQuestion)
                     || normalizedQuestion.contains(normalizedText))) {
@@ -175,9 +184,8 @@ public class KnowledgeItemController {
         }
 
         // 1. Keyword matching with negative word detection
-        String kw = item.getKeywords();
         if (StringUtils.hasText(kw)) {
-            String[] keywords = kw.split(",");
+            String[] keywords = splitKeywords(kw);
             int totalKw = keywords.length;
             int hitKw = 0;
             int longestHitChars = 0;
@@ -247,6 +255,20 @@ public class KnowledgeItemController {
         }
 
         return new KeywordMatchScore(score, exactQuestion, matchMode);
+    }
+
+    private boolean matchesExplicitQuestionAlias(String normalizedText, String keywords) {
+        if (normalizedText.isEmpty() || !StringUtils.hasText(keywords)) return false;
+        var aliases = EXPLICIT_QUESTION_ALIAS.matcher(keywords);
+        while (aliases.find()) {
+            String alias = aliases.group().trim();
+            if (normalizedText.equals(normalizeQuestion(alias))) return true;
+        }
+        return false;
+    }
+
+    private String[] splitKeywords(String value) {
+        return value.split("[,，;；\\r\\n]+");
     }
 
     private String normalizeQuestion(String value) {
@@ -361,6 +383,16 @@ public class KnowledgeItemController {
             value.put("sectionPath", chunk.getSectionPath());
             value.put("charCount", chunk.getCharCount());
             value.put("chunkStrategyVersion", chunk.getChunkStrategyVersion());
+            if ("QA".equals(chunk.getContentType())) {
+                value.put("structuredQa", true);
+                value.put("knowledgeType", "structured_qa");
+                value.put("question", chunk.getQaQuestion());
+                value.put("answer", chunk.getQaAnswer());
+                value.put("fullAnswer", chunk.getQaAnswer());
+                value.put("qaKey", chunk.getQaKey());
+                value.put("qaGroupKey", chunk.getQaGroupKey());
+                value.put("qaVersion", chunk.getQaVersion());
+            }
             result.add(value);
         }
         return R.ok(result);

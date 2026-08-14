@@ -6,6 +6,7 @@ import com.feisheng.bot.core.client.StructuredUnitRetrievalClient;
 import com.feisheng.bot.core.client.StructuredUnitRetrievalClient.StructuredUnitHit;
 import com.feisheng.bot.core.dto.QueryVariant;
 import com.feisheng.bot.core.service.EmbeddingService;
+import com.feisheng.bot.core.service.BusinessSafetyBoundaryService;
 import com.feisheng.bot.core.service.QueryExpansionService;
 import com.feisheng.bot.core.service.RerankService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -56,7 +57,8 @@ class RagRetrievalServiceTest {
     void setUp() {
         service = new RagRetrievalService(faqMatchService, embeddingService,
             knowledgeClient, rerankService, queryExpansionService,
-            structuredUnitRetrievalClient, redisUtil, new ObjectMapper());
+            structuredUnitRetrievalClient, redisUtil, new ObjectMapper(),
+            new BusinessSafetyBoundaryService());
         configure(service);
         lenient().when(queryExpansionService.expand(anyString(), anyBoolean()))
             .thenAnswer(invocation -> List.of(QueryVariant.original(invocation.getArgument(0))));
@@ -71,6 +73,10 @@ class RagRetrievalServiceTest {
         ReflectionTestUtils.setField(target, "contextThreshold", 0.62);
         ReflectionTestUtils.setField(target, "lexicalThreshold", 0.72);
         ReflectionTestUtils.setField(target, "bm25Enabled", false);
+        ReflectionTestUtils.setField(target, "bm25FallbackMinScore", 8.0);
+        ReflectionTestUtils.setField(target, "bm25FallbackMinGapRatio", 1.10);
+        ReflectionTestUtils.setField(target, "bm25FallbackMinQuestionSimilarity", 0.60);
+        ReflectionTestUtils.setField(target, "bm25FallbackConfidence", 0.65);
         ReflectionTestUtils.setField(target, "rankFusionK", 60);
         ReflectionTestUtils.setField(target, "neighborRadius", 1);
         ReflectionTestUtils.setField(target, "maxNeighborChunks", 4);
@@ -190,6 +196,62 @@ class RagRetrievalServiceTest {
     }
 
     @Test
+    void acceptsClearlyLeadingAlignedBm25QuestionWhenRerankerIsUnavailable() {
+        String query = "你们是做什么的？";
+        ReflectionTestUtils.setField(service, "bm25Enabled", true);
+        ReflectionTestUtils.setField(service, "contextThreshold", 0.50);
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+
+        Map<String, Object> callback = structuredQa(4991L, 62L,
+            "请问近期使用中是否遇到问题？", "欢迎反馈使用问题。", 0.50, false, false);
+        Map<String, Object> introduction = structuredQa(4801L, 62L,
+            "点签是做什么的？", "点签提供电子合同全流程服务。", 0.0, false, false);
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(callback));
+
+        Map<String, Object> callbackBm25 = new HashMap<>(callback);
+        callbackBm25.remove("similarity");
+        callbackBm25.put("bm25Score", 13.6);
+        Map<String, Object> introductionBm25 = new HashMap<>(introduction);
+        introductionBm25.remove("similarity");
+        introductionBm25.put("bm25Score", 40.4);
+        when(knowledgeClient.bm25Match(query, 10, 0.0))
+            .thenReturn(List.of(introductionBm25, callbackBm25));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertTrue(result.answerable());
+        assertEquals(4801L, result.citations().get(0).get("sourceId"));
+        assertEquals(0.65, result.confidence());
+        Map<String, Object> accepted = result.candidates().stream()
+            .filter(candidate -> Long.valueOf(4801L).equals(candidate.get("sourceId")))
+            .findFirst().orElseThrow();
+        assertEquals(true, accepted.get("sparseFallbackAccepted"));
+        assertTrue(result.context().contains("点签提供电子合同全流程服务"));
+    }
+
+    @Test
+    void doesNotAcceptWeaklyAlignedBm25CandidateAsFallbackEvidence() {
+        String query = "你们是做什么的？";
+        ReflectionTestUtils.setField(service, "bm25Enabled", true);
+        ReflectionTestUtils.setField(service, "contextThreshold", 0.62);
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(false);
+        Map<String, Object> callback = structuredQa(4991L, 62L,
+            "近期是否遇到使用问题？", "欢迎反馈使用问题。", 0.0, false, false);
+        callback.remove("similarity");
+        callback.put("bm25Score", 40.0);
+        when(knowledgeClient.bm25Match(query, 10, 0.0)).thenReturn(List.of(callback));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertFalse(result.answerable());
+        assertEquals("no_answer", result.decision());
+    }
+
+    @Test
     void optionalCrossEncoderReranksFusedCandidates() {
         String query = "企业签合同需要什么";
         when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
@@ -237,6 +299,32 @@ class RagRetrievalServiceTest {
         assertEquals(31L, result.candidates().get(0).get("sourceId"));
         assertEquals(32L, result.candidates().get(1).get("sourceId"));
         assertEquals(expanded.query(), result.candidates().get(1).get("expandedQuery"));
+    }
+
+    @Test
+    void keepsRawQuantityQueryPrimaryAndUsesIntentRewriteAsWeightedRecall() {
+        String query = "批量发起合同支持多少份同时操作？";
+        QueryVariant rewrite = new QueryVariant(
+            "点签 是否支持签署 批量发起合同", 0.85, "intent_rewrite", false);
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+        when(embeddingService.embed(rewrite.query())).thenReturn(List.of(0.0, 1.0));
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(chunk(4192L, 60L, "支持同时发起10份", 0.74)));
+        when(knowledgeClient.semanticMatch(rewrite.query(), List.of(0.0, 1.0), 10))
+            .thenReturn(List.of(chunk(4100L, 60L, "批量发起功能介绍", 0.90)));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(
+            query, null, null, Collections.emptyMap(), List.of(rewrite), true);
+
+        assertTrue(result.answerable());
+        assertEquals(4192L, result.candidates().get(0).get("sourceId"));
+        Map<String, Object> rewriteCandidate = result.candidates().stream()
+            .filter(candidate -> Long.valueOf(4100L).equals(candidate.get("sourceId")))
+            .findFirst().orElseThrow();
+        assertEquals(0.85, rewriteCandidate.get("expansionWeight"));
+        assertEquals(rewrite.query(), rewriteCandidate.get("expandedQuery"));
     }
 
     @Test
@@ -292,7 +380,8 @@ class RagRetrievalServiceTest {
         String query = "企业认证材料";
         RagRetrievalService disabledExpansion = new RagRetrievalService(
             faqMatchService, embeddingService, knowledgeClient, rerankService,
-            null, structuredUnitRetrievalClient, redisUtil, new ObjectMapper());
+            null, structuredUnitRetrievalClient, redisUtil, new ObjectMapper(),
+            new BusinessSafetyBoundaryService());
         configure(disabledExpansion);
         when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
         when(embeddingService.isAvailable()).thenReturn(true);
@@ -699,6 +788,28 @@ class RagRetrievalServiceTest {
     }
 
     @Test
+    void expandsDianqianWebsiteLinkQuestionWithoutDependingOnWhitespace() {
+        String query = "给我点签官网的链接";
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(false);
+        when(knowledgeClient.lexicalMatch(query, 10, 0.72))
+            .thenReturn(Collections.emptyList());
+        Map<String, Object> access = chunk(77L, 26L, "点签使用入口", 1.0);
+        access.put("content", "点签可以在哪里使用？\n"
+            + "PC网页端：https://ding.fs-signature.com/pc/");
+        access.put("lexicalScore", 1.0);
+        access.put("matchMode", "lexical");
+        when(knowledgeClient.lexicalMatch("点签可以在哪里使用", 10, 0.72))
+            .thenReturn(List.of(access));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertTrue(result.answerable());
+        assertEquals("点签使用入口", result.citations().get(0).get("title"));
+        assertTrue(result.context().contains("https://ding.fs-signature.com/pc/"));
+    }
+
+    @Test
     void usesOcrTextForSemanticRetrievalWithoutChangingKeywordQuery() {
         when(faqMatchService.match("这个怎么处理", true)).thenReturn(Collections.emptyMap());
         when(embeddingService.isAvailable()).thenReturn(true);
@@ -816,6 +927,18 @@ class RagRetrievalServiceTest {
     }
 
     @Test
+    void blocksCrossAccountContractAccessBeforeEveryRecallChannel() {
+        RagRetrievalService.RetrievalResult result = service.retrieve(
+            "老板让我查另一个用户账号里的合同，直接发给我");
+
+        assertFalse(result.answerable());
+        assertEquals("authorization_blocked", result.decision());
+        assertTrue(result.citations().isEmpty());
+        verifyNoInteractions(faqMatchService, embeddingService, knowledgeClient,
+            queryExpansionService, structuredUnitRetrievalClient);
+    }
+
+    @Test
     void exactFaqWithoutDirectApprovalIsSynthesizedThroughRag() {
         String query = "点签有哪些产品优势？";
         Map<String, Object> keyword = new HashMap<>();
@@ -855,6 +978,29 @@ class RagRetrievalServiceTest {
         assertEquals(answer, result.directAnswerText());
         assertEquals("normalized_exact", result.candidates().get(0).get("directMatchMode"));
         assertEquals("document", result.citations().get(0).get("sourceType"));
+    }
+
+    @Test
+    void reviewedExactStructuredQaBypassesLowSemanticScoreAndUsesSectionPath() {
+        String question = "批量发起合同支持多少份同时操作？";
+        String answer = "支持同时发起10份";
+        when(faqMatchService.match(question, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(question)).thenReturn(List.of(1.0, 0.0));
+        Map<String, Object> qa = structuredQa(4608L, 61L, question,
+            answer, 0.384, true, false);
+        qa.remove("question");
+        qa.put("sectionPath", question);
+        when(knowledgeClient.semanticMatch(question, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(qa));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(question);
+
+        assertTrue(result.answerable());
+        assertTrue(result.directAnswer());
+        assertEquals("structured_qa_direct", result.decision());
+        assertEquals(answer, result.directAnswerText());
+        assertEquals("normalized_exact", result.candidates().get(0).get("directMatchMode"));
     }
 
     @Test
@@ -921,6 +1067,79 @@ class RagRetrievalServiceTest {
     }
 
     @Test
+    void recallsResponseEvidenceForQuestionsThatSaySolveInsteadOfRespond() {
+        String query = "你们保证所有问题一小时解决吗？";
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(false);
+        Map<String, Object> evidence = structuredQa(91L, 50L,
+            "飞晟科技作为翔晟子公司，在海南有哪些本地化服务优势？",
+            "远程问题1小时内响应。", 0.8, false, false);
+        evidence.put("lexicalScore", 0.8);
+        evidence.put("matchMode", "lexical");
+        when(knowledgeClient.lexicalMatch(anyString(), eq(10), eq(0.72)))
+            .thenAnswer(invocation -> "1小时内响应".equals(invocation.getArgument(0))
+                ? List.of(evidence) : Collections.emptyList());
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertTrue(result.answerable());
+        assertTrue(result.context().contains("远程问题1小时内响应"));
+        verify(knowledgeClient).lexicalMatch("1小时内响应", 10, 0.72);
+    }
+
+    @Test
+    void exactLexicalAliasBeatsGenericMultiChannelMatches() {
+        String query = "远程问题多久响应？";
+        ReflectionTestUtils.setField(service, "bm25Enabled", true);
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+
+        Map<String, Object> hotline = chunk(201L, 50L, "客服热线工作时间", 0.59);
+        Map<String, Object> callback = chunk(202L, 50L, "客户问题回访", 0.56);
+        Map<String, Object> slow = chunk(203L, 50L, "小程序加载缓慢", 0.54);
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(hotline, callback, slow));
+
+        Map<String, Object> evidence = chunk(91L, 50L, "海南本地化服务优势", 1.0);
+        evidence.put("content", "远程问题1小时内响应；上门协助服务需提前预约。");
+        Map<String, Object> evidenceBm25 = new HashMap<>(evidence);
+        evidenceBm25.remove("similarity");
+        evidenceBm25.put("bm25Score", 25.42);
+        evidenceBm25.put("matchMode", "bm25");
+        Map<String, Object> hotlineBm25 = new HashMap<>(hotline);
+        hotlineBm25.remove("similarity");
+        hotlineBm25.put("bm25Score", 16.55);
+        hotlineBm25.put("matchMode", "bm25");
+        Map<String, Object> callbackBm25 = new HashMap<>(callback);
+        callbackBm25.remove("similarity");
+        callbackBm25.put("bm25Score", 11.32);
+        callbackBm25.put("matchMode", "bm25");
+        Map<String, Object> slowBm25 = new HashMap<>(slow);
+        slowBm25.remove("similarity");
+        slowBm25.put("bm25Score", 11.04);
+        slowBm25.put("matchMode", "bm25");
+        when(knowledgeClient.bm25Match(query, 10, 0.0))
+            .thenReturn(List.of(evidenceBm25, hotlineBm25, callbackBm25, slowBm25));
+
+        Map<String, Object> exactLexical = new HashMap<>(evidence);
+        exactLexical.put("lexicalScore", 1.0);
+        exactLexical.put("similarity", 1.0);
+        exactLexical.put("matchMode", "lexical");
+        when(knowledgeClient.lexicalMatch(query, 10, 0.72))
+            .thenReturn(Collections.emptyList());
+        when(knowledgeClient.lexicalMatch("远程问题", 10, 0.72))
+            .thenReturn(List.of(exactLexical));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertTrue(result.answerable());
+        assertEquals(91L, result.citations().get(0).get("sourceId"));
+        assertEquals(1.0, result.candidates().get(0).get("lexicalScore"));
+        assertTrue(result.context().contains("远程问题1小时内响应"));
+    }
+
+    @Test
     void fallsBackToRagWhenRerankCandidatesAreTooClose() {
         String query = "公司发票要怎么弄";
         when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
@@ -982,6 +1201,196 @@ class RagRetrievalServiceTest {
             < result.context().indexOf("员工每年享有五天年假"));
         assertTrue(result.context().contains("认证通过后可以创建企业印章"));
         assertTrue(result.context().contains("章节：企业服务 > 企业认证"));
+    }
+
+    @Test
+    void doesNotMixDifferentStructuredQaNeighborIntoForeignAuthenticationContext() {
+        String query = "foreign enterprise authentication";
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+
+        Map<String, Object> foreign = structuredQa(201L, 42L, query,
+            "bank-card or manual review", 0.86, false, false);
+        foreign.put("chunkIndex", 10);
+        foreign.put("sectionPath", "authentication");
+        foreign.put("qaGroupKey", "foreign-auth");
+        foreign.put("content", "bank-card or manual review");
+        Map<String, Object> genericPayment = structuredQa(202L, 42L,
+            "enterprise authentication payment", "public-account one-cent transfer",
+            0.40, false, false);
+        genericPayment.put("chunkIndex", 9);
+        genericPayment.put("sectionPath", "authentication");
+        genericPayment.put("qaGroupKey", "general-auth");
+        genericPayment.put("content", "public-account one-cent transfer");
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(foreign));
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertTrue(result.answerable());
+        assertTrue(result.context().contains("bank-card or manual review"));
+        assertFalse(result.context().contains("public-account one-cent transfer"));
+        assertEquals(1, result.citations().size());
+        verify(knowledgeClient, never()).neighborChunks(42L, 10, 1, "authentication");
+    }
+
+    @Test
+    void keepsOneAnchorPerStructuredQaGroupAndSkipsRedundantNeighbors() {
+        String query = "点签有什么功能？";
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+
+        Map<String, Object> first = structuredQa(401L, 60L, "点签有什么功能？",
+            "点签主要包含印章、权限和合同管理功能。", 0.86, false, false);
+        first.put("qaGroupKey", "feature-group");
+        first.put("chunkIndex", 10);
+        first.put("sectionPath", "产品功能");
+        Map<String, Object> duplicate = structuredQa(402L, 60L, "点签有什么功能？",
+            "点签主要包含印章、权限和合同管理功能。", 0.85, false, false);
+        duplicate.put("qaGroupKey", "feature-group");
+        duplicate.put("chunkIndex", 11);
+        duplicate.put("sectionPath", "产品功能");
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(first, duplicate));
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertTrue(result.answerable());
+        assertEquals(1, result.citations().size());
+        assertEquals(401L, result.citations().get(0).get("sourceId"));
+        verify(knowledgeClient, never()).neighborChunks(60L, 10, 1, "产品功能");
+    }
+
+    @Test
+    void exactStructuredQuestionExcludesSimilarQaCandidatesFromContext() {
+        String query = "客户是外籍人士，没有中国大陆手机号，能完成企业认证吗？";
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+
+        Map<String, Object> foreign = structuredQa(301L, 53L, query,
+            "国际护照可使用银行卡认证或人工审核。", 0.70, false, false);
+        foreign.put("qaGroupKey", "foreign-auth");
+        Map<String, Object> generic = structuredQa(302L, 53L, "企业怎么认证？",
+            "管理员先完成个人认证。", 0.90, false, false);
+        generic.put("qaGroupKey", "generic-enterprise-auth");
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(foreign, generic));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertTrue(result.answerable());
+        assertFalse(result.directAnswer());
+        assertEquals(1, result.citations().size());
+        assertEquals(301L, result.citations().get(0).get("sourceId"));
+        assertTrue(result.context().contains("国际护照可使用银行卡认证或人工审核"));
+        assertFalse(result.context().contains("管理员先完成个人认证"));
+        assertTrue(result.context().contains("不得自行假设客户属于其中某一行"));
+        assertTrue(result.context().contains("不得补充事实未明确说明的手机号归属"));
+    }
+
+    @Test
+    void embeddedStandardQuestionExcludesDifferentStructuredAnswersFromContext() {
+        String query = "点签电子合同主要包含的7大功能";
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+
+        Map<String, Object> features = structuredQa(351L, 53L,
+            "请问您是否已经添加点签应用？",
+            "点签电子合同主要包含的7大功能：印章、身份、权限、存储、多公司、模板和提醒。",
+            0.86, false, false);
+        features.put("qaGroupKey", "product-features");
+        Map<String, Object> introduction = structuredQa(352L, 53L,
+            "电子合同可以帮我实现什么？",
+            "电子合同可以帮助企业在线签署和远程协同。", 0.84, false, false);
+        introduction.put("qaGroupKey", "product-introduction");
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(features, introduction));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertTrue(result.answerable());
+        assertFalse(result.directAnswer());
+        assertEquals(1, result.citations().size());
+        assertEquals(351L, result.citations().get(0).get("sourceId"));
+        assertTrue(result.context().contains("印章、身份、权限"));
+        assertFalse(result.context().contains("远程协同"));
+    }
+
+    @Test
+    void dominantStructuredQaParaphraseExcludesWeakerDifferentAnswers() {
+        String query = "国际护照没有大陆手机号，可以怎么认证？";
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+
+        Map<String, Object> foreign = structuredQa(321L, 53L,
+            "客户是外籍人士，没有中国大陆手机号，能完成企业认证吗？",
+            "国际护照：手机×，人脸×，银行卡√，人工审核√。",
+            0.75, false, false);
+        foreign.put("qaGroupKey", "foreign-auth");
+        Map<String, Object> generic = structuredQa(322L, 53L, "企业怎么认证？",
+            "管理员先完成个人认证。", 0.64, false, false);
+        generic.put("qaGroupKey", "generic-enterprise-auth");
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(foreign, generic));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertEquals(1, result.citations().size());
+        assertTrue(result.context().contains("国际护照：手机×，人脸×"));
+        assertFalse(result.context().contains("管理员先完成个人认证"));
+    }
+
+    @Test
+    void closeStructuredQaParaphrasesRemainAvailableForSynthesis() {
+        String query = "企业认证还有哪些方式？";
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+
+        Map<String, Object> first = structuredQa(331L, 53L, "企业怎么认证？",
+            "管理员认证。", 0.72, false, false);
+        first.put("qaGroupKey", "enterprise-auth");
+        Map<String, Object> second = structuredQa(332L, 53L,
+            "法人无法人脸识别时有其他认证方式吗？",
+            "可按标准答案中的其他方式认证。", 0.68, false, false);
+        second.put("qaGroupKey", "alternative-auth");
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(first, second));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertEquals(2, result.citations().size());
+        assertTrue(result.context().contains("管理员认证"));
+        assertTrue(result.context().contains("其他方式认证"));
+    }
+
+    @Test
+    void compositeQuestionKeepsEvidenceFromMultipleStructuredQaGroups() {
+        String query = "外籍人士怎么认证？对公打款多久通过？";
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+
+        Map<String, Object> foreign = structuredQa(311L, 53L,
+            "客户是外籍人士，没有中国大陆手机号，能完成企业认证吗？",
+            "国际护照可使用银行卡认证或人工审核。", 0.86, false, false);
+        foreign.put("qaGroupKey", "foreign-auth");
+        Map<String, Object> payment = structuredQa(312L, 53L,
+            "企业认证用对公打款，打款后多久能通过认证？",
+            "收到款项后按标准答案中的时效处理。", 0.74, false, false);
+        payment.put("qaGroupKey", "payment-auth");
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(foreign, payment));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertTrue(result.answerable());
+        assertEquals(2, result.citations().size());
+        assertTrue(result.context().contains("国际护照可使用银行卡认证或人工审核"));
+        assertTrue(result.context().contains("收到款项后按标准答案中的时效处理"));
     }
 
     @Test

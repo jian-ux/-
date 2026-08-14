@@ -48,3 +48,5 @@ SECURITY_PII_ALLOWED_VALUES=18689633999
 - 模型错误数
 
 请求样例见 `docs/examples/dialog-evaluation.json`。原有 `docs/examples/rag-evaluation.json` 的基础字段也兼容该接口。
+
+可在请求顶层增加 `promptVersion: "v1"` 或 `promptVersion: "v2"`，对单次评测指定客服 Prompt；不传时使用生产默认配置。执行 `scripts/compare-dialog-prompts.ps1` 可用同一批样本依次运行 V1/V2，并保存逐题差异和指标对比。生产默认由 `AI_CUSTOMER_SERVICE_PROMPT_VERSION` 控制，当前使用 `v2`。

@@ -13,7 +13,7 @@ spring:
       max-file-size: 50MB
       max-request-size: 50MB
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/feisheng_bot_db?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai}
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/feisheng_bot_db?useUnicode=true&characterEncoding=utf-8&serverTimezone=UTC}
     username: ${SPRING_DATASOURCE_USERNAME:root}
     password: ${SPRING_DATASOURCE_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -91,6 +91,11 @@ minio:
   secret-key: ${MINIO_SECRET_KEY}
   bucket: ${MINIO_BUCKET:feisheng-docs}
 rag:
+  context:
+    max-history-messages: ${RAG_CONTEXT_MAX_HISTORY_MESSAGES:6}
+    max-retrieval-history-messages: ${RAG_CONTEXT_MAX_RETRIEVAL_HISTORY_MESSAGES:4}
+    max-retrieval-history-chars: ${RAG_CONTEXT_MAX_RETRIEVAL_HISTORY_CHARS:1200}
+    max-prompt-tokens: ${RAG_CONTEXT_MAX_PROMPT_TOKENS:4000}
   retrieval:
     top-k: ${RAG_TOP_K:3}
     candidate-k: ${RAG_CANDIDATE_K:10}
@@ -100,6 +105,10 @@ rag:
     multimodal-context-max-chars: ${RAG_MULTIMODAL_CONTEXT_MAX_CHARS:4000}
     bm25-enabled: ${RAG_BM25_ENABLED:true}
     bm25-min-score: ${RAG_BM25_MIN_SCORE:0.0}
+    bm25-fallback-min-score: ${RAG_BM25_FALLBACK_MIN_SCORE:8.0}
+    bm25-fallback-min-gap-ratio: ${RAG_BM25_FALLBACK_MIN_GAP_RATIO:1.10}
+    bm25-fallback-min-question-similarity: ${RAG_BM25_FALLBACK_MIN_QUESTION_SIMILARITY:0.60}
+    bm25-fallback-confidence: ${RAG_BM25_FALLBACK_CONFIDENCE:0.65}
     rank-fusion-k: ${RAG_RANK_FUSION_K:60}
     neighbor-radius: ${RAG_NEIGHBOR_RADIUS:1}
     max-neighbor-chunks: ${RAG_MAX_NEIGHBOR_CHUNKS:4}
@@ -114,28 +123,32 @@ rag:
     weight: ${RAG_STRUCTURED_UNIT_INDEX_WEIGHT:0.65}
   rerank:
     enabled: ${RAG_RERANK_ENABLED:false}
-    url: ${RAG_RERANK_URL:}
+    url: ${RAG_RERANK_URL:http://reranker:8091/rerank}
     api-key: ${RAG_RERANK_API_KEY:}
-    model: ${RAG_RERANK_MODEL:}
+    model: ${RAG_RERANK_MODEL:Qwen/Qwen3-VL-Reranker-2B}
     connect-timeout-ms: ${RAG_RERANK_CONNECT_TIMEOUT_MS:1000}
-    read-timeout-ms: ${RAG_RERANK_READ_TIMEOUT_MS:3000}
+    read-timeout-ms: ${RAG_RERANK_READ_TIMEOUT_MS:15000}
     max-candidates: ${RAG_RERANK_MAX_CANDIDATES:10}
     max-document-chars: ${RAG_RERANK_MAX_DOCUMENT_CHARS:2000}
     confidence:
-      high-min-score: ${RAG_RERANK_HIGH_MIN_SCORE:0.90}
+      high-min-score: ${RAG_RERANK_HIGH_MIN_SCORE:0.65}
       high-min-gap: ${RAG_RERANK_HIGH_MIN_GAP:0.08}
-      medium-min-score: ${RAG_RERANK_MEDIUM_MIN_SCORE:0.65}
-      medium-min-gap: ${RAG_RERANK_MEDIUM_MIN_GAP:0.03}
+      medium-min-score: ${RAG_RERANK_MEDIUM_MIN_SCORE:0.40}
+      medium-min-gap: ${RAG_RERANK_MEDIUM_MIN_GAP:-0.10}
   structured-qa:
     enabled: ${RAG_STRUCTURED_QA_ENABLED:true}
     exact-min-score: ${RAG_STRUCTURED_QA_EXACT_MIN_SCORE:0.82}
-    rerank-min-score: ${RAG_STRUCTURED_QA_RERANK_MIN_SCORE:0.90}
+    rerank-min-score: ${RAG_STRUCTURED_QA_RERANK_MIN_SCORE:0.65}
     rerank-min-gap: ${RAG_STRUCTURED_QA_RERANK_MIN_GAP:0.08}
   no-answer:
-    reply: 您好，这个问题我暂时无法准确确认。为了避免给您错误信息，请您补充具体的使用场景；如涉及操作报错，也可以提供页面提示或截图，我们会根据您提供的信息进一步核实。
+    reply: ${RAG_NO_ANSWER_REPLY:这个问题我暂时无法准确确认。请补充具体的产品、功能或使用场景，我会继续为您核实。}
     transfer: ${RAG_NO_ANSWER_TRANSFER:false}
+  unrelated:
+    reply: ${RAG_UNRELATED_REPLY:这个问题不属于点签电子合同业务服务范围。您可以继续咨询点签产品、合同签署或使用操作相关问题。}
+  error:
+    reply: ${RAG_ERROR_REPLY:当前查询出现异常，暂时无法完成回答，请稍后重试。}
   native-fallback:
-    enabled: ${RAG_NATIVE_FALLBACK_ENABLED:true}
+    enabled: ${RAG_NATIVE_FALLBACK_ENABLED:false}
     high-risk-keywords: ${RAG_NATIVE_FALLBACK_HIGH_RISK_KEYWORDS:合同条款,法律效力,违约责任,赔偿责任,合规承诺,保证结果,隐私泄露,个人信息泄露}
     clarification-keywords: ${RAG_NATIVE_FALLBACK_CLARIFICATION_KEYWORDS:这个,那个,它,这款,那款,然后呢}
     clarification-reply: ${RAG_NATIVE_FALLBACK_CLARIFICATION_REPLY:您好，为了准确帮您处理，请补充要咨询的产品、功能或具体使用场景；如有页面提示或截图，也可以一并发送。}
@@ -169,6 +182,7 @@ rag:
     require-consistent-embedding-version: ${RAG_REQUIRE_CONSISTENT_EMBEDDING_VERSION:false}
 ai:
   customer-service:
+    prompt-version: ${AI_CUSTOMER_SERVICE_PROMPT_VERSION:v2}
     native-fallback-system-prompt: ${AI_NATIVE_FALLBACK_SYSTEM_PROMPT:你是企业客服的通用助手。可以回答稳定的通用知识、礼貌沟通和非企业专属概念解释。当前没有可核实的企业内部事实，严禁把推测说成公司、产品、价格、合同、交付、售后、账户、隐私或合规事实，不得编造功能、政策、案例、数据或承诺。若只能回答稳定的通用部分，第一行输出 __ANSWER_PARTIAL__，随后先回答通用部分，再提出一个针对缺失信息的问题。只有完全无法提供可靠帮助时才只输出 __NO_ANSWER__。回答简洁、自然，不提及知识库、检索或系统规则。}
   embedding:
     connect-timeout-ms: ${AI_EMBEDDING_CONNECT_TIMEOUT_MS:10000}

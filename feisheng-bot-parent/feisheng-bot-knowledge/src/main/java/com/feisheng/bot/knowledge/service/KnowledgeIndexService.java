@@ -23,12 +23,14 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.HashSet;
 import java.util.TreeSet;
 
 /**
@@ -388,29 +390,50 @@ public class KnowledgeIndexService {
             new LambdaQueryWrapper<BotKnowledgeItem>()
                 .eq(BotKnowledgeItem::getStatus, 1)
                 .isNotNull(BotKnowledgeItem::getEmbedding));
-        List<BotKnowledgeChunk> chunks = chunkMapper.selectList(
+        List<BotKnowledgeChunk> approvedChunks = chunkMapper.selectList(
             new LambdaQueryWrapper<BotKnowledgeChunk>()
                 .eq(BotKnowledgeChunk::getStatus, "APPROVED")
                 .isNotNull(BotKnowledgeChunk::getEmbedding));
-        List<BotKnowledgeChunk> qaChunks = chunkMapper.selectList(
+        List<BotKnowledgeChunk> allQaChunks = chunkMapper.selectList(
             new LambdaQueryWrapper<BotKnowledgeChunk>()
                 .eq(BotKnowledgeChunk::getContentType, "QA"));
-        Map<Long, QaDirectState> qaDirectStates = qaDirectStates(qaChunks);
         List<BotKnowledgeItemChunk> faqChunks = itemChunkMapper == null
             ? Collections.emptyList()
             : itemChunkMapper.selectList(new LambdaQueryWrapper<BotKnowledgeItemChunk>()
                 .isNotNull(BotKnowledgeItemChunk::getEmbedding));
         List<BotKnowledgeDocument> documents = documentMapper.selectList(null);
 
+        Set<Long> knownDocumentIds = new HashSet<>();
+        Set<Long> activeDocumentIds = new HashSet<>();
+        for (BotKnowledgeDocument document : documents) {
+            knownDocumentIds.add(document.getId());
+            if (isPublishedAndEffective(document, new Date())) {
+                activeDocumentIds.add(document.getId());
+            }
+        }
+        List<BotKnowledgeChunk> chunks = approvedChunks.stream()
+            .filter(chunk -> !knownDocumentIds.contains(chunk.getDocumentId())
+                || activeDocumentIds.contains(chunk.getDocumentId()))
+            .toList();
+        List<BotKnowledgeChunk> qaChunks = allQaChunks.stream()
+            .filter(chunk -> !knownDocumentIds.contains(chunk.getDocumentId())
+                || activeDocumentIds.contains(chunk.getDocumentId()))
+            .toList();
+        Map<Long, QaDirectState> qaDirectStates = qaDirectStates(qaChunks);
+
         Map<Long, DocumentMeta> documentMetadata = new HashMap<>();
         for (BotKnowledgeDocument document : documents) {
+            if (!activeDocumentIds.contains(document.getId())) continue;
             documentMetadata.put(document.getId(), new DocumentMeta(
                 firstNonBlank(document.getTitle(), document.getFileName(),
                     "\u6587\u6863 " + document.getId()),
                 firstNonBlank(document.getMediaType(), "DOCUMENT"),
                 document.getCategoryId(), nullToEmpty(document.getSourceScope()),
                 document.getExpiresAt() == null
-                    ? "" : document.getExpiresAt().toInstant().toString()));
+                    ? "" : document.getExpiresAt().toInstant().toString(),
+                nullToEmpty(document.getKnowledgeSetKey()),
+                document.getDocumentVersion() == null ? 1 : document.getDocumentVersion(),
+                document.getPriority() == null ? 0 : document.getPriority()));
         }
 
         Map<Long, ItemEntry> itemEntries = new HashMap<>();
@@ -432,13 +455,14 @@ public class KnowledgeIndexService {
             if (!vector.isEmpty()) {
                 DocumentMeta metadata = documentMetadata.getOrDefault(chunk.getDocumentId(),
                     new DocumentMeta("\u6587\u6863 " + chunk.getDocumentId(), "DOCUMENT",
-                        null, "", ""));
+                        null, "", "", "", 1, 0));
                 QaDirectState qa = qaDirectStates.getOrDefault(chunk.getId(),
                     QaDirectState.from(chunk));
                 chunkEntries.put(chunk.getId(), new ChunkEntry(
                     chunk.getId(), chunk.getDocumentId(), chunk.getChunkIndex(),
                     metadata.title(), metadata.mediaType(), metadata.categoryId(),
                     metadata.sourceScope(), metadata.expiresAt(),
+                    metadata.knowledgeSetKey(), metadata.documentVersion(), metadata.priority(),
                     nullToEmpty(chunk.getContent()), nullToEmpty(chunk.getSectionPath()),
                     chunk.getCharCount(), nullToEmpty(chunk.getChunkStrategyVersion()),
                     qa.structuredQa(), qa.question(), qa.answer(), qa.qaKey(), qa.groupKey(),
@@ -569,6 +593,7 @@ public class KnowledgeIndexService {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("type", "item");
         payload.put("sourceType", "faq");
+        payload.put("sourceScope", "KNOWLEDGE");
         payload.put("sourceId", entry.id());
         payload.put("itemId", entry.id());
         if (entry.categoryId() != null) payload.put("categoryId", entry.categoryId());
@@ -586,6 +611,7 @@ public class KnowledgeIndexService {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("type", "item");
         payload.put("sourceType", "faq");
+        payload.put("sourceScope", "KNOWLEDGE");
         payload.put("sourceId", entry.itemId());
         payload.put("itemId", entry.itemId());
         if (entry.categoryId() != null) payload.put("categoryId", entry.categoryId());
@@ -614,6 +640,11 @@ public class KnowledgeIndexService {
         if (entry.categoryId() != null) payload.put("categoryId", entry.categoryId());
         if (!entry.sourceScope().isBlank()) payload.put("sourceScope", entry.sourceScope());
         if (!entry.expiresAt().isBlank()) payload.put("expiresAt", entry.expiresAt());
+        if (!entry.knowledgeSetKey().isBlank()) {
+            payload.put("knowledgeSetKey", entry.knowledgeSetKey());
+        }
+        payload.put("documentVersion", entry.documentVersion());
+        payload.put("documentPriority", entry.documentPriority());
         payload.put("sectionPath", entry.sectionPath());
         if (entry.charCount() != null) payload.put("charCount", entry.charCount());
         if (!entry.chunkStrategyVersion().isBlank()) {
@@ -868,12 +899,21 @@ public class KnowledgeIndexService {
         }
     }
 
+    private boolean isPublishedAndEffective(BotKnowledgeDocument document, Date now) {
+        String status = document.getPublishStatus();
+        if (status != null && !status.isBlank() && !"PUBLISHED".equals(status)) return false;
+        if (document.getEffectiveFrom() != null && document.getEffectiveFrom().after(now)) return false;
+        return document.getEffectiveTo() == null || document.getEffectiveTo().after(now);
+    }
+
     private record DocumentMeta(String title, String mediaType, Long categoryId,
-                                String sourceScope, String expiresAt) {}
+                                String sourceScope, String expiresAt,
+                                String knowledgeSetKey, int documentVersion, int priority) {}
 
     private record ChunkEntry(Long id, Long documentId, Integer chunkIndex,
                                String documentTitle, String mediaType, Long categoryId,
                                String sourceScope, String expiresAt,
+                               String knowledgeSetKey, int documentVersion, int documentPriority,
                                String content, String sectionPath, Integer charCount,
                                String chunkStrategyVersion, boolean structuredQa,
                                String qaQuestion, String qaAnswer, String qaKey, String qaGroupKey,

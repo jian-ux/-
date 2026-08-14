@@ -10,7 +10,9 @@ import com.feisheng.bot.admin.service.DocumentParseService;
 import com.feisheng.bot.admin.service.ChunkingService;
 import com.feisheng.bot.admin.service.EmbeddingService;
 import com.feisheng.bot.admin.service.ImageOcrService;
+import com.feisheng.bot.admin.service.ImportQualityService;
 import com.feisheng.bot.admin.service.KnowledgeChunkPersistenceService;
+import com.feisheng.bot.admin.service.KnowledgeDocumentReleaseService;
 import com.feisheng.bot.admin.service.StructuredQaReviewService;
 import com.feisheng.bot.admin.service.TesseractOcrEngine;
 import com.feisheng.bot.admin.service.VectorSearchService;
@@ -50,8 +52,10 @@ public class AdminDocController {
     private final MinioStorageService storageService;
     private final KnowledgeIndexService indexService;
     private final ImageOcrService imageOcrService;
+    private final ImportQualityService importQualityService;
     private final KnowledgeChunkPersistenceService chunkPersistenceService;
     private final StructuredQaReviewService structuredQaReviewService;
+    private final KnowledgeDocumentReleaseService releaseService;
 
     // P1-3: Thread pool for async document ingestion
     private ExecutorService ingestExecutor;
@@ -60,6 +64,7 @@ public class AdminDocController {
     private static final int STATUS_PROCESSING = 1;
     private static final int STATUS_COMPLETED = 2;
     private static final int STATUS_FAILED = 3;
+    private static final int STATUS_QUALITY_BLOCKED = 4;
 
     @PostConstruct
     public void init() {
@@ -92,15 +97,19 @@ public class AdminDocController {
                                MinioStorageService storageService,
                                KnowledgeIndexService indexService,
                                ImageOcrService imageOcrService,
+                               ImportQualityService importQualityService,
                                KnowledgeChunkPersistenceService chunkPersistenceService,
-                               StructuredQaReviewService structuredQaReviewService) {
+                               StructuredQaReviewService structuredQaReviewService,
+                               KnowledgeDocumentReleaseService releaseService) {
         mapper = m; chunkMapper = cm; parseService = ps; chunkingService = cs;
         embeddingService = es; vectorSearch = vs;
         this.storageService = storageService;
         this.indexService = indexService;
         this.imageOcrService = imageOcrService;
+        this.importQualityService = importQualityService;
         this.chunkPersistenceService = chunkPersistenceService;
         this.structuredQaReviewService = structuredQaReviewService;
+        this.releaseService = releaseService;
     }
 
     @PostMapping("/upload")
@@ -131,6 +140,17 @@ public class AdminDocController {
             d.setOcrStatus(image ? "PROCESSING" : null);
             d.setFileSize(file.getSize());
             d.setStatus(STATUS_PROCESSING);
+            String knowledgeSetKey = KnowledgeDocumentReleaseService.normalizeKnowledgeSetKey(
+                null, file.getOriginalFilename(), file.getOriginalFilename(), 0L);
+            d.setKnowledgeSetKey(knowledgeSetKey);
+            d.setDocumentVersion(releaseService.nextVersion(knowledgeSetKey));
+            d.setPriority(0);
+            d.setPublishStatus(KnowledgeDocumentReleaseService.DRAFT);
+            d.setQualityStatus(ImportQualityService.PROCESSING);
+            d.setQualityMessage("正在检查文档结构");
+            d.setSourceRowCount(0);
+            d.setDetectedQaCount(0);
+            d.setInvalidRowCount(0);
             mapper.insert(d);
 
             final Long docId = d.getId();
@@ -166,6 +186,7 @@ public class AdminDocController {
 
             // 1. Parse document or run image OCR
             String text;
+            DocumentParseService.ParsedDocument parsedDocument = null;
             if (image) {
                 try {
                     ImageOcrService.OcrResult ocr = imageOcrService.extract(filePath, fileName);
@@ -176,27 +197,36 @@ public class AdminDocController {
                     throw e;
                 }
             } else {
-                text = parseService.parse(filePath, fileName);
+                parsedDocument = parseService.parseDetailed(filePath, fileName);
+                text = parsedDocument.text();
             }
             if (text == null || text.trim().isEmpty()) {
                 log.warn("Empty content after parsing document {}", docId);
-                updateDocStatus(docId, STATUS_FAILED);
+                updateDocFailure(docId, "文档解析后没有可用文字");
                 return;
             }
 
             // 2. Chunk
             List<ChunkingService.Chunk> chunks = image
                 ? chunkingService.chunkImage(text)
-                : chunkingService.chunk(text);
+                : chunkingService.chunk(parsedDocument);
             if (chunks.isEmpty()) {
                 log.warn("No chunks produced for document {}", docId);
-                updateDocStatus(docId, STATUS_FAILED);
+                updateDocFailure(docId, "文档未生成任何知识切片");
                 return;
             }
 
-            // 3. Generate embeddings
-            List<String> texts = chunks.stream().map(ChunkingService.Chunk::embeddingText).toList();
-            List<float[]> embeddings = embeddingService.embedBatch(texts);
+            ImportQualityService.Assessment quality = image
+                ? new ImportQualityService.Assessment(ImportQualityService.PASSED,
+                    "图片文字识别完成，共生成 " + chunks.size() + " 个切片",
+                    0, 0, 0)
+                : importQualityService.assess(parsedDocument, chunks);
+
+            // 3. Generate embeddings only after the structural quality gate passes.
+            List<float[]> embeddings = quality.blocked()
+                ? List.of()
+                : embeddingService.embedBatch(
+                    chunks.stream().map(ChunkingService.Chunk::embeddingText).toList());
 
             // 4. Build the complete replacement before atomically swapping old chunks.
             int embeddedCount = 0;
@@ -211,7 +241,7 @@ public class AdminDocController {
                 chunk.setCharCount(c.charCount);
                 chunk.setChunkStrategyVersion(c.strategyVersion);
                 chunk.setContentType(c.contentType);
-                chunk.setQaQuestion(c.qaQuestion);
+                chunk.setQaQuestion(truncateNullable(c.qaQuestion, 1000));
                 chunk.setQaAnswer(c.qaAnswer);
                 chunk.setQaKey(c.qaKey);
                 chunk.setQaGroupKey(c.qaGroupKey);
@@ -226,12 +256,15 @@ public class AdminDocController {
             }
             chunkPersistenceService.replaceDocumentChunks(docId, persistedChunks);
 
-            // 5. A document is searchable only when every chunk has an embedding.
-            int nextStatus = embeddedCount == chunks.size()
-                ? STATUS_COMPLETED : STATUS_FAILED;
-            updateDocStatus(docId, nextStatus);
+            // 5. Abnormal imports remain inspectable but cannot be approved or searched.
+            int nextStatus = quality.blocked()
+                ? STATUS_QUALITY_BLOCKED
+                : embeddedCount == chunks.size() ? STATUS_COMPLETED : STATUS_FAILED;
+            updateDocResult(docId, nextStatus, quality);
             indexService.sync();
-            if (nextStatus == STATUS_COMPLETED) {
+            if (nextStatus == STATUS_QUALITY_BLOCKED) {
+                log.warn("Document {} blocked by import quality gate: {}", docId, quality.message());
+            } else if (nextStatus == STATUS_COMPLETED) {
                 log.info("Document {} ingested: {} chunks, {} with embeddings",
                     docId, chunks.size(), embeddedCount);
             } else {
@@ -241,10 +274,40 @@ public class AdminDocController {
 
         } catch (Exception e) {
             log.error("Ingestion failed for document {}: {}", docId, e.getMessage(), e);
-            updateDocStatus(docId, STATUS_FAILED);
+            updateDocFailure(docId, "处理失败：" + e.getMessage());
         } finally {
             try { Files.deleteIfExists(filePath); }
             catch (IOException e) { log.warn("Failed to delete ingestion temp file {}", filePath); }
+        }
+    }
+
+    private void updateDocResult(Long docId, int status,
+                                 ImportQualityService.Assessment quality) {
+        try {
+            BotKnowledgeDocument doc = mapper.selectById(docId);
+            if (doc == null) return;
+            doc.setStatus(status);
+            doc.setQualityStatus(quality.status());
+            doc.setQualityMessage(truncateNullable(quality.message(), 1000));
+            doc.setSourceRowCount(quality.sourceRowCount());
+            doc.setDetectedQaCount(quality.detectedQaCount());
+            doc.setInvalidRowCount(quality.invalidRowCount());
+            mapper.updateById(doc);
+        } catch (Exception e) {
+            log.warn("Failed to update document {} import result: {}", docId, e.getMessage());
+        }
+    }
+
+    private void updateDocFailure(Long docId, String message) {
+        try {
+            BotKnowledgeDocument doc = mapper.selectById(docId);
+            if (doc == null) return;
+            doc.setStatus(STATUS_FAILED);
+            doc.setQualityStatus("FAILED");
+            doc.setQualityMessage(truncateNullable(message, 1000));
+            mapper.updateById(doc);
+        } catch (Exception e) {
+            log.warn("Failed to record document {} failure: {}", docId, e.getMessage());
         }
     }
 
@@ -313,9 +376,47 @@ public class AdminDocController {
             Files.copy(input, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         }
         doc.setStatus(STATUS_PROCESSING);
+        doc.setQualityStatus(ImportQualityService.PROCESSING);
+        doc.setQualityMessage("正在重新识别并检查图片内容");
         doc.setOcrStatus("PROCESSING");
         doc.setOcrError(null);
         mapper.updateById(doc);
+        ingestExecutor.submit(() -> ingestDocument(id, filePath, doc.getFileName()));
+        return R.ok(Map.of("id", id, "status", "processing"));
+    }
+
+    @PostMapping("/{id}/reprocess")
+    public R<Map<String, Object>> reprocess(@PathVariable Long id) throws Exception {
+        BotKnowledgeDocument doc = mapper.selectById(id);
+        if (doc == null) return R.fail(404, "Document not found");
+        if (Objects.equals(doc.getStatus(), STATUS_PROCESSING)) {
+            return R.fail(409, "Document is already being processed");
+        }
+        if (doc.getObjectKey() == null || doc.getObjectKey().isBlank()) {
+            return R.fail(400, "Stored document is unavailable");
+        }
+
+        Path filePath = Files.createTempFile(
+            "feisheng-reprocess-", "-" + safeFileName(doc.getFileName()));
+        try (InputStream input = storageService.download(doc.getObjectKey())) {
+            Files.copy(input, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (Exception e) {
+            Files.deleteIfExists(filePath);
+            throw e;
+        }
+
+        doc.setStatus(STATUS_PROCESSING);
+        doc.setQualityStatus(ImportQualityService.PROCESSING);
+        doc.setQualityMessage("Reparsing the stored document with the current ingestion rules");
+        doc.setSourceRowCount(0);
+        doc.setDetectedQaCount(0);
+        doc.setInvalidRowCount(0);
+        if ("IMAGE".equals(doc.getMediaType())) {
+            doc.setOcrStatus("PROCESSING");
+            doc.setOcrError(null);
+        }
+        mapper.updateById(doc);
+
         ingestExecutor.submit(() -> ingestDocument(id, filePath, doc.getFileName()));
         return R.ok(Map.of("id", id, "status", "processing"));
     }
@@ -339,17 +440,24 @@ public class AdminDocController {
     }
 
     @GetMapping("/{id}/chunks")
-    public R<List<BotKnowledgeChunk>> chunks(@PathVariable Long id) {
-        return R.ok(chunkMapper.selectList(
+    public R<List<ChunkPreview>> chunks(@PathVariable Long id) {
+        List<ChunkPreview> chunks = chunkMapper.selectList(
             new LambdaQueryWrapper<BotKnowledgeChunk>()
                 .eq(BotKnowledgeChunk::getDocumentId, id)
-                .orderByAsc(BotKnowledgeChunk::getChunkIndex)));
+                .orderByAsc(BotKnowledgeChunk::getChunkIndex))
+            .stream()
+            .map(ChunkPreview::from)
+            .toList();
+        return R.ok(chunks);
     }
 
     @PostMapping("/{id}/embedding/retry")
     public R<Map<String, Object>> retryEmbeddings(@PathVariable Long id) {
         BotKnowledgeDocument document = mapper.selectById(id);
         if (document == null) return R.fail(404, "文档不存在");
+        if (isQualityBlocked(document)) {
+            return R.fail(409, qualityBlockMessage(document));
+        }
 
         List<BotKnowledgeChunk> chunks = chunkMapper.selectList(
             new LambdaQueryWrapper<BotKnowledgeChunk>()
@@ -402,12 +510,72 @@ public class AdminDocController {
     public R<Void> approveChunk(@PathVariable Long chunkId) {
         BotKnowledgeChunk c = chunkMapper.selectById(chunkId);
         if (c != null) {
+            BotKnowledgeDocument document = mapper.selectById(c.getDocumentId());
+            if (isQualityBlocked(document)) {
+                return R.fail(409, qualityBlockMessage(document));
+            }
             c.setStatus("APPROVED");
             chunkMapper.updateById(c);
             vectorSearch.reloadChunk(chunkId);
             indexService.sync();
         }
         return R.ok();
+    }
+
+    @PostMapping("/{id}/approve-all")
+    public R<Map<String, Object>> approveAllChunks(@PathVariable Long id) {
+        BotKnowledgeDocument document = mapper.selectById(id);
+        if (document == null) return R.fail(404, "文档不存在");
+        if (isQualityBlocked(document)) {
+            return R.fail(409, qualityBlockMessage(document));
+        }
+        if (!Objects.equals(document.getStatus(), STATUS_COMPLETED)) {
+            return R.fail(409, "文档尚未处理完成，不能审核");
+        }
+
+        List<BotKnowledgeChunk> chunks = chunkMapper.selectList(
+            new LambdaQueryWrapper<BotKnowledgeChunk>()
+                .eq(BotKnowledgeChunk::getDocumentId, id)
+                .orderByAsc(BotKnowledgeChunk::getChunkIndex));
+        int approved = 0;
+        for (BotKnowledgeChunk chunk : chunks) {
+            if ("APPROVED".equals(chunk.getStatus())) continue;
+            chunk.setStatus("APPROVED");
+            chunkMapper.updateById(chunk);
+            vectorSearch.reloadChunk(chunk.getId());
+            approved++;
+        }
+        indexService.sync();
+        return R.ok(Map.of("documentId", id, "approved", approved,
+            "total", chunks.size()));
+    }
+
+    @PostMapping("/{id}/publish")
+    public R<KnowledgeDocumentReleaseService.ReleaseResult> publish(@PathVariable Long id) {
+        try {
+            return R.ok(releaseService.publish(id));
+        } catch (KnowledgeDocumentReleaseService.ReleaseException e) {
+            return R.fail(e.status(), e.getMessage());
+        }
+    }
+
+    @PostMapping("/{id}/archive")
+    public R<KnowledgeDocumentReleaseService.ReleaseResult> archive(@PathVariable Long id) {
+        try {
+            return R.ok(releaseService.archive(id));
+        } catch (KnowledgeDocumentReleaseService.ReleaseException e) {
+            return R.fail(e.status(), e.getMessage());
+        }
+    }
+
+    @PutMapping("/{id}/priority")
+    public R<KnowledgeDocumentReleaseService.ReleaseResult> updatePriority(
+            @PathVariable Long id, @RequestBody PriorityRequest request) {
+        try {
+            return R.ok(releaseService.updatePriority(id, request.priority()));
+        } catch (KnowledgeDocumentReleaseService.ReleaseException e) {
+            return R.fail(e.status(), e.getMessage());
+        }
     }
 
     @PostMapping("/chunks/{chunkId}/reject")
@@ -428,6 +596,12 @@ public class AdminDocController {
             @PathVariable Long chunkId,
             @RequestBody DirectAnswerRequest request) {
         try {
+            BotKnowledgeChunk chunk = chunkMapper.selectById(chunkId);
+            if (chunk == null) return R.fail(404, "知识切片不存在");
+            BotKnowledgeDocument document = mapper.selectById(chunk.getDocumentId());
+            if (isQualityBlocked(document)) {
+                return R.fail(409, qualityBlockMessage(document));
+            }
             StructuredQaReviewService.UpdateResult result =
                 structuredQaReviewService.updateDirectAnswer(
                     chunkId, request.enabled(), request.version());
@@ -468,6 +642,34 @@ public class AdminDocController {
 
     public record DirectAnswerRequest(boolean enabled, Integer version) {}
 
+    public record PriorityRequest(Integer priority) {}
+
+    public record ChunkPreview(
+        Long id,
+        Integer chunkIndex,
+        String content,
+        String sectionPath,
+        Integer charCount,
+        String chunkStrategyVersion,
+        String contentType,
+        String qaQuestion,
+        String qaKey,
+        String qaGroupKey,
+        Integer qaVersion,
+        Integer directAnswerEnabled,
+        String status,
+        boolean hasEmbedding
+    ) {
+        private static ChunkPreview from(BotKnowledgeChunk chunk) {
+            return new ChunkPreview(
+                chunk.getId(), chunk.getChunkIndex(), chunk.getContent(),
+                chunk.getSectionPath(), chunk.getCharCount(), chunk.getChunkStrategyVersion(),
+                chunk.getContentType(), chunk.getQaQuestion(), chunk.getQaKey(),
+                chunk.getQaGroupKey(), chunk.getQaVersion(), chunk.getDirectAnswerEnabled(),
+                chunk.getStatus(), AdminDocController.hasEmbedding(chunk));
+        }
+    }
+
     private void populateChunkStatistics(BotKnowledgeDocument document) {
         List<BotKnowledgeChunk> chunks = chunkMapper.selectList(
             new LambdaQueryWrapper<BotKnowledgeChunk>()
@@ -499,6 +701,23 @@ public class AdminDocController {
     private static String truncate(String value, int maxLength) {
         if (value == null) return "OCR failed";
         return value.length() <= maxLength ? value : value.substring(0, maxLength);
+    }
+
+    private static String truncateNullable(String value, int maxLength) {
+        if (value == null) return null;
+        return value.length() <= maxLength ? value : value.substring(0, maxLength);
+    }
+
+    private static boolean isQualityBlocked(BotKnowledgeDocument document) {
+        return document != null && (Objects.equals(document.getStatus(), STATUS_QUALITY_BLOCKED)
+            || ImportQualityService.BLOCKED.equals(document.getQualityStatus()));
+    }
+
+    private static String qualityBlockMessage(BotKnowledgeDocument document) {
+        String message = document == null ? null : document.getQualityMessage();
+        return message == null || message.isBlank()
+            ? "文档结构检查未通过，不能审核或生成向量"
+            : "文档结构检查未通过：" + message;
     }
 
     private static String contentType(String fileType) {

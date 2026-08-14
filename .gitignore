@@ -12,7 +12,12 @@
 uploads/
 backups/
 tmp/
+.runtime/
+.model-cache/
 .understand-anything/
+outputs/
+**/__pycache__/
+*.py[cod]
 
 # One-off local migration/debug helpers
 dingtalk_doc.html

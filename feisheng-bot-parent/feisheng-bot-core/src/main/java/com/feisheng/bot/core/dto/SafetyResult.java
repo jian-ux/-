@@ -28,9 +28,14 @@ public class SafetyResult {
     }
 
     public static SafetyResult handoff(String reason) {
+        return handoff(reason, null);
+    }
+
+    public static SafetyResult handoff(String reason, String replyText) {
         SafetyResult r = new SafetyResult();
         r.blocked = true;
         r.action = "HANDOFF";
+        r.replyText = replyText;
         r.hitRules.add(reason);
         return r;
     }

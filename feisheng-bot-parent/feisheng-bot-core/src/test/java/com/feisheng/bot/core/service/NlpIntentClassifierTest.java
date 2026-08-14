@@ -47,6 +47,17 @@ class NlpIntentClassifierTest {
     }
 
     @Test
+    void quantityQuestionDemonstratesWhyTheRawQueryMustBeRetained() {
+        NlpIntentClassifier.IntentAnalysis result =
+            classifier.classify("批量发起合同支持多少份同时操作？");
+
+        assertEquals(NlpIntentClassifier.IntentCode.CONTRACT_TYPE_CAPABILITY,
+            result.intentCode());
+        assertEquals("点签 是否支持签署 合同", result.retrievalQuery());
+        assertFalse(result.retrievalQuery().contains("多少份"));
+    }
+
+    @Test
     void keepsUnknownContractTypesBehindSpecificEvidenceGuard() {
         NlpIntentClassifier.IntentAnalysis result =
             classifier.classify("你们平台支持签量子合同吗？");

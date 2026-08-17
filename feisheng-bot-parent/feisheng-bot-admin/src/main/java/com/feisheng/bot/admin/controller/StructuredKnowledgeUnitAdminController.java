@@ -1,6 +1,7 @@
 package com.feisheng.bot.admin.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.feisheng.bot.admin.service.StructuredKnowledgeExtractionService;
 import com.feisheng.bot.admin.service.StructuredKnowledgeUnitReviewService;
 import com.feisheng.bot.common.vo.R;
@@ -53,7 +54,9 @@ public class StructuredKnowledgeUnitAdminController {
     }
 
     @GetMapping("/list")
-    public R<List<UnitView>> list(
+    public R<Page<UnitView>> list(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) Long documentId,
             @RequestParam(required = false) String status) {
         LambdaQueryWrapper<BotKnowledgeSemanticUnit> query =
@@ -62,7 +65,11 @@ public class StructuredKnowledgeUnitAdminController {
                 .eq(StringUtils.hasText(status), BotKnowledgeSemanticUnit::getStatus,
                     StringUtils.hasText(status) ? status.trim().toUpperCase(Locale.ROOT) : null)
                 .orderByDesc(BotKnowledgeSemanticUnit::getId);
-        return R.ok(unitMapper.selectList(query).stream().map(UnitView::from).toList());
+        Page<BotKnowledgeSemanticUnit> result = unitMapper.selectPage(
+            new Page<>(Math.max(page, 1), Math.min(Math.max(size, 1), 100)), query);
+        Page<UnitView> response = new Page<>(result.getCurrent(), result.getSize(), result.getTotal());
+        response.setRecords(result.getRecords().stream().map(UnitView::from).toList());
+        return R.ok(response);
     }
 
     @GetMapping("/index/status")

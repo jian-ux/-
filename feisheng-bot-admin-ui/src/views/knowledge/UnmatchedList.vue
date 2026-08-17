@@ -6,7 +6,7 @@
         <el-tag type="info">智能试聊中知识库无法回答的问题会自动记录</el-tag>
       </div>
     </template>
-    <el-table :data="questions" border stripe>
+    <el-table v-loading="loading" :data="questions" border stripe>
       <el-table-column prop="id" label="编号" width="68" />
       <el-table-column prop="question" label="问题" min-width="300" show-overflow-tooltip />
       <el-table-column prop="similarCount" label="出现次数" width="100" align="center">
@@ -26,6 +26,15 @@
         </template>
       </el-table-column>
     </el-table>
+    <div class="pagination-wrap">
+      <el-pagination
+        v-model:current-page="page"
+        :page-size="pageSize"
+        :total="total"
+        layout="total, prev, pager, next"
+        @current-change="fetch"
+      />
+    </div>
   </el-card>
 </template>
 <script setup>
@@ -34,10 +43,23 @@ import request from '../../api/index.js'
 import { ElMessage } from 'element-plus'
 import { formatDateTime } from '../../utils/displayText.js'
 const questions = ref([])
+const loading = ref(false)
+const total = ref(0)
+const page = ref(1)
+const pageSize = 10
 
 async function fetch() {
-  try { const r = await request.get('/admin/unmatched/list'); questions.value = r.data?.records||[] }
-  catch(e) { questions.value = [] }
+  loading.value = true
+  try {
+    const r = await request.get('/admin/unmatched/list', { params: { page: page.value, size: pageSize } })
+    questions.value = r.data?.records || []
+    total.value = r.data?.total || 0
+  } catch(e) {
+    questions.value = []
+    total.value = 0
+  } finally {
+    loading.value = false
+  }
 }
 
 async function resolve(id) {
@@ -47,3 +69,6 @@ async function resolve(id) {
 
 onMounted(fetch)
 </script>
+<style scoped>
+.pagination-wrap { display:flex; justify-content:flex-end; margin-top:16px; overflow-x:auto; }
+</style>

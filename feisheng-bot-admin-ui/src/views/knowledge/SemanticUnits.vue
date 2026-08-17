@@ -16,14 +16,14 @@
         :controls="false"
         placeholder="文档 ID"
         aria-label="按文档 ID 筛选"
-        @keyup.enter="loadUnits"
+        @keyup.enter="searchUnits"
       />
-      <el-select v-model="statusFilter" clearable placeholder="全部状态" @change="loadUnits">
+      <el-select v-model="statusFilter" clearable placeholder="全部状态" @change="searchUnits">
         <el-option label="待审核" value="DRAFT" />
         <el-option label="已通过" value="APPROVED" />
         <el-option label="已拒绝" value="REJECTED" />
       </el-select>
-      <el-button type="primary" :icon="Search" :loading="loading" @click="loadUnits">
+      <el-button type="primary" :icon="Search" :loading="loading" @click="searchUnits">
         查询
       </el-button>
       <el-button :icon="Refresh" :disabled="loading" @click="resetFilters">重置</el-button>
@@ -272,6 +272,16 @@
       </article>
       <el-empty v-if="!loading && !units.length" description="暂无结构化知识单元" />
     </div>
+
+    <div class="pagination-wrap">
+      <el-pagination
+        v-model:current-page="page"
+        :page-size="pageSize"
+        :total="total"
+        layout="total, prev, pager, next"
+        @current-change="loadUnits"
+      />
+    </div>
   </el-card>
 
   <el-dialog
@@ -380,6 +390,9 @@ import request from '../../api/index.js'
 import SemanticUnitDetails from './components/SemanticUnitDetails.vue'
 
 const units = ref([])
+const total = ref(0)
+const page = ref(1)
+const pageSize = 10
 const unitTableRef = ref()
 const loading = ref(false)
 const documentIdFilter = ref(null)
@@ -440,17 +453,28 @@ async function loadUnits() {
   loading.value = true
   listError.value = ''
   try {
-    const params = {}
+    const params = { page: page.value, size: pageSize }
     if (documentIdFilter.value) params.documentId = documentIdFilter.value
     if (statusFilter.value) params.status = statusFilter.value
     const response = await request.get('/admin/knowledge/semantic-unit/list', { params })
-    units.value = Array.isArray(response.data) ? response.data : []
+    units.value = response.data?.records || []
+    total.value = response.data?.total || 0
+    if (!units.value.length && total.value > 0 && page.value > 1) {
+      page.value = Math.max(1, Math.ceil(total.value / pageSize))
+      return await loadUnits()
+    }
   } catch (error) {
     units.value = []
+    total.value = 0
     listError.value = errorMessage(error, '结构化知识加载失败')
   } finally {
     loading.value = false
   }
+}
+
+function searchUnits() {
+  page.value = 1
+  loadUnits()
 }
 
 function clearSelection() {
@@ -487,6 +511,7 @@ function toggleMobileSelection(unit, selected) {
 function resetFilters() {
   documentIdFilter.value = null
   statusFilter.value = 'DRAFT'
+  page.value = 1
   loadUnits()
 }
 
@@ -601,6 +626,7 @@ async function extractDocument() {
 
     documentIdFilter.value = documentId
     statusFilter.value = 'DRAFT'
+    page.value = 1
     extractionVisible.value = false
     if (report.status === 'PARTIAL') {
       ElMessage.warning(report.message || '部分抽取批次失败')
@@ -809,6 +835,7 @@ onMounted(loadUnits)
 .action-button-wrapper { display:inline-flex; }
 .muted { color:#909399; }
 .mobile-unit-list { display:none; min-height:80px; }
+.pagination-wrap { display:flex; justify-content:flex-end; margin-top:16px; overflow-x:auto; }
 .dialog-alert { margin-bottom:16px; }
 :deep(.extraction-dialog) { max-width:calc(100vw - 24px); }
 :deep(.extraction-dialog .el-input-number),
@@ -836,6 +863,7 @@ onMounted(loadUnits)
   .batch-buttons .action-button-wrapper,
   .batch-buttons .action-button-wrapper .el-button { width:100%; margin:0; }
   .mobile-unit-list { display:block; }
+  .pagination-wrap { justify-content:center; }
   .mobile-unit-item { padding:16px 0; border-top:1px solid #ebeef5; }
   .mobile-unit-item:last-child { border-bottom:1px solid #ebeef5; }
   .mobile-unit-header { align-items:flex-start; justify-content:space-between; }

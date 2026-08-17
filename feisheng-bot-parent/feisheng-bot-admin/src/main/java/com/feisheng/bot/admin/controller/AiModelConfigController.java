@@ -31,7 +31,7 @@ public class AiModelConfigController {
 
     @GetMapping("/list")
     public R<Page<BotAiModelConfig>> list(@RequestParam(defaultValue = "1") int p,
-                                           @RequestParam(defaultValue = "20") int s) {
+                                           @RequestParam(defaultValue = "10") int s) {
         return R.ok(mapper.selectPage(new Page<>(p, s),
             new LambdaQueryWrapper<BotAiModelConfig>().orderByDesc(BotAiModelConfig::getIsDefault)
                 .orderByDesc(BotAiModelConfig::getCreateTime)));

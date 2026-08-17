@@ -36,7 +36,7 @@
         </template>
       </el-table-column>
     </el-table>
-    <el-pagination style="margin-top:20px" layout="prev,pager,next" :total="total" :current-page="page" @current-change="onPageChange" />
+    <el-pagination style="margin-top:20px" layout="total,prev,pager,next" :total="total" :page-size="pageSize" :current-page="page" @current-change="onPageChange" />
     <el-dialog v-model="dialogVisible" :title="isEdit?'编辑意图':'新增意图'" width="min(550px, 92vw)">
       <el-form :model="form" label-width="100px">
         <el-form-item label="意图名称" required><el-input v-model="form.intentName" maxlength="100" placeholder="如：退款咨询" /></el-form-item>
@@ -56,12 +56,13 @@ import request from '../../api/index.js'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { localizedSystemText } from '../../utils/displayText.js'
 const intents = ref([]); const total = ref(0); const page = ref(1); const loading = ref(false)
+const pageSize = 10
 const intentName = ref(''); const saving = ref(false)
 const dialogVisible = ref(false); const isEdit = ref(false)
 const form = reactive({ id:null, intentName:'', intentKeywords:'', replyTemplate:'' })
 async function fetch() {
   loading.value = true
-  try { const r = await request.get('/admin/intent/list', {params:{page:page.value,size:20,intentName:intentName.value.trim()}}); intents.value = r.data.records; total.value = r.data.total }
+  try { const r = await request.get('/admin/intent/list', {params:{page:page.value,size:pageSize,intentName:intentName.value.trim()}}); intents.value = r.data.records; total.value = r.data.total }
   catch(e) { intents.value = [] }
   finally { loading.value = false }
 }

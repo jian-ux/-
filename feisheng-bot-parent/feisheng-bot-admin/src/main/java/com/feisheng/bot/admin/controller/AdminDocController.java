@@ -348,7 +348,7 @@ public class AdminDocController {
     @GetMapping("/list")
     public R<Page<BotKnowledgeDocument>> list(
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "10") int size) {
         Page<BotKnowledgeDocument> result = mapper.selectPage(new Page<>(page, size),
             new LambdaQueryWrapper<BotKnowledgeDocument>()
                 .eq(BotKnowledgeDocument::getSourceScope, "KNOWLEDGE")

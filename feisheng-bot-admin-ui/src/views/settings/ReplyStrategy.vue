@@ -11,7 +11,7 @@
     </el-alert>
     <el-table :data="strategies" border stripe v-loading="loading">
       <el-table-column label="优先级" width="80">
-        <template #default="{row,$index}">{{ $index+1 }}</template>
+        <template #default="{row,$index}">{{ (page - 1) * pageSize + $index + 1 }}</template>
       </el-table-column>
       <el-table-column prop="strategyName" label="策略名称" min-width="150">
         <template #default="{row}">{{ localizedSystemText(row.strategyName, '回复策略') }}</template>
@@ -36,7 +36,7 @@
         </template>
       </el-table-column>
     </el-table>
-    <el-pagination style="margin-top:20px" layout="prev,pager,next" :total="total" :current-page="page" @current-change="onPageChange" />
+    <el-pagination style="margin-top:20px" layout="total,prev,pager,next" :total="total" :page-size="pageSize" :current-page="page" @current-change="onPageChange" />
     <el-dialog v-model="dialogVisible" :title="isEdit?'编辑策略':'新增策略'" width="550px">
       <el-form :model="form" label-width="100px">
         <el-form-item label="策略名称"><el-input v-model="form.strategyName" placeholder="如：退款转人工" /></el-form-item>
@@ -66,11 +66,12 @@ import request from '../../api/index.js'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { localizedSystemText } from '../../utils/displayText.js'
 const strategies = ref([]); const total = ref(0); const page = ref(1); const loading = ref(false)
+const pageSize = 10
 const dialogVisible = ref(false); const isEdit = ref(false)
 const form = reactive({ strategyName:'', action:'BLOCK', ruleCondition:'', priority:10 })
 async function fetch() {
   loading.value = true
-  try { const r = await request.get('/admin/reply-strategy/list', {params:{page:page.value,size:20}}); strategies.value = r.data.records; total.value = r.data.total }
+  try { const r = await request.get('/admin/reply-strategy/list', {params:{page:page.value,size:pageSize}}); strategies.value = r.data.records; total.value = r.data.total }
   catch(e) { strategies.value = [] }
   finally { loading.value = false }
 }

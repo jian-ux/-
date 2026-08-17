@@ -18,7 +18,7 @@ public class UserController {
     private final SysUserRoleMapper roleMapper;
     public UserController(SysUserMapper m, PasswordEncoder pe, SysUserRoleMapper rm) { mapper=m; passwordEncoder=pe; roleMapper=rm; }
     @GetMapping("/list") public R<Page<SysUser>> list(
-            @RequestParam(defaultValue="1") int page, @RequestParam(defaultValue="20") int size,
+            @RequestParam(defaultValue="1") int page, @RequestParam(defaultValue="10") int size,
             @RequestParam(required=false) String username, @RequestParam(required=false) Integer status) {
         LambdaQueryWrapper<SysUser> q = new LambdaQueryWrapper<>();
         if (StringUtils.hasText(username)) q.like(SysUser::getUsername, username);

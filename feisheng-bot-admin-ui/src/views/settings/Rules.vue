@@ -65,6 +65,14 @@
         </el-table-column>
       </el-table>
     </el-card>
+    <div v-if="filteredRules.length" class="pagination-wrap">
+      <el-pagination
+        v-model:current-page="page"
+        :page-size="pageSize"
+        :total="filteredRules.length"
+        layout="total, prev, pager, next"
+      />
+    </div>
 
     <!-- 新增/编辑对话框 -->
     <el-dialog v-model="dialogVisible" :title="isEdit?'编辑规则':'新增规则'" width="550px">
@@ -113,13 +121,15 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, reactive } from 'vue'
+import { ref, computed, onMounted, reactive, watch } from 'vue'
 import request from '../../api/index.js'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { localizedErrorText, localizedSystemText } from '../../utils/displayText.js'
 
 const rules = ref([])
 const filterType = ref('')
+const page = ref(1)
+const pageSize = 10
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const form = reactive({
@@ -142,12 +152,17 @@ const categories = computed(() => [
     active: filterType.value === 'AI_DISCLAIMER' },
 ])
 
-const groupedRules = computed(() => {
-  const all = filterType.value
+const filteredRules = computed(() => (
+  filterType.value
     ? rules.value.filter(r => r.ruleType === filterType.value)
     : rules.value
+))
+
+const groupedRules = computed(() => {
+  const start = (page.value - 1) * pageSize
+  const visible = filteredRules.value.slice(start, start + pageSize)
   const groups = {}
-  for (const r of all) {
+  for (const r of visible) {
     if (!groups[r.ruleType]) groups[r.ruleType] = []
     groups[r.ruleType].push(r)
   }
@@ -161,6 +176,7 @@ const groupedRules = computed(() => {
     type, rules, ...catMap[type] || {}
   }))
 })
+watch(filterType, () => { page.value = 1 })
 
 function actionTag(action) {
   return { BLOCK:'danger', REPLY_FIXED:'warning', HANDOFF:'primary', LOG_ONLY:'info' }[action] || 'info'
@@ -173,6 +189,7 @@ async function fetch() {
   try {
     const r = await request.get('/admin/rules/list', {params:{size:500}})
     rules.value = r.data?.records || []
+    page.value = Math.min(page.value, Math.max(1, Math.ceil(filteredRules.value.length / pageSize)))
   } catch(e) { rules.value = [] }
 }
 
@@ -224,4 +241,5 @@ onMounted(fetch)
 <style scoped>
 .cat-card { cursor: pointer; border: 2px solid transparent; transition: all 0.2s; }
 .cat-active { border-color: #409eff; background: #ecf5ff; }
+.pagination-wrap { display:flex; justify-content:flex-end; margin:0 0 15px; overflow-x:auto; }
 </style>

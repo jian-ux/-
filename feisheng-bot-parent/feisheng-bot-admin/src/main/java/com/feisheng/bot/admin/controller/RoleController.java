@@ -26,7 +26,7 @@ public class RoleController {
     @GetMapping("/list")
     public R<Page<SysRole>> list(
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "10") int size) {
         return R.ok(mapper.selectPage(new Page<>(page, size),
                 new LambdaQueryWrapper<SysRole>().orderByDesc(SysRole::getCreateTime)));
     }

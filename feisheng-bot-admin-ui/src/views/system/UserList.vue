@@ -24,7 +24,7 @@
         <template #default="{row}"><el-button size="small" @click="edit(row)">编辑</el-button><el-button size="small" type="danger" @click="del(row.id)">删除</el-button></template>
       </el-table-column>
     </el-table>
-    <el-pagination style="margin-top:20px" layout="prev,pager,next" :total="total" :current-page="page" @current-change="onPageChange" />
+    <el-pagination style="margin-top:20px" layout="total,prev,pager,next" :total="total" :page-size="pageSize" :current-page="page" @current-change="onPageChange" />
   </el-card>
   <el-dialog v-model="dialogVisible" :title="isEdit?'编辑用户':'新增用户'">
     <el-form :model="form" label-width="100px">
@@ -44,11 +44,12 @@ import request from '../../api/index.js'
 import { ElMessage } from 'element-plus'
 import { localizedSystemText } from '../../utils/displayText.js'
 const users = ref([]); const total = ref(0); const page = ref(1); const dialogVisible = ref(false); const isEdit = ref(false)
+const pageSize = 10
 const form = reactive({id:null,username:'',realName:'',email:'',password:'',status:1,roleIds:[]})
 const allRoles = ref([])
 const systemUserText = row => row.realName && !/[A-Za-z]/.test(row.realName) ? row.realName : `系统用户 ${row.id}`
 async function fetchRoles() { try { const r=await request.get('/admin/role/all'); allRoles.value=r.data } catch(e) { allRoles.value=[] } }
-const fetch = async () => { const r=await request.get('/admin/user/list',{params:{page:page.value,size:20}}); users.value=r.data.records; total.value=r.data.total }
+const fetch = async () => { const r=await request.get('/admin/user/list',{params:{page:page.value,size:pageSize}}); users.value=r.data.records; total.value=r.data.total }
 const onPageChange = (val) => { page.value = val; fetch() }
 const openAdd = () => { Object.assign(form,{id:null,username:'',realName:'',email:'',password:'',status:1,roleIds:[]}); isEdit.value=false; dialogVisible.value=true }
 const edit = async (row) => { Object.assign(form,row,{password:'',roleIds:[]}); try { const r=await request.get('/admin/user/'+row.id+'/roles'); form.roleIds=r.data||[] } catch(e){} isEdit.value=true; dialogVisible.value=true }

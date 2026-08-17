@@ -9,7 +9,7 @@
             placeholder="渠道类型筛选"
             clearable
             class="channel-filter"
-            @change="fetch"
+            @change="filterRecords"
           >
             <el-option label="网页" value="web" />
             <el-option label="企业微信" value="wechat" />
@@ -62,12 +62,10 @@
     <div class="pagination-wrap">
       <el-pagination
         v-model:current-page="currentPage"
-        v-model:page-size="pageSize"
-        :page-sizes="[10, 20, 50]"
+        :page-size="pageSize"
         :total="total"
-        layout="total, sizes, prev, pager, next, jumper"
+        layout="total, prev, pager, next, jumper"
         @current-change="fetch"
-        @size-change="fetch"
       />
     </div>
 
@@ -172,7 +170,7 @@ const saving = ref(false)
 const testingId = ref(null)
 const total = ref(0)
 const currentPage = ref(1)
-const pageSize = ref(20)
+const pageSize = 10
 const filterChannelType = ref('')
 const dialogVisible = ref(false)
 const isEdit = ref(false)
@@ -219,7 +217,7 @@ const rules = {
 async function fetch() {
   loading.value = true
   try {
-    const params = { page: currentPage.value, size: pageSize.value }
+    const params = { page: currentPage.value, size: pageSize }
     if (filterChannelType.value) params.channelType = filterChannelType.value
     const response = await request.get('/admin/channel/config/list', { params })
     records.value = response.data?.records || []
@@ -227,6 +225,11 @@ async function fetch() {
   } finally {
     loading.value = false
   }
+}
+
+function filterRecords() {
+  currentPage.value = 1
+  fetch()
 }
 
 async function openAdd() {

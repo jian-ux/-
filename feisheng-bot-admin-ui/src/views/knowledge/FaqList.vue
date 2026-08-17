@@ -7,7 +7,7 @@
         <el-button type="primary" @click="openCreate">新增常见问题</el-button>
       </div>
     </template>
-    <el-input v-model="keyword" placeholder="搜索常见问题" style="width:300px;margin-bottom:15px" clearable @clear="fetch" @keyup.enter="fetch" />
+    <el-input v-model="keyword" placeholder="搜索常见问题" style="width:300px;margin-bottom:15px" clearable @clear="search" @keyup.enter="search" />
     <el-table :data="items" border stripe @selection-change="onSelectionChange">
       <el-table-column type="selection" width="50" />
       <el-table-column prop="id" label="编号" width="68" />
@@ -40,12 +40,10 @@
     <div style="display:flex;justify-content:flex-end;margin-top:15px">
       <el-pagination
         v-model:current-page="page"
-        v-model:page-size="size"
+        :page-size="pageSize"
         :total="total"
-        :page-sizes="[10,20,50,100]"
-        layout="total,sizes,prev,pager,next"
+        layout="total,prev,pager,next"
         @current-change="fetch"
-        @size-change="fetch"
       />
     </div>
   </el-card>
@@ -76,7 +74,7 @@ import request from '../../api/index.js'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { contentText } from '../../utils/displayText.js'
 const items = ref([]); const keyword = ref(''); const dialogVisible = ref(false); const isEdit = ref(false)
-const page = ref(1); const size = ref(20); const total = ref(0)
+const page = ref(1); const pageSize = 10; const total = ref(0)
 const formRef = ref(); const saving = ref(false)
 const selectedRows = ref([])
 const selectedIds = computed(() => selectedRows.value.map(r => r.id))
@@ -88,11 +86,12 @@ const rules = {
 }
 const fetch = async () => {
   try {
-    const r=await request.get('/admin/knowledge/item/search',{params:{page:page.value,size:size.value,keyword:keyword.value}})
+    const r=await request.get('/admin/knowledge/item/search',{params:{page:page.value,size:pageSize,keyword:keyword.value}})
     items.value=r.data?.records||[]
     total.value=r.data?.total||0
   } catch(e) { items.value=[]; total.value=0 }
 }
+const search = () => { page.value = 1; fetch() }
 const resetForm = () => {
   Object.assign(form, emptyForm())
   isEdit.value = false

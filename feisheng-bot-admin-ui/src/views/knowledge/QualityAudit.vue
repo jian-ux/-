@@ -35,7 +35,7 @@
         <el-input v-model="keyword" :prefix-icon="Search" clearable placeholder="搜索问题、答案或切片编号" />
       </div>
 
-      <el-table :data="filteredFindings" border stripe row-key="key" class="desktop-table">
+      <el-table :data="paginatedFindings" border stripe row-key="key" class="desktop-table">
         <el-table-column type="expand" width="48">
           <template #default="{ row }">
             <div class="evidence-list">
@@ -72,7 +72,7 @@
       </el-table>
 
       <div class="mobile-list">
-        <article v-for="row in filteredFindings" :key="row.key" class="mobile-finding">
+        <article v-for="row in paginatedFindings" :key="row.key" class="mobile-finding">
           <div class="mobile-heading">
             <el-tag :type="severityTag(row.severity)" size="small">{{ severityText(row.severity) }}</el-tag>
             <span>{{ categoryText(row.category) }}</span>
@@ -89,12 +89,20 @@
       </div>
 
       <el-empty v-if="!loading && !filteredFindings.length" description="当前筛选条件下没有发现" />
+      <div v-if="filteredFindings.length" class="pagination-wrap">
+        <el-pagination
+          v-model:current-page="page"
+          :page-size="pageSize"
+          :total="filteredFindings.length"
+          layout="total, prev, pager, next"
+        />
+      </div>
     </div>
   </section>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import request from '../../api/index.js'
 
@@ -104,6 +112,8 @@ const report = ref(null)
 const severity = ref('ALL')
 const category = ref('')
 const keyword = ref('')
+const page = ref(1)
+const pageSize = 10
 const severityOptions = [
   { label: '全部', value: 'ALL' },
   { label: '阻断项', value: 'BLOCKER' },
@@ -128,10 +138,16 @@ const filteredFindings = computed(() => {
     return searchable.includes(query)
   })
 })
+const paginatedFindings = computed(() => {
+  const start = (page.value - 1) * pageSize
+  return filteredFindings.value.slice(start, start + pageSize)
+})
+watch([severity, category, keyword], () => { page.value = 1 })
 
 async function loadAudit() {
   loading.value = true
   errorText.value = ''
+  page.value = 1
   try {
     const response = await request.get('/admin/knowledge-quality/audit')
     report.value = response.data || null
@@ -190,6 +206,7 @@ onMounted(loadAudit)
 .evidence-item dt { color:#64748b; }
 .evidence-item dd { margin:0; white-space:pre-wrap; line-height:1.6; color:#273244; }
 .question-list { display:grid; gap:5px; line-height:1.45; }
+.pagination-wrap { display:flex; justify-content:flex-end; margin-top:16px; overflow-x:auto; }
 .mobile-list { display:none; }
 @media (max-width: 900px) {
   .audit-page { padding:14px; }
@@ -197,6 +214,7 @@ onMounted(loadAudit)
   .filters { grid-template-columns:1fr; }
   .desktop-table { display:none; }
   .mobile-list { display:grid; gap:10px; }
+  .pagination-wrap { justify-content:center; }
   .mobile-finding { padding:14px; border:1px solid #e5e7eb; }
   .mobile-heading { display:flex; align-items:center; gap:8px; color:#64748b; }
   .mobile-finding p { margin:10px 0; line-height:1.55; color:#273244; }

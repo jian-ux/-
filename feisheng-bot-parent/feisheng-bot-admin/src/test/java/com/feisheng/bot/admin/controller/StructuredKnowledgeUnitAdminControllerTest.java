@@ -1,5 +1,6 @@
 package com.feisheng.bot.admin.controller;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.feisheng.bot.admin.service.StructuredKnowledgeExtractionService;
 import com.feisheng.bot.admin.service.StructuredKnowledgeUnitReviewService;
 import com.feisheng.bot.common.vo.R;
@@ -73,16 +74,22 @@ class StructuredKnowledgeUnitAdminControllerTest {
         unit.setQuestion("如何签署？");
         unit.setStatement("支持在线签署。");
         unit.setEmbedding("[0.1,0.2]");
-        when(mapper.selectList(any())).thenReturn(List.of(unit));
+        when(mapper.selectPage(any(), any())).thenAnswer(invocation -> {
+            Page<BotKnowledgeSemanticUnit> requested = invocation.getArgument(0);
+            requested.setRecords(List.of(unit));
+            requested.setTotal(1);
+            return requested;
+        });
         StructuredKnowledgeUnitAdminController controller =
             new StructuredKnowledgeUnitAdminController(
                 extraction, review, mapper, mock(StructuredKnowledgeUnitIndexService.class));
 
-        R<List<StructuredKnowledgeUnitAdminController.UnitView>> response =
-            controller.list(5L, "draft");
+        R<Page<StructuredKnowledgeUnitAdminController.UnitView>> response =
+            controller.list(1, 10, 5L, "draft");
 
-        assertEquals(1, response.getData().size());
-        assertTrue(response.getData().get(0).embeddingReady());
+        assertEquals(1, response.getData().getTotal());
+        assertEquals(10, response.getData().getSize());
+        assertTrue(response.getData().getRecords().get(0).embeddingReady());
     }
 
     @Test

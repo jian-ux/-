@@ -19,7 +19,7 @@ public class ReplyStrategyController {
     @GetMapping("/list")
     public R<Page<BotReplyStrategy>> list(
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "10") int size) {
         return R.ok(mapper.selectPage(new Page<>(page, size),
                 new LambdaQueryWrapper<BotReplyStrategy>().orderByAsc(BotReplyStrategy::getPriority)));
     }

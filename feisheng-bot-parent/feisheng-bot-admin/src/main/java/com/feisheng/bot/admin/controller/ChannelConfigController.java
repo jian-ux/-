@@ -25,7 +25,7 @@ public class ChannelConfigController {
     @GetMapping("/list")
     public R<Page<ChannelConfigView>> list(
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String channelType) {
         return R.ok(service.list(page, size, channelType));
     }

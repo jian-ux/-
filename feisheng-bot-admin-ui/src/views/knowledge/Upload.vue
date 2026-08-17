@@ -94,9 +94,9 @@
               </div>
             </div>
             <div v-if="filteredChunks(row).length > 0" class="chunk-pagination">
-              <el-pagination v-model:current-page="row._chunkPage" v-model:page-size="row._chunkPageSize"
-                :page-sizes="[20, 50, 100]" :total="filteredChunks(row).length"
-                layout="total, sizes, prev, pager, next" @size-change="resetChunkPage(row)" />
+              <el-pagination v-model:current-page="row._chunkPage" :page-size="10"
+                :total="filteredChunks(row).length"
+                layout="total, prev, pager, next" />
             </div>
           </div>
         </template>
@@ -176,6 +176,15 @@
         </template>
       </el-table-column>
     </el-table>
+    <div class="pagination-wrap">
+      <el-pagination
+        v-model:current-page="page"
+        :page-size="pageSize"
+        :total="total"
+        layout="total, prev, pager, next"
+        @current-change="fetch"
+      />
+    </div>
   </el-card>
 </template>
 <script setup>
@@ -191,6 +200,9 @@ import { contentText, formatDateTime } from '../../utils/displayText.js'
 const documents = ref([])
 const loading = ref(false)
 const documentTable = ref(null)
+const total = ref(0)
+const page = ref(1)
+const pageSize = 10
 const uploadUrl = '/api/admin/doc/upload'
 const uploadHeaders = { Authorization: 'Bearer ' + (localStorage.getItem('token') || '') }
 
@@ -315,7 +327,6 @@ function initializeChunkWorkspace(row) {
   row._chunkStatus ??= 'ALL'
   row._chunkType ??= 'ALL'
   row._chunkPage ??= 1
-  row._chunkPageSize ??= 20
 }
 
 function filteredChunks(row) {
@@ -332,7 +343,7 @@ function filteredChunks(row) {
 
 function visibleChunks(row) {
   const filtered = filteredChunks(row)
-  const size = row._chunkPageSize || 20
+  const size = 10
   const lastPage = Math.max(1, Math.ceil(filtered.length / size))
   const page = Math.min(row._chunkPage || 1, lastPage)
   const start = (page - 1) * size
@@ -392,10 +403,12 @@ function ocrText(status) {
 async function fetch() {
   loading.value = true
   try {
-    const r = await request.get('/admin/doc/list')
+    const r = await request.get('/admin/doc/list', { params: { page: page.value, size: pageSize } })
     documents.value = r.data?.records || []
+    total.value = r.data?.total || 0
   } catch(e) {
     documents.value = []
+    total.value = 0
   } finally { loading.value = false }
 }
 
@@ -554,6 +567,7 @@ async function updatePriority(row, value) {
 
 function handleSuccess() {
   ElMessage.success('上传成功，正在解析...')
+  page.value = 1
   setTimeout(fetch, 2000)
   setTimeout(fetch, 6000)
   setTimeout(fetch, 15000)
@@ -565,7 +579,9 @@ async function del(id) {
   try {
     await ElMessageBox.confirm('确认删除？', '提示', {type:'warning'})
     await request.delete('/admin/doc/' + id)
-    ElMessage.success('已删除'); fetch()
+    ElMessage.success('已删除')
+    if (documents.value.length === 1 && page.value > 1) page.value--
+    fetch()
   } catch(e) {}
 }
 
@@ -618,6 +634,7 @@ onMounted(fetch)
 .chunk-preview { max-height:120px; overflow:hidden; white-space:pre-wrap; font-size:13px; line-height:1.5; }
 .chunk-actions { flex-shrink:0; flex-wrap:wrap; justify-content:flex-end; max-width:280px; }
 .chunk-pagination { display:flex; justify-content:flex-end; padding-top:10px; }
+.pagination-wrap { display:flex; justify-content:flex-end; margin-top:16px; overflow-x:auto; }
 .qa-question { margin-bottom:4px; font-size:13px; font-weight:600; color:#303133; }
 
 @media (max-width: 900px) {

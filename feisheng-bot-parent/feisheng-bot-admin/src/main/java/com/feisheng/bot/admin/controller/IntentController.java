@@ -22,7 +22,7 @@ public class IntentController {
     @GetMapping("/list")
     public R<Page<BotIntent>> list(
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String intentName) {
         LambdaQueryWrapper<BotIntent> q = new LambdaQueryWrapper<>();
         if (intentName != null && !intentName.isEmpty()) {

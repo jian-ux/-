@@ -11,7 +11,7 @@
       对话、知识抽取、向量检索、检索重排和语音能力分别使用各自的默认模型。
     </el-alert>
 
-    <el-table :data="models" border stripe>
+    <el-table v-loading="loading" :data="models" border stripe>
       <el-table-column label="默认" width="70" align="center">
         <template #default="{row}">
           <span v-if="row.isDefault === 1" style="color:#e6a23c;font-size:20px;cursor:default" title="当前默认模型">⭐</span>
@@ -41,6 +41,15 @@
         </template>
       </el-table-column>
     </el-table>
+    <div class="pagination-wrap">
+      <el-pagination
+        v-model:current-page="page"
+        :page-size="pageSize"
+        :total="total"
+        layout="total, prev, pager, next"
+        @current-change="fetch"
+      />
+    </div>
   </el-card>
 
   <el-dialog v-model="dialogVisible" :title="isEdit?'编辑模型':'新增模型'" width="min(560px, calc(100vw - 28px))">
@@ -99,6 +108,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { modelTypeText, providerText } from '../../utils/displayText.js'
 
 const models = ref([])
+const loading = ref(false)
+const total = ref(0)
+const page = ref(1)
+const pageSize = 10
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const form = reactive({modelName:'',provider:'deepseek',apiUrl:'',apiKey:'',modelType:'LLM',parameters:'',status:1})
@@ -108,8 +121,18 @@ function modelDisplayName(row) {
 }
 
 async function fetch() {
-  const r = await request.get('/admin/ai/model/list', {params:{size:100}})
-  models.value = r.data.records || []
+  loading.value = true
+  try {
+    const r = await request.get('/admin/ai/model/list', { params: { p: page.value, s: pageSize } })
+    models.value = r.data?.records || []
+    total.value = r.data?.total || 0
+    if (!models.value.length && total.value > 0 && page.value > 1) {
+      page.value = Math.max(1, Math.ceil(total.value / pageSize))
+      return await fetch()
+    }
+  } finally {
+    loading.value = false
+  }
 }
 
 function openAdd() {
@@ -136,9 +159,13 @@ async function del(id) {
   try {
     await ElMessageBox.confirm('确认删除？', '提示', {type:'warning'})
     await request.delete('/admin/ai/model/' + id)
-    ElMessage.success('已删除'); fetch()
+    ElMessage.success('已删除')
+    fetch()
   } catch(e) {}
 }
 
 onMounted(fetch)
 </script>
+<style scoped>
+.pagination-wrap { display:flex; justify-content:flex-end; margin-top:16px; overflow-x:auto; }
+</style>

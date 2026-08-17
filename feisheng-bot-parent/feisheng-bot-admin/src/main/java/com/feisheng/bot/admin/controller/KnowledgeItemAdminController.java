@@ -84,7 +84,7 @@ public class KnowledgeItemAdminController {
     @GetMapping("/search")
     public R<Page<BotKnowledgeItem>> search(
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String keyword) {
         LambdaQueryWrapper<BotKnowledgeItem> q = new LambdaQueryWrapper<>();
         if (StringUtils.hasText(keyword)) {

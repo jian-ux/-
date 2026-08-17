@@ -167,6 +167,8 @@ async function syncProfiles() {
     ElMessage.success(affected > 0 ? `客户资料同步完成，更新 ${affected} 条记录` : '客户资料已是最新')
     page.value = 1
     await fetchCustomers()
+  } catch {
+    // The shared request interceptor displays the server error.
   } finally {
     syncing.value = false
   }

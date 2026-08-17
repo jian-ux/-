@@ -44,12 +44,15 @@ public class DialogServiceImpl {
     private static final Logger log = LoggerFactory.getLogger(DialogServiceImpl.class);
     private static final int CHARS_PER_TOKEN = 2;
     private static final double INTENT_REWRITE_RETRIEVAL_WEIGHT = 0.85;
+    private static final double CONTEXT_RESOLUTION_RETRIEVAL_WEIGHT = 0.92;
+    private static final double CONTEXT_FOLLOW_UP_RETRIEVAL_WEIGHT = 0.70;
     private static final String NO_ANSWER_SIGNAL = "__NO_ANSWER__";
     private static final String PARTIAL_ANSWER_SIGNAL = "__ANSWER_PARTIAL__";
     private static final ModelAnswerSignalParser MODEL_ANSWER_SIGNAL_PARSER =
         new ModelAnswerSignalParser();
     private static final Pattern STRUCTURED_ANSWER_IN_CONTEXT = Pattern.compile(
         "(?ms)^答案：(.*?)(?=^事实：|^回答时先锁定|\\z)");
+    private static final Pattern ANNUAL_SIGNING_VOLUME_NUMBER = Pattern.compile("\\d{1,9}");
     private static final String PLAIN_TEXT_OUTPUT_INSTRUCTION =
         "只输出干净的普通文本。禁止使用 Markdown 或 HTML 格式，禁止输出 **、*、__、#、```、> 等格式标记；"
             + "禁止使用 ✅、⚠️、🔍、• 等装饰性图标；需要分点时优先使用数字序号，"
@@ -132,6 +135,27 @@ public class DialogServiceImpl {
         + "根据实际情况确认，已为您提交人工核实。您可以继续补充套餐类型或使用人数，我会一并同步。";
     private static final String DEFAULT_PRICE_HANDOFF_FAILED_REPLY = "价格、报价和优惠需要由客服确认，但当前未能成功提交"
         + "人工请求。请稍后重试或联系人工客服。";
+    private static final String PRICE_VOLUME_QUESTION =
+        "请问贵公司一年的签署量大约在多少呢？";
+    private static final String STANDARD_PACKAGE_PRICE_REPLY =
+        "目前我们的价格以官网标准套餐价格为准，可按需求选择相应的合同套餐份数进行购买。";
+    private static final String ENTERPRISE_PRICE_REPLY =
+        "这边给您安排客户经理对接，根据您的合同签署量、使用年限及功能需求，"
+            + "定制性价比更高的服务方案。需要我帮您转人工吗？";
+    private static final String PRICE_HANDOFF_DECLINED_REPLY =
+        "好的，您可以先参考上述方案；后续需要客户经理对接时，随时告诉我“转人工”即可。";
+    private static final String EVIDENCE_CONFLICT_REPLY =
+        "目前可确认的价格口径存在冲突，我不能直接给出具体金额，需要由人工客服进一步核实。";
+    private static final String INSUFFICIENT_LIST_EVIDENCE_REPLY =
+        "目前可确认的信息不足以列出完整、准确的材料清单，我不能补充未经核实的材料，需要由人工客服进一步确认。";
+    private static final String PRODUCT_USAGE_CHANNEL_QUERY = "点签可以在哪里使用？";
+    private static final String PRODUCT_USAGE_CLARIFICATION_REPLY =
+        "你具体想进行发起合同、签署合同还是企业认证？请告诉我使用端，我再说明对应步骤。";
+    private static final String PROCEDURE_EVIDENCE_CLARIFICATION_REPLY =
+        "目前可确认的信息不足以给出完整操作步骤。请补充要完成的具体操作和使用端，我再按已核实信息说明。";
+    private static final String STANDALONE_APP_BOUNDARY_REPLY =
+        "点签目前不提供独立手机 APP。手机用户可以通过微信公众号、微信小程序或短信签署链接办理相关操作；"
+            + "电脑用户可以使用 PC 网页版。";
     private static final String DEFAULT_MANUAL_HANDOFF_REPLY =
         "已为您提交人工客服请求，请稍候，客服会尽快接入。";
     private static final String DEFAULT_MANUAL_HANDOFF_FAILED_REPLY =
@@ -472,6 +496,21 @@ public class DialogServiceImpl {
                 redactedTypes, promptVersion);
         }
 
+        if (isPriceHandoffConsent(safeText, recentMessages)) {
+            return manualHandoffResponse(conversation, emotion, started, redactedTypes);
+        }
+        if (isPriceHandoffDeclined(safeText, recentMessages)) {
+            return priceQualificationResponse(
+                conversation, preCheck, PRICE_HANDOFF_DECLINED_REPLY,
+                "answered", AnswerDecision.ANSWER, "price_handoff_declined",
+                emotion, started, redactedTypes);
+        }
+        if (isAwaitingAnnualSigningVolume(recentMessages)) {
+            return annualSigningVolumeResponse(
+                conversation, preCheck, classifyAnnualSigningVolume(safeText, true),
+                emotion, started, redactedTypes);
+        }
+
         BasicConversationIntent basicIntent = matchBasicConversationIntent(safeText);
         if (basicIntent != null) {
             return basicConversationResponse(
@@ -484,6 +523,12 @@ public class DialogServiceImpl {
         // phrase such as "转人工" cannot fall through to the no-answer reply.
         if (isExplicitHandoffRequest(safeText)) {
             return manualHandoffResponse(conversation, emotion, started, redactedTypes);
+        }
+
+        if (isPriceQualificationQuestion(safeText)) {
+            return annualSigningVolumeResponse(
+                conversation, preCheck, classifyAnnualSigningVolume(safeText, false),
+                emotion, started, redactedTypes);
         }
 
         // Price information is an explicit human-confirmation boundary. This
@@ -513,10 +558,22 @@ public class DialogServiceImpl {
             nlpIntentClassifier.classify(resolvedRetrievalQuestion);
         boolean companyIntroductionQuestion = isCompanyIntroductionQuestion(safeText);
         boolean compoundRenewalQuestion = isCompoundRenewalQuestion(safeText);
+        boolean broadProductUsageQuestion = nlpIntent.intentCode()
+            == NlpIntentClassifier.IntentCode.PRODUCT_USAGE
+            && isBroadProductUsageQuestion(resolvedRetrievalQuestion);
         String retrievalQuery = companyIntroductionQuestion
-            ? COMPANY_INTRODUCTION_QUERY : nlpIntent.retrievalQuery();
-        String primaryRetrievalQuery = queryResolution.rewritten()
-            ? retrievalQuery : resolvedRetrievalQuestion;
+            ? COMPANY_INTRODUCTION_QUERY
+            : broadProductUsageQuestion ? PRODUCT_USAGE_CHANNEL_QUERY
+            : nlpIntent.retrievalQuery();
+        String primaryRetrievalQuery = broadProductUsageQuestion
+            ? retrievalQuery : queryResolution.previousQuestionMerged()
+            ? resolvedRetrievalQuestion
+            : queryResolution.rewritten() ? retrievalQuery : resolvedRetrievalQuestion;
+        List<QueryVariant> supplementalRetrievalVariants = supplementalRetrievalVariants(
+            primaryRetrievalQuery, retrievalQuery, resolvedRetrievalQuestion,
+            safeText, queryResolution.rewritten());
+        List<String> retrievalVariants = retrievalVariantQueries(
+            primaryRetrievalQuery, supplementalRetrievalVariants);
         boolean retrievalQueryRewritten = queryResolution.rewritten()
             || !Objects.equals(retrievalQuery, queryResolution.query());
         String retrievalHistory = buildRetrievalHistory(
@@ -565,14 +622,15 @@ public class DialogServiceImpl {
             }
         } else if (mergeGlobalRetrieval && hasText(safeProvidedContext)) {
             RagRetrievalService.RetrievalResult globalRetrieval = retrieveKnowledge(
-                primaryRetrievalQuery, retrievalQuery, semanticRetrievalHistory,
+                primaryRetrievalQuery, supplementalRetrievalVariants,
+                semanticRetrievalHistory,
                 safeModalityContext);
             retrieval = retrievalService.mergeWithProvidedContext(
                 globalRetrieval, safeProvidedContext, safeProvidedCitations);
         } else {
             retrieval = hasText(safeProvidedContext)
                 ? providedContextResult(safeProvidedContext, safeProvidedCitations)
-                : retrieveKnowledge(primaryRetrievalQuery, retrievalQuery,
+                : retrieveKnowledge(primaryRetrievalQuery, supplementalRetrievalVariants,
                     semanticRetrievalHistory, null);
         }
         if (retrieval == null) {
@@ -610,8 +668,12 @@ public class DialogServiceImpl {
             redactMaps(retrieval.citations(), redactedTypes));
         boolean companyIntroductionBacked = companyIntroductionQuestion
             && hasCompanyIntroductionEvidence(retrieval);
+        String retrievalEvidence = evidenceText(retrieval);
+        boolean conflictingScalarFacts = retrieval.answerable()
+            && EvidenceConsistencyGuard.hasConflictingScalarFacts(
+                safeText, retrievalEvidence);
         String evidenceBackedReply = retrieval.answerable()
-            ? evidenceBackedKnowledgeReply(safeText, retrieval) : null;
+            ? evidenceBackedKnowledgeReply(safeText, nlpIntent, retrieval) : null;
         String guardedKnowledgeReply = hasText(evidenceBackedReply)
             ? evidenceBackedReply
             : retrieval.answerable() ? guardedKnowledgeReply(
@@ -619,7 +681,14 @@ public class DialogServiceImpl {
                     + "\n" + Objects.toString(retrievalHistory, ""),
                 retrieval.directAnswer())
             : null;
-        if (hasText(guardedKnowledgeReply)) {
+        if (conflictingScalarFacts) {
+            replyText = EVIDENCE_CONFLICT_REPLY;
+            source = "rag_guardrail";
+            answerStatus = "evidence_conflict";
+            answerMode = "restricted";
+            fallbackDecision = "conflicting_scalar_facts";
+            answerDecision = AnswerDecision.HANDOFF;
+        } else if (hasText(guardedKnowledgeReply)) {
             replyText = redact(guardedKnowledgeReply, redactedTypes);
             source = "rag_guardrail";
             answerStatus = "answered";
@@ -772,6 +841,54 @@ public class DialogServiceImpl {
             }
         }
 
+        if ("answered".equals(answerStatus) && retrieval.answerable()
+                && EvidenceConsistencyGuard.hasUnsupportedEnumeratedFacts(
+                    safeText, retrievalEvidence, replyText)) {
+            replyText = INSUFFICIENT_LIST_EVIDENCE_REPLY;
+            source = "rag_guardrail";
+            answerStatus = "insufficient_evidence";
+            answerMode = "restricted";
+            fallbackDecision = "unsupported_enumerated_facts";
+            answerDecision = AnswerDecision.HANDOFF;
+            directKnowledge = false;
+        } else if ("answered".equals(answerStatus) && retrieval.answerable()
+                && EvidenceConsistencyGuard.contradictsStandaloneAppBoundary(
+                    retrievalEvidence, replyText)) {
+            String reliableKnowledgeReply = verifiedProductUsageReply(
+                safeText, nlpIntent, retrieval);
+            replyText = hasText(reliableKnowledgeReply)
+                ? reliableKnowledgeReply : STANDALONE_APP_BOUNDARY_REPLY;
+            source = "rag_guardrail";
+            fallbackDecision = "standalone_app_boundary_guardrail";
+            answerDecision = AnswerDecision.ANSWER;
+            directKnowledge = true;
+        } else if ("answered".equals(answerStatus) && retrieval.answerable()
+                && EvidenceConsistencyGuard.hasUnsupportedProceduralSteps(
+                    safeText, retrievalEvidence, replyText)) {
+            String reliableKnowledgeReply = structuredKnowledgeFallback(retrieval);
+            replyText = hasText(reliableKnowledgeReply)
+                ? reliableKnowledgeReply + "\n\n" + PROCEDURE_EVIDENCE_CLARIFICATION_REPLY
+                : PROCEDURE_EVIDENCE_CLARIFICATION_REPLY;
+            if (!hasText(reliableKnowledgeReply)) citations.clear();
+            source = "rag_guardrail";
+            answerStatus = "clarify";
+            answerMode = "partial";
+            fallbackDecision = "unsupported_procedural_steps";
+            answerDecision = AnswerDecision.CLARIFY;
+            directKnowledge = hasText(reliableKnowledgeReply);
+        } else if ("answered".equals(answerStatus) && retrieval.answerable()
+                && EvidenceConsistencyGuard.contradictsNegativeBoundary(
+                    safeText, retrievalEvidence, replyText)) {
+            String reliableKnowledgeReply = structuredKnowledgeFallback(retrieval);
+            replyText = hasText(reliableKnowledgeReply)
+                ? reliableKnowledgeReply
+                : EvidenceConsistencyGuard.repairNegativeBoundary(replyText);
+            source = "rag_guardrail";
+            fallbackDecision = "negative_boundary_consistency_guardrail";
+            answerDecision = AnswerDecision.ANSWER;
+            directKnowledge = hasText(reliableKnowledgeReply);
+        }
+
         if ("answered".equals(answerStatus)) {
             replyText = enforceContractArchiveFormatConsistency(replyText, nlpIntent);
             replyText = stripCitationPresentation(replyText, citations);
@@ -822,10 +939,12 @@ public class DialogServiceImpl {
         response.put("retrievalContextUsed", hasText(retrievalHistory));
         response.put("retrievalHistoryUsed", hasText(semanticRetrievalHistory));
         response.put("retrievalPrimaryQuery", primaryRetrievalQuery);
-        response.put("retrievalVariants", List.of(primaryRetrievalQuery, retrievalQuery)
-            .stream().filter(Objects::nonNull).distinct().toList());
+        response.put("retrievalVariants", retrievalVariants);
         response.put("retrievalQuery", retrievalQuery);
         response.put("queryRewritten", retrievalQueryRewritten);
+        response.put("queryContextDependent", queryResolution.contextDependent());
+        response.put("contextResolutionApplied", queryResolution.rewritten());
+        response.put("contextResolvedQuery", resolvedRetrievalQuestion);
         response.put("nlpIntent", nlpIntentDetails(nlpIntent));
         response.put("emotion", emotionDetails(emotion));
         response.put("promptVersion", promptVersion);
@@ -871,6 +990,10 @@ public class DialogServiceImpl {
         messageMetadata.put("fallbackDecision", fallbackDecision);
         messageMetadata.put("rerankDiagnostics", retrieval.rerankDiagnostics());
         messageMetadata.put("stageLatencies", stageLatencies);
+        messageMetadata.put("retrievalVariants", retrievalVariants);
+        messageMetadata.put("queryContextDependent", queryResolution.contextDependent());
+        messageMetadata.put("contextResolutionApplied", queryResolution.rewritten());
+        messageMetadata.put("contextResolvedQuery", resolvedRetrievalQuestion);
         messageMetadata.put("nlpIntent", nlpIntentDetails(nlpIntent));
         messageMetadata.put("emotion", emotionDetails(emotion));
         messageMetadata.put("promptVersion", promptVersion);
@@ -888,7 +1011,8 @@ public class DialogServiceImpl {
             source, answerStatus, answerDecision, fallbackDecision, nlpIntent, citations,
             redactedTypes, modelPrompt, promptVersion, promptTraces,
             modelProtocolViolations, modelProtocolViolationDetails, modelResponses,
-            primaryRetrievalQuery, retrievalQuery,
+            primaryRetrievalQuery, retrievalQuery, retrievalVariants,
+            resolvedRetrievalQuestion, queryResolution.rewritten(),
             queryResolution.contextDependent(), retrievalQueryRewritten,
             hasText(retrievalHistory), hasText(semanticRetrievalHistory),
             stageLatencies, System.currentTimeMillis() - started);
@@ -1077,6 +1201,70 @@ public class DialogServiceImpl {
         response.put("handoffStatus", submitted ? "WAITING" : "SUBMISSION_FAILED");
         response.put("emotion", emotionDetails(emotion));
         addHandoffDetails(response, handoff);
+        addRedactionDetails(response, redactedTypes);
+        response.put("latencyMs", System.currentTimeMillis() - started);
+        return response;
+    }
+
+    private Map<String, Object> annualSigningVolumeResponse(
+            BotConversation conversation, SafetyResult preCheck, PriceVolumeBand volumeBand,
+            EmotionService.EmotionResult emotion, long started, Set<String> redactedTypes) {
+        if (volumeBand == PriceVolumeBand.STANDARD) {
+            return priceQualificationResponse(
+                conversation, preCheck, STANDARD_PACKAGE_PRICE_REPLY,
+                "answered", AnswerDecision.ANSWER, "standard_package_pricing",
+                emotion, started, redactedTypes);
+        }
+        if (volumeBand == PriceVolumeBand.ENTERPRISE) {
+            return priceQualificationResponse(
+                conversation, preCheck, ENTERPRISE_PRICE_REPLY,
+                "clarify", AnswerDecision.CLARIFY, "enterprise_pricing_handoff_offered",
+                emotion, started, redactedTypes);
+        }
+        return priceQualificationResponse(
+            conversation, preCheck, PRICE_VOLUME_QUESTION,
+            "clarify", AnswerDecision.CLARIFY, "price_volume_requested",
+            emotion, started, redactedTypes);
+    }
+
+    private Map<String, Object> priceQualificationResponse(
+            BotConversation conversation, SafetyResult preCheck, String reply,
+            String answerStatus, AnswerDecision answerDecision, String fallbackDecision,
+            EmotionService.EmotionResult emotion, long started, Set<String> redactedTypes) {
+        reply = PlainTextReplyFormatter.format(reply);
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("answerStatus", answerStatus);
+        metadata.put("answerDecision", answerDecision.name());
+        metadata.put("source", "price_qualification");
+        metadata.put("answerMode", "policy");
+        metadata.put("fallbackDecision", fallbackDecision);
+        metadata.put("emotion", emotionDetails(emotion));
+        metadata.put("redactionApplied", !redactedTypes.isEmpty());
+        saveMessage(conversation.getId(), "ai", reply, toJson(metadata));
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("reply", reply);
+        response.put("conversationId", conversation.getId());
+        response.put("source", "price_qualification");
+        response.put("answerStatus", answerStatus);
+        response.put("answerMode", "policy");
+        response.put("answerDecision", answerDecision.name());
+        response.put("fallbackDecision", fallbackDecision);
+        response.put("safetyPreCheck", safetyDetails(preCheck));
+        response.put("confidence", 1.0);
+        response.put("citations", Collections.emptyList());
+        response.put("attachments", Collections.emptyList());
+        response.put("ragSource", false);
+        response.put("ragContextChars", 0);
+        response.put("retrieval", Map.of(
+            "decision", "price_qualification", "semanticAvailable", false,
+            "candidates", Collections.emptyList()));
+        response.put("retrievalContextUsed", false);
+        response.put("retrievalHistoryUsed", false);
+        response.put("needsTransfer", false);
+        response.put("lowConfidence", false);
+        response.put("humanHandling", false);
+        response.put("emotion", emotionDetails(emotion));
         addRedactionDetails(response, redactedTypes);
         response.put("latencyMs", System.currentTimeMillis() - started);
         return response;
@@ -1528,11 +1716,12 @@ public class DialogServiceImpl {
     }
 
     private RagRetrievalService.RetrievalResult retrieveKnowledge(
-            String primaryQuery, String rewrittenQuery,
+            String primaryQuery, List<QueryVariant> supplementalVariants,
             String conversationContext, String modalityContext) {
-        String primary = hasText(primaryQuery) ? primaryQuery.trim() : rewrittenQuery;
-        String rewritten = hasText(rewrittenQuery) ? rewrittenQuery.trim() : primary;
-        if (Objects.equals(primary, rewritten)) {
+        String primary = hasText(primaryQuery) ? primaryQuery.trim() : "";
+        List<QueryVariant> variants = supplementalVariants == null
+            ? Collections.emptyList() : supplementalVariants;
+        if (variants.isEmpty()) {
             if (!hasText(conversationContext) && !hasText(modalityContext)) {
                 return retrievalService.retrieve(
                     primary, KNOWLEDGE_RETRIEVAL_FILTERS, true);
@@ -1540,10 +1729,45 @@ public class DialogServiceImpl {
             return retrievalService.retrieve(primary, conversationContext, modalityContext,
                 KNOWLEDGE_RETRIEVAL_FILTERS, true);
         }
-        QueryVariant intentRewrite = new QueryVariant(
-            rewritten, INTENT_REWRITE_RETRIEVAL_WEIGHT, "intent_rewrite", false);
         return retrievalService.retrieve(primary, conversationContext, modalityContext,
-            KNOWLEDGE_RETRIEVAL_FILTERS, List.of(intentRewrite), true);
+            KNOWLEDGE_RETRIEVAL_FILTERS, variants, true);
+    }
+
+    private List<QueryVariant> supplementalRetrievalVariants(
+            String primaryQuery, String intentQuery, String contextResolvedQuery,
+            String originalQuestion, boolean contextResolutionApplied) {
+        List<QueryVariant> variants = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        if (hasText(primaryQuery)) seen.add(primaryQuery.trim());
+        if (contextResolutionApplied) {
+            addRetrievalVariant(variants, seen, contextResolvedQuery,
+                CONTEXT_RESOLUTION_RETRIEVAL_WEIGHT, "context_resolved");
+            addRetrievalVariant(variants, seen, originalQuestion,
+                CONTEXT_FOLLOW_UP_RETRIEVAL_WEIGHT, "context_follow_up");
+        }
+        addRetrievalVariant(variants, seen, intentQuery,
+            INTENT_REWRITE_RETRIEVAL_WEIGHT, "intent_rewrite");
+        return List.copyOf(variants);
+    }
+
+    private void addRetrievalVariant(List<QueryVariant> variants, Set<String> seen,
+                                     String query, double weight, String purpose) {
+        if (!hasText(query)) return;
+        String normalized = query.trim();
+        if (!seen.add(normalized)) return;
+        variants.add(new QueryVariant(normalized, weight, purpose, false));
+    }
+
+    private List<String> retrievalVariantQueries(
+            String primaryQuery, List<QueryVariant> supplementalVariants) {
+        List<String> queries = new ArrayList<>();
+        if (hasText(primaryQuery)) queries.add(primaryQuery.trim());
+        if (supplementalVariants != null) {
+            supplementalVariants.stream().map(QueryVariant::query)
+                .filter(query -> !queries.contains(query))
+                .forEach(queries::add);
+        }
+        return List.copyOf(queries);
     }
 
     private RagRetrievalService.RetrievalResult requireContextualSynthesis(
@@ -1748,6 +1972,9 @@ public class DialogServiceImpl {
                                List<ChatResponse> modelResponses,
                                String primaryRetrievalQuery,
                                String retrievalQuery,
+                               List<String> retrievalVariants,
+                               String contextResolvedQuery,
+                               boolean contextResolutionApplied,
                                boolean contextDependent,
                                boolean queryRewritten,
                                boolean retrievalContextUsed,
@@ -1792,6 +2019,10 @@ public class DialogServiceImpl {
         trace.put("originalQuery", question);
         trace.put("primaryRetrievalQuery", primaryRetrievalQuery);
         trace.put("retrievalQuery", retrievalQuery);
+        trace.put("retrievalVariants", retrievalVariants == null
+            ? Collections.emptyList() : retrievalVariants);
+        trace.put("contextResolvedQuery", contextResolvedQuery);
+        trace.put("contextResolutionApplied", contextResolutionApplied);
         trace.put("contextDependent", contextDependent);
         trace.put("queryRewritten", queryRewritten);
         trace.put("retrievalContextUsed", retrievalContextUsed);
@@ -1864,7 +2095,9 @@ public class DialogServiceImpl {
             .append("，随后先回答已确认内容，再提出一个针对缺失条件的问题；")
             .append("完全没有相关依据时才只输出 ").append(NO_ANSWER_SIGNAL).append("。")
             .append("\n输出格式：").append(PLAIN_TEXT_OUTPUT_INSTRUCTION)
-            .append("\n回答结构：").append(ADAPTIVE_REPLY_STRUCTURE_INSTRUCTION);
+            .append("\n回答结构：").append(ADAPTIVE_REPLY_STRUCTURE_INSTRUCTION)
+            .append("\n作答前最后检查：逐句核对与当前问题直接相关的事实。若结论后还提供了必要动作、入口、")
+            .append("替代路径或并列能力，必须一并回答，不能在首句结论后提前结束。");
         if (partialEvidence) {
             prompt.append("\n当前只能确认通用能力，不能确认客户点名的具体对象。必须使用 ")
                 .append(PARTIAL_ANSWER_SIGNAL)
@@ -2175,6 +2408,8 @@ public class DialogServiceImpl {
         String reason = null;
         if (outputBlocked) reason = "AI 回答触发安全规则";
         else if (highRiskNoKnowledge) reason = "高风险业务问题缺少可核实依据";
+        else if ("evidence_conflict".equals(answerStatus)) reason = "可核实事实口径冲突";
+        else if ("insufficient_evidence".equals(answerStatus)) reason = "回答包含无依据的事实清单";
         else if ("no_answer".equals(answerStatus)) reason = "现有知识无法回答";
         else if ("error".equals(answerStatus)) reason = "AI 模型调用失败";
         else if (lowConfidence) reason = "AI 回答置信度低于阈值";
@@ -2218,6 +2453,104 @@ public class DialogServiceImpl {
         boolean explicitQuantity = normalized.matches(".*\\d+\\s*(人|份|套|单|次|年).*?")
             || normalized.matches(".*(几十|几百|几千|多少)(人|份|套|单|次).*?");
         return customQuoteContext || explicitQuantity;
+    }
+
+    private boolean isPriceQualificationQuestion(String question) {
+        if (!hasText(question)) return false;
+        String normalized = normalizeQuestionForMatching(question);
+        boolean hasPriceTerm = PRICE_TERMS.stream().anyMatch(normalized::contains);
+        if (!hasPriceTerm) return false;
+
+        boolean productPricingContext = containsAny(normalized,
+            "点签", "电子合同", "电子签约", "你们", "贵司", "平台", "套餐", "签署量", "年用量")
+            || List.of("怎么收费", "如何收费", "怎样收费", "多少钱", "价格多少",
+                "收费标准", "价格怎么样").contains(normalized);
+        if (!productPricingContext) return false;
+
+        PriceVolumeBand volumeBand = classifyAnnualSigningVolume(question, false);
+        return volumeBand != PriceVolumeBand.UNKNOWN
+            || !containsConfiguredKeyword(question, priceHandoffKeywords);
+    }
+
+    private boolean isAwaitingAnnualSigningVolume(List<BotMessage> recentMessages) {
+        String reply = latestAiReply(recentMessages);
+        return hasText(reply) && reply.contains(PRICE_VOLUME_QUESTION);
+    }
+
+    private boolean isPriceHandoffConsent(
+            String text, List<BotMessage> recentMessages) {
+        if (!latestAiReplyOffersPriceHandoff(recentMessages) || !hasText(text)) return false;
+        String normalized = normalizeQuestionForMatching(text);
+        return Set.of(
+            "需要", "需要的", "要", "可以", "可以的", "好", "好的", "是", "是的",
+            "麻烦了", "帮我转", "转吧", "请帮我转").contains(normalized)
+            || isExplicitHandoffRequest(text);
+    }
+
+    private boolean isPriceHandoffDeclined(
+            String text, List<BotMessage> recentMessages) {
+        if (!latestAiReplyOffersPriceHandoff(recentMessages) || !hasText(text)) return false;
+        String normalized = normalizeQuestionForMatching(text);
+        return Set.of(
+            "不需要", "不用", "不用了", "暂时不用", "先不用", "不转", "不转人工",
+            "暂时不需要", "先不需要").contains(normalized);
+    }
+
+    private boolean latestAiReplyOffersPriceHandoff(List<BotMessage> recentMessages) {
+        String reply = latestAiReply(recentMessages);
+        return hasText(reply) && reply.contains("需要我帮您转人工吗");
+    }
+
+    private String latestAiReply(List<BotMessage> recentMessages) {
+        if (recentMessages == null) return null;
+        for (int i = recentMessages.size() - 1; i >= 0; i--) {
+            BotMessage message = recentMessages.get(i);
+            if (message != null && "ai".equals(message.getRole())
+                    && hasText(message.getContent())) {
+                return message.getContent();
+            }
+        }
+        return null;
+    }
+
+    private PriceVolumeBand classifyAnnualSigningVolume(String text, boolean awaitingVolume) {
+        if (!hasText(text)) return PriceVolumeBand.UNKNOWN;
+        String normalized = Normalizer.normalize(text, Normalizer.Form.NFKC)
+            .toLowerCase(Locale.ROOT)
+            .replace("一千", "1000")
+            .replaceAll("[,，\\s]", "");
+
+        if (normalized.matches(".*(?:(?:不到|少于|低于|小于|不满)1000|1000(?:以下|以内|之内)).*")) {
+            return PriceVolumeBand.STANDARD;
+        }
+        if (normalized.matches(".*(?:(?:不少于|不低于|大于等于|达到|超过|高于|大于)1000|1000(?:以上|及以上|起)).*")) {
+            return PriceVolumeBand.ENTERPRISE;
+        }
+        if (normalized.contains("几百")) return PriceVolumeBand.STANDARD;
+        if (normalized.contains("几千") || normalized.contains("上千")) {
+            return PriceVolumeBand.ENTERPRISE;
+        }
+
+        Matcher matcher = ANNUAL_SIGNING_VOLUME_NUMBER.matcher(normalized);
+        while (matcher.find()) {
+            int start = Math.max(0, matcher.start() - 10);
+            int end = Math.min(normalized.length(), matcher.end() + 10);
+            String context = normalized.substring(start, end);
+            String suffix = normalized.substring(matcher.end(), end);
+            if (suffix.startsWith("元") || suffix.startsWith("块") || suffix.startsWith("¥")) {
+                continue;
+            }
+            boolean volumeContext = awaitingVolume || containsAny(context,
+                "份", "单", "次", "合同", "签署量", "年用量", "每年", "一年", "/年");
+            if (!volumeContext) continue;
+            try {
+                long volume = Long.parseLong(matcher.group());
+                return volume < 1000 ? PriceVolumeBand.STANDARD : PriceVolumeBand.ENTERPRISE;
+            } catch (NumberFormatException ignored) {
+                return PriceVolumeBand.UNKNOWN;
+            }
+        }
+        return PriceVolumeBand.UNKNOWN;
     }
 
     private boolean isHumanHandling(BotConversation conversation) {
@@ -2433,9 +2766,16 @@ public class DialogServiceImpl {
     }
 
     private String evidenceBackedKnowledgeReply(
-            String question, RagRetrievalService.RetrievalResult retrieval) {
+            String question, NlpIntentClassifier.IntentAnalysis nlpIntent,
+            RagRetrievalService.RetrievalResult retrieval) {
         if (!hasText(question) || retrieval == null || !retrieval.answerable()) return null;
+        String productUsageReply = verifiedProductUsageReply(question, nlpIntent, retrieval);
+        if (hasText(productUsageReply)) return productUsageReply;
         String evidence = normalizedEvidence(retrieval);
+        String alternativePathReply = verifiedAlternativePathReply(
+            question, retrieval, evidence);
+        if (hasText(alternativePathReply)) return alternativePathReply;
+
         if (isCompoundRenewalQuestion(question)
                 && containsAny(evidence, "依旧可以正常登录", "仍可正常登录", "可以正常登录使用")
                 && evidence.contains("查阅") && evidence.contains("下载")
@@ -2461,8 +2801,69 @@ public class DialogServiceImpl {
         return null;
     }
 
+    private String verifiedProductUsageReply(
+            String question,
+            NlpIntentClassifier.IntentAnalysis nlpIntent,
+            RagRetrievalService.RetrievalResult retrieval) {
+        if (nlpIntent == null
+                || nlpIntent.intentCode() != NlpIntentClassifier.IntentCode.PRODUCT_USAGE
+                || !isBroadProductUsageQuestion(question)) {
+            return null;
+        }
+        String structuredAnswer = structuredKnowledgeFallback(retrieval);
+        if (!hasText(structuredAnswer)) return null;
+        String normalizedAnswer = normalizeQuestionForMatching(structuredAnswer);
+        boolean preservesStandaloneAppBoundary = containsAny(normalizedAnswer,
+            "不提供独立手机app", "不支持独立手机app", "没有独立手机app");
+        boolean identifiesVerifiedEntry = containsAny(normalizedAnswer,
+            "微信公众号", "微信小程序", "pc网页版", "短信签署链接");
+        return preservesStandaloneAppBoundary && identifiesVerifiedEntry
+            ? structuredAnswer + "\n\n" + PRODUCT_USAGE_CLARIFICATION_REPLY : null;
+    }
+
+    private boolean isBroadProductUsageQuestion(String question) {
+        String normalized = normalizeQuestionForMatching(question)
+            .replace("点签电子合同", "")
+            .replace("点签平台", "")
+            .replace("点签", "")
+            .replace("电子合同", "");
+        return List.of(
+            "怎么使用", "如何使用", "怎样使用", "怎么用", "如何用",
+            "使用方法", "在哪里使用", "怎么操作", "如何操作")
+            .contains(normalized);
+    }
+
+    private String verifiedAlternativePathReply(
+            String question, RagRetrievalService.RetrievalResult retrieval,
+            String normalizedEvidence) {
+        if (!isPolaritySensitiveQuestion(question)
+                || retrieval.citations() == null || retrieval.citations().size() != 1
+                || !containsAny(normalizedEvidence,
+                    "不支持", "不提供", "不能", "无法", "不可")
+                || !containsAny(normalizedEvidence,
+                    "可以通过", "可通过", "可以使用", "可使用", "可用",
+                    "可以在", "可在", "改用", "替代", "仍可", "还可以")) {
+            return null;
+        }
+        String structuredAnswer = structuredKnowledgeFallback(retrieval);
+        if (!hasText(structuredAnswer)) return null;
+        String normalizedAnswer = normalizeQuestionForMatching(structuredAnswer);
+        boolean preservesNegativeBoundary = containsAny(normalizedAnswer,
+            "不支持", "不提供", "不能", "无法", "不可");
+        boolean preservesAlternativePath = containsAny(normalizedAnswer,
+            "可以通过", "可通过", "可以使用", "可使用", "可用",
+            "可以在", "可在", "改用", "替代", "仍可", "还可以");
+        return preservesNegativeBoundary && preservesAlternativePath
+            ? structuredAnswer : null;
+    }
+
     private String normalizedEvidence(RagRetrievalService.RetrievalResult retrieval) {
+        return normalizeQuestionForMatching(evidenceText(retrieval));
+    }
+
+    private String evidenceText(RagRetrievalService.RetrievalResult retrieval) {
         StringBuilder evidence = new StringBuilder();
+        if (retrieval == null) return "";
         if (hasText(retrieval.context())) evidence.append(retrieval.context()).append('\n');
         if (hasText(retrieval.directAnswerText())) {
             evidence.append(retrieval.directAnswerText()).append('\n');
@@ -2474,7 +2875,7 @@ public class DialogServiceImpl {
                 }
             }
         }
-        return normalizeQuestionForMatching(evidence.toString());
+        return evidence.toString();
     }
 
     private String normalizeQuestionForMatching(String value) {
@@ -2853,6 +3254,12 @@ public class DialogServiceImpl {
         CLARIFY,
         HANDOFF,
         NO_KNOWLEDGE
+    }
+
+    private enum PriceVolumeBand {
+        STANDARD,
+        ENTERPRISE,
+        UNKNOWN
     }
 
     private record NativeFallbackResponse(

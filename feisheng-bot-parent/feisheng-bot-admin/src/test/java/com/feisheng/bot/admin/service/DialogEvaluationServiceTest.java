@@ -102,14 +102,14 @@ class DialogEvaluationServiceTest {
         when(dialogService.send(eq("evaluation"), anyString(), eq(question),
                 anyString(), isNull(), isNull()))
             .thenReturn(response(
-                "OpenAPI 套餐有效期为一年，已签合同无法直接补充附件，也不能保证百分之百认可。",
+                "OpenAPI 套餐有效期为一年，可查看已签合同，无法直接补充附件，也不能保证百分之百认可。",
                 "answered", "rag_ai", 0.9, List.of(), false, false));
 
         DialogEvaluationService.DialogEvaluationReport report = service.evaluate(
             new DialogEvaluationService.DialogEvaluationRequest("phrase-semantics", List.of(
                 new DialogEvaluationService.DialogEvaluationCase(
                     "semantic", question, true, null, "ANSWER", null, null,
-                    List.of(), List.of("OpenApi", "1 年"),
+                    List.of(), List.of("OpenApi", "1 年", "查阅已签合同"),
                     List.of("直接补充附件", "百分之百认可"), false, null))));
 
         assertEquals(1.0, report.requiredPhraseHitRate());

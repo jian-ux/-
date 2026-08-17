@@ -6,6 +6,7 @@ import com.feisheng.bot.admin.entity.BotConversation;
 import com.feisheng.bot.admin.entity.BotCustomer;
 import com.feisheng.bot.admin.mapper.BotConversationMapper;
 import com.feisheng.bot.admin.mapper.BotCustomerMapper;
+import com.feisheng.bot.admin.service.CustomerProfileSyncService;
 import com.feisheng.bot.common.vo.R;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
@@ -15,26 +16,42 @@ import org.springframework.web.bind.annotation.*;
 public class CustomerController {
     private final BotCustomerMapper mapper;
     private final BotConversationMapper conversationMapper;
+    private final CustomerProfileSyncService profileSyncService;
 
     public CustomerController(BotCustomerMapper mapper,
-                              BotConversationMapper conversationMapper) {
+                              BotConversationMapper conversationMapper,
+                              CustomerProfileSyncService profileSyncService) {
         this.mapper = mapper;
         this.conversationMapper = conversationMapper;
+        this.profileSyncService = profileSyncService;
     }
 
     @GetMapping("/list")
     public R<Page<BotCustomer>> list(
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) String keyword) {
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String channelType) {
         LambdaQueryWrapper<BotCustomer> q = new LambdaQueryWrapper<>();
         if (StringUtils.hasText(keyword)) {
-            q.and(w -> w.like(BotCustomer::getName, keyword)
-                .or().like(BotCustomer::getPhone, keyword)
-                .or().like(BotCustomer::getNickname, keyword));
+            String normalizedKeyword = keyword.trim();
+            q.and(w -> w.like(BotCustomer::getName, normalizedKeyword)
+                .or().like(BotCustomer::getPhone, normalizedKeyword)
+                .or().like(BotCustomer::getEmail, normalizedKeyword)
+                .or().like(BotCustomer::getNickname, normalizedKeyword)
+                .or().like(BotCustomer::getChannelUserId, normalizedKeyword));
+        }
+        if (StringUtils.hasText(channelType)) {
+            q.eq(BotCustomer::getChannelType, channelType.trim().toLowerCase());
         }
         q.orderByDesc(BotCustomer::getLastContactTime);
-        return R.ok(mapper.selectPage(new Page<>(page, size), q));
+        return R.ok(mapper.selectPage(
+            new Page<>(Math.max(page, 1), Math.min(Math.max(size, 1), 100)), q));
+    }
+
+    @PostMapping("/sync")
+    public R<CustomerProfileSyncService.SyncResult> sync() {
+        return R.ok(profileSyncService.sync());
     }
 
     @GetMapping("/{id}")

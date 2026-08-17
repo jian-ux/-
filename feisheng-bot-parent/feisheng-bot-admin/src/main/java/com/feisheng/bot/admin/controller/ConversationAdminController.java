@@ -31,16 +31,22 @@ public class ConversationAdminController {
 
     @GetMapping("/list")
     public R<Page<BotConversation>> list(@RequestParam(defaultValue="1") int page,
-                                          @RequestParam(defaultValue="20") int size,
+                                          @RequestParam(defaultValue="10") int size,
                                           @RequestParam(required=false) String status,
                                           @RequestParam(required=false) String emotionLabel,
-                                          @RequestParam(required=false) String emotionRisk) {
+                                          @RequestParam(required=false) String emotionRisk,
+                                          @RequestParam(required=false) String channelType,
+                                          @RequestParam(required=false) String customerName) {
         String normalizedEmotion = StringUtils.hasText(emotionLabel)
             ? emotionLabel.trim().toUpperCase() : null;
         String normalizedRisk = StringUtils.hasText(emotionRisk)
             ? emotionRisk.trim().toUpperCase() : null;
+        String normalizedChannel = normalize(channelType);
+        String normalizedCustomer = normalize(customerName);
         return R.ok(mapper.selectMonitorPage(
-            new Page<>(page, size), status, normalizedEmotion, normalizedRisk));
+            new Page<>(Math.max(page, 1), Math.min(Math.max(size, 1), 100)),
+            normalize(status), normalizedEmotion, normalizedRisk,
+            normalizedChannel, normalizedCustomer));
     }
 
     @GetMapping("/{id}/detail")
@@ -118,5 +124,9 @@ public class ConversationAdminController {
                 .eq(BotConversationTag::getConversationId, id)
                 .eq(BotConversationTag::getTagName, tagName));
         return R.ok();
+    }
+
+    private String normalize(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
     }
 }

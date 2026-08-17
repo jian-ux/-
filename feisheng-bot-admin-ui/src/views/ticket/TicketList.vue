@@ -1,23 +1,47 @@
 <template>
-  <el-card>
+  <el-card class="ticket-page">
     <template #header>
       <div class="page-header">
         <span>工单管理</span>
         <el-tag v-if="overdueCount" type="danger" effect="dark">
-          {{ overdueCount }} 个工单已超时
+          当前页 {{ overdueCount }} 个工单已超时
         </el-tag>
       </div>
     </template>
 
     <div class="ticket-filters">
-      <el-select v-model="statusFilter" clearable placeholder="工单状态" @change="fetchTickets">
+      <el-select
+        v-model="channelType"
+        class="channel-filter"
+        filterable
+        clearable
+        placeholder="渠道名称"
+        @change="search"
+      >
+        <el-option
+          v-for="channel in channelOptions"
+          :key="channel.value"
+          :label="channel.label"
+          :value="channel.value"
+        />
+      </el-select>
+      <el-input
+        v-model="customerName"
+        class="customer-filter"
+        clearable
+        placeholder="客户名称或渠道用户标识"
+        @clear="search"
+        @keyup.enter="search"
+      />
+      <el-select v-model="statusFilter" class="status-filter" clearable placeholder="工单状态" @change="search">
         <el-option label="待处理" value="pending" />
         <el-option label="处理中" value="processing" />
         <el-option label="已解决" value="resolved" />
         <el-option label="已关闭" value="closed" />
       </el-select>
-      <el-checkbox v-model="mineOnly" @change="fetchTickets">仅看我的</el-checkbox>
-      <el-button :icon="Refresh" :loading="loading" @click="fetchTickets">刷新</el-button>
+      <el-checkbox v-model="mineOnly" @change="search">仅看我的</el-checkbox>
+      <el-button type="primary" :icon="Search" @click="search">查询</el-button>
+      <el-button :icon="Refresh" :loading="loading" @click="resetFilters">重置</el-button>
     </div>
 
     <el-table
@@ -29,8 +53,14 @@
       :row-class-name="ticketRowClass"
     >
       <el-table-column prop="id" label="编号" width="68" />
-      <el-table-column prop="title" label="标题" min-width="220" show-overflow-tooltip>
-        <template #default="{row}">{{ ticketTitleText(row.title) }}</template>
+      <el-table-column prop="channelName" label="渠道名称" min-width="135">
+        <template #default="{ row }">{{ channelNameText(row) }}</template>
+      </el-table-column>
+      <el-table-column prop="customerName" label="客户名称" min-width="150" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.customerName || row.channelUserId || '未知客户' }}</template>
+      </el-table-column>
+      <el-table-column prop="title" label="标题" min-width="210" show-overflow-tooltip>
+        <template #default="{ row }">{{ ticketTitleText(row.title) }}</template>
       </el-table-column>
       <el-table-column prop="priority" label="优先级" width="90">
         <template #default="{ row }">
@@ -42,7 +72,7 @@
           <el-tag :type="statusTag(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="负责人" width="130">
+      <el-table-column label="负责人" width="125">
         <template #default="{ row }">
           <span v-if="row.assigneeId">{{ assigneeText(row) }}</span>
           <span v-else class="muted">待接单</span>
@@ -56,24 +86,24 @@
           <span v-else class="muted">未设置</span>
         </template>
       </el-table-column>
-      <el-table-column prop="createTime" label="创建时间" width="190">
-        <template #default="{row}">{{ formatDateTime(row.createTime) }}</template>
+      <el-table-column prop="createTime" label="创建时间" width="180">
+        <template #default="{ row }">{{ formatDateTime(row.createTime) }}</template>
       </el-table-column>
       <el-table-column label="操作" width="245" fixed="right">
         <template #default="{ row }">
           <div class="row-actions">
             <el-button
-              v-if="row.status==='pending' && !row.assigneeId"
+              v-if="row.status === 'pending' && !row.assigneeId"
               size="small"
               type="primary"
               :icon="UserFilled"
               @click="claimTicket(row)"
             >接单</el-button>
             <el-button size="small" :icon="ChatDotSquare" @click="openConversation(row)">
-              {{ row.status==='resolved' || row.status==='closed' ? '查看' : '处理' }}
+              {{ row.status === 'resolved' || row.status === 'closed' ? '查看' : '处理' }}
             </el-button>
             <el-button
-              v-if="row.status==='processing'"
+              v-if="row.status === 'processing'"
               size="small"
               type="success"
               :icon="CircleCheck"
@@ -85,7 +115,7 @@
     </el-table>
 
     <div v-loading="loading" class="mobile-ticket-list">
-      <div
+      <article
         v-for="ticket in tickets"
         :key="ticket.id"
         class="mobile-ticket-item"
@@ -97,16 +127,20 @@
             <strong>{{ ticketTitleText(ticket.title) }}</strong>
           </div>
           <div class="mobile-ticket-tags">
-            <el-tag :type="priorityTag(ticket.priority)" size="small">
-              {{ priorityText(ticket.priority) }}
-            </el-tag>
-            <el-tag :type="statusTag(ticket.status)" size="small">
-              {{ statusText(ticket.status) }}
-            </el-tag>
+            <el-tag :type="priorityTag(ticket.priority)" size="small">{{ priorityText(ticket.priority) }}</el-tag>
+            <el-tag :type="statusTag(ticket.status)" size="small">{{ statusText(ticket.status) }}</el-tag>
           </div>
         </div>
 
         <dl class="mobile-ticket-meta">
+          <div>
+            <dt>渠道名称</dt>
+            <dd>{{ channelNameText(ticket) }}</dd>
+          </div>
+          <div>
+            <dt>客户名称</dt>
+            <dd>{{ ticket.customerName || ticket.channelUserId || '未知客户' }}</dd>
+          </div>
           <div>
             <dt>负责人</dt>
             <dd>{{ ticket.assigneeId ? assigneeText(ticket) : '待接单' }}</dd>
@@ -126,25 +160,35 @@
 
         <div class="row-actions mobile-ticket-actions">
           <el-button
-            v-if="ticket.status==='pending' && !ticket.assigneeId"
+            v-if="ticket.status === 'pending' && !ticket.assigneeId"
             size="small"
             type="primary"
             :icon="UserFilled"
             @click="claimTicket(ticket)"
           >接单</el-button>
           <el-button size="small" :icon="ChatDotSquare" @click="openConversation(ticket)">
-            {{ ticket.status==='resolved' || ticket.status==='closed' ? '查看' : '处理' }}
+            {{ ticket.status === 'resolved' || ticket.status === 'closed' ? '查看' : '处理' }}
           </el-button>
           <el-button
-            v-if="ticket.status==='processing'"
+            v-if="ticket.status === 'processing'"
             size="small"
             type="success"
             :icon="CircleCheck"
             @click="resolveTicket(ticket)"
           >解决</el-button>
         </div>
-      </div>
+      </article>
       <el-empty v-if="!loading && !tickets.length" description="暂无工单" />
+    </div>
+
+    <div class="pagination-wrap">
+      <el-pagination
+        v-model:current-page="page"
+        :page-size="pageSize"
+        :total="total"
+        :layout="isMobile ? 'prev, pager, next' : 'total, prev, pager, next, jumper'"
+        @current-change="fetchTickets"
+      />
     </div>
   </el-card>
 </template>
@@ -152,17 +196,25 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { CircleCheck, ChatDotSquare, Refresh, UserFilled } from '@element-plus/icons-vue'
+import { CircleCheck, ChatDotSquare, Refresh, Search, UserFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '../../api/index.js'
-import { formatDateTime, localizedSystemText, priorityText } from '../../utils/displayText.js'
+import { loadChannelOptions } from '../../utils/channelOptions.js'
+import { channelNameText, formatDateTime, localizedSystemText, priorityText } from '../../utils/displayText.js'
 
 const router = useRouter()
 const tickets = ref([])
+const channelOptions = ref([])
+const channelType = ref('')
+const customerName = ref('')
 const statusFilter = ref('')
 const mineOnly = ref(false)
+const page = ref(1)
+const pageSize = 10
+const total = ref(0)
 const loading = ref(false)
 const now = ref(Date.now())
+const isMobile = ref(window.matchMedia('(max-width: 720px)').matches)
 let pollTimer = null
 
 const overdueCount = computed(() => tickets.value.filter(ticket =>
@@ -171,17 +223,33 @@ const overdueCount = computed(() => tickets.value.filter(ticket =>
     && new Date(ticket.slaDeadline).getTime() < now.value
 ).length)
 
-async function fetchTickets() {
-  loading.value = true
+async function fetchTickets(silent = false) {
+  if (!silent) loading.value = true
   try {
-    const params = { mine: mineOnly.value }
+    const params = { page: page.value, size: pageSize, mine: mineOnly.value }
     if (statusFilter.value) params.status = statusFilter.value
+    if (channelType.value) params.channelType = channelType.value
+    if (customerName.value.trim()) params.customerName = customerName.value.trim()
     const response = await request.get('/admin/ticket/list', { params })
     tickets.value = response.data?.records || []
+    total.value = response.data?.total || 0
     now.value = Date.now()
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
+}
+
+function search() {
+  page.value = 1
+  fetchTickets()
+}
+
+function resetFilters() {
+  channelType.value = ''
+  customerName.value = ''
+  statusFilter.value = ''
+  mineOnly.value = false
+  search()
 }
 
 async function claimTicket(ticket) {
@@ -201,7 +269,7 @@ async function resolveTicket(ticket) {
     await request.post(`/admin/ticket/${ticket.id}/resolve`, {
       resolution: result.value.trim()
     })
-    ElMessage.success('工单已解决，智能客服将在用户下次咨询时恢复接待')
+    ElMessage.success('工单已解决')
     await fetchTickets()
   } catch (error) {
     if (error === 'cancel' || error === 'close') return
@@ -209,7 +277,7 @@ async function resolveTicket(ticket) {
 }
 
 function openConversation(ticket) {
-  router.push('/conversation/' + ticket.conversationId)
+  router.push(`/conversation/${ticket.conversationId}`)
 }
 
 function priorityTag(priority) {
@@ -244,8 +312,7 @@ function slaText(deadline, status) {
 function durationText(milliseconds) {
   const minutes = Math.max(0, Math.floor(milliseconds / 60000))
   if (minutes < 60) return `${minutes} 分钟`
-  const hours = Math.floor(minutes / 60)
-  return `${hours} 小时 ${minutes % 60} 分`
+  return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`
 }
 
 function slaClass(deadline, status) {
@@ -263,12 +330,21 @@ function ticketRowClass({ row }) {
     ? 'ticket-overdue' : ''
 }
 
-onMounted(() => {
-  fetchTickets()
-  pollTimer = setInterval(fetchTickets, 10000)
+function updateMobileLayout() {
+  isMobile.value = window.matchMedia('(max-width: 720px)').matches
+}
+
+onMounted(async () => {
+  window.addEventListener('resize', updateMobileLayout)
+  const channelRequest = loadChannelOptions(request)
+    .then(options => { channelOptions.value = options })
+    .catch(() => { channelOptions.value = [] })
+  await Promise.all([fetchTickets(), channelRequest])
+  pollTimer = setInterval(() => fetchTickets(true), 10000)
 })
 
 onUnmounted(() => {
+  window.removeEventListener('resize', updateMobileLayout)
   if (pollTimer) clearInterval(pollTimer)
 })
 </script>
@@ -276,20 +352,32 @@ onUnmounted(() => {
 <style scoped>
 .page-header,
 .ticket-filters,
-.row-actions { display:flex; align-items:center; gap:10px; }
-.page-header { justify-content:space-between; }
-.ticket-filters { flex-wrap:wrap; margin-bottom:12px; }
-.ticket-filters .el-select { width:150px; max-width:100%; }
+.row-actions { display:flex; align-items:center; gap:8px; }
+.page-header { justify-content:space-between; font-weight:600; }
+.ticket-filters { flex-wrap:wrap; margin-bottom:14px; }
+.channel-filter { width:210px; }
+.customer-filter { width:250px; }
+.status-filter { width:150px; }
 .row-actions { gap:6px; }
 .mobile-ticket-list { display:none; }
 .muted { color:#909399; }
 .sla-normal { color:#529b2e; }
 .sla-warning { color:#b88230; font-weight:600; }
 .sla-overdue { color:#d73737; font-weight:700; }
+.pagination-wrap { display:flex; justify-content:flex-end; margin-top:16px; overflow-x:auto; }
 :deep(.ticket-overdue td.el-table__cell) { background:#fff2f0 !important; }
 @media (max-width: 720px) {
+  .ticket-page :deep(.el-card__header) { padding:14px 12px; }
+  .ticket-page :deep(.el-card__body) { padding:12px; }
+  .ticket-filters { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); }
+  .channel-filter,
+  .customer-filter,
+  .status-filter { width:100%; }
+  .customer-filter { grid-column:1 / -1; }
+  .ticket-filters .el-button { width:100%; margin:0; }
+  .ticket-filters .el-checkbox { margin:0; }
   .desktop-ticket-table { display:none; }
-  .mobile-ticket-list { display:block; }
+  .mobile-ticket-list { display:block; min-height:80px; }
   .mobile-ticket-item { padding:14px 0; border-top:1px solid #ebeef5; }
   .mobile-ticket-item:last-child { border-bottom:1px solid #ebeef5; }
   .mobile-ticket-item.ticket-overdue { margin:0 -10px; padding:14px 10px; background:#fff2f0; }
@@ -307,5 +395,6 @@ onUnmounted(() => {
   .mobile-ticket-meta dd { margin:0; overflow-wrap:anywhere; }
   .mobile-ticket-created { grid-column:1 / -1; }
   .mobile-ticket-actions { justify-content:flex-end; flex-wrap:wrap; }
+  .pagination-wrap { justify-content:center; }
 }
 </style>

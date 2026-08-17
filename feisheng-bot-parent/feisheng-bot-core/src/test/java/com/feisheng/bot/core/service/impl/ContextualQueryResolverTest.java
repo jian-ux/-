@@ -2,6 +2,8 @@ package com.feisheng.bot.core.service.impl;
 
 import com.feisheng.bot.core.entity.BotMessage;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.List;
 
@@ -95,6 +97,19 @@ class ContextualQueryResolverTest {
     }
 
     @Test
+    void inheritsPointSignWhenIntroductionReplyUsesOnlyTheProductCategory() {
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", "你们是做什么的？"),
+            message("ai", "我们是电子合同平台，用户可全程在线上发起以及签署。"),
+            message("user", "怎么使用？")), "怎么使用？");
+
+        assertTrue(result.contextDependent());
+        assertTrue(result.rewritten());
+        assertEquals("点签电子合同 怎么使用？", result.query());
+        assertEquals("点签电子合同", result.inheritedProduct());
+    }
+
+    @Test
     void doesNotCarryProductIntoUnrelatedStandaloneQuestion() {
         ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
             message("user", "点签电子合同怎么签？"),
@@ -160,6 +175,21 @@ class ContextualQueryResolverTest {
     }
 
     @Test
+    void recognizesObjectLedStateContinuationFollowUp() {
+        String previousQuestion = "合同已经发出去了，但目前还没有人签署，我漏传了附件。";
+        String currentQuestion = "附件还能补进去吗？";
+
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", previousQuestion),
+            message("user", currentQuestion)), currentQuestion);
+
+        assertTrue(result.contextDependent());
+        assertTrue(result.rewritten());
+        assertTrue(result.previousQuestionMerged());
+        assertEquals(previousQuestion + " " + currentQuestion, result.query());
+    }
+
+    @Test
     void doesNotInventContextForStateContinuationWithoutPreviousUserTurn() {
         String question = "现在还能把号码改掉吗？";
 
@@ -168,6 +198,84 @@ class ContextualQueryResolverTest {
         assertTrue(result.contextDependent());
         assertFalse(result.rewritten());
         assertEquals(question, result.query());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "具体先做哪一步？",
+        "下一步呢？",
+        "接下来要做什么？",
+        "具体怎么操作？",
+        "需要准备什么材料？",
+        "还要提供哪些资料？",
+        "大概需要多久？",
+        "办理要几天？",
+        "费用是多少？",
+        "最多能签几份？",
+        "还需要重新发起吗？"
+    })
+    void mergesGeneralEllipticalFollowUpsWithThePreviousBusinessScenario(
+            String currentQuestion) {
+        String previousQuestion = "我们公司的法人刚刚变更，点签里还是旧法人。";
+
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", previousQuestion),
+            message("ai", "需要先更新企业信息。"),
+            message("user", currentQuestion)), currentQuestion);
+
+        assertTrue(result.contextDependent());
+        assertTrue(result.rewritten());
+        assertTrue(result.previousQuestionMerged());
+        assertEquals(previousQuestion + " " + currentQuestion, result.query());
+    }
+
+    @Test
+    void mergesAStateCorrectionWithoutLosingThePreviousBusinessScenario() {
+        String previousQuestion = "我刚发起一份合同，发现正文写错了，对方还没有签。";
+        String currentQuestion = "更正一下，不是正文，是接收人手机号错了。";
+
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", previousQuestion),
+            message("user", currentQuestion)), currentQuestion);
+
+        assertTrue(result.contextDependent());
+        assertTrue(result.previousQuestionMerged());
+        assertEquals(previousQuestion + " " + currentQuestion, result.query());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "电子合同有法律效力吗？",
+        "企业认证需要什么材料？",
+        "法人变更后如何更新企业信息？",
+        "如何申请电子印章？"
+    })
+    void preservesExplicitStandaloneQuestions(String currentQuestion) {
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", "专业版套餐快到期了。"),
+            message("ai", "可以先确认套餐到期时间。"),
+            message("user", currentQuestion)), currentQuestion);
+
+        assertFalse(result.contextDependent());
+        assertFalse(result.rewritten());
+        assertEquals(currentQuestion, result.query());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "换个问题，合同到期后还能下载吗？",
+        "另外，个人实名认证怎么做？",
+        "顺便问一下，电子印章如何申请？"
+    })
+    void resetsContextForExplicitTopicSwitches(String currentQuestion) {
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", "我们公司的法人刚刚变更，点签里还是旧法人。"),
+            message("ai", "需要先更新企业信息。"),
+            message("user", currentQuestion)), currentQuestion);
+
+        assertFalse(result.contextDependent());
+        assertFalse(result.rewritten());
+        assertEquals(currentQuestion, result.query());
     }
 
     private BotMessage message(String role, String content) {

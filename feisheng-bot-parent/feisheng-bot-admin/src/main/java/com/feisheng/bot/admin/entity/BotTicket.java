@@ -21,4 +21,12 @@ public class BotTicket extends BaseEntity {
     private String resolution;
     @TableField(exist = false)
     private String assigneeName;
+    @TableField(exist = false)
+    private String channelType;
+    @TableField(exist = false)
+    private String channelName;
+    @TableField(exist = false)
+    private String channelUserId;
+    @TableField(exist = false)
+    private String customerName;
 }

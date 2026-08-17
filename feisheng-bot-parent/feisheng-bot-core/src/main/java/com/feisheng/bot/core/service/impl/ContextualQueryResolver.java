@@ -17,10 +17,33 @@ public class ContextualQueryResolver {
         "包邮吗", "包不包邮", "有货吗", "现货吗", "多少钱", "多久", "几天能到",
         "怎么弄", "怎么办", "可以吗", "行吗", "能退吗", "支持吗", "还有吗", "然后呢");
     private static final List<String> FOLLOW_UP_PREFIXES = List.of("那", "那么", "然后");
+    private static final Pattern PROCEDURAL_FOLLOW_UP = Pattern.compile(
+        "^(?:(?:具体)?(?:先|下一步|接下来|然后)?(?:应该|应当|需要|要|该|可以)?"
+            + "(?:怎么做|怎么操作|如何操作|做什么|办什么|怎么办|"
+            + "(?:做|办|操作)?哪一步|是哪一步)|"
+            + "(?:下一步|接下来|然后)(?:呢|是什么)?)$");
+    private static final Pattern MATERIAL_FOLLOW_UP = Pattern.compile(
+        "^(?:接下来|下一步|然后|还)?(?:需要|要|应该|应当|得)?"
+            + "(?:准备|提供|提交|上传|带)?(?:什么|哪些)(?:材料|资料|文件|证明)$");
+    private static final Pattern CONCRETE_FACT_FOLLOW_UP = Pattern.compile(
+        "^(?:(?:还)?(?:办理|处理|审核|认证|签署|完成)?(?:大概|一般|通常)?"
+            + "(?:需要|要)?(?:多久|多长时间|几天)|"
+            + "(?:费用|价格|收费)(?:是|要)?多少|怎么收费|多少钱|多少费用|"
+            + "(?:最多|至少|一次|同时|一共|总共)?(?:可以|能|可)?"
+            + "(?:签署?|发起|上传|添加|创建|使用|盖章)?"
+            + "(?:多少|几)(?:份|次|个|人|枚|张))$");
+    private static final Pattern STATE_ACTION_FOLLOW_UP = Pattern.compile(
+        "^(?:现在|目前|已经|还|也|那)?(?:需要|要|应该|应当|能|可以)?"
+            + "(?:重新|继续|直接|先)?"
+            + "(?:发起|签署|认证|上传|下载|撤回|修改|更换|补充|提交|操作|处理)"
+            + "(?:吗|么|呢|不|不了)?$");
+    private static final Pattern CORRECTION_FOLLOW_UP = Pattern.compile(
+        "^(?:更正一下|纠正一下|不是|我说的是|准确说是).+$");
     private static final Pattern STATE_CONTINUATION_FOLLOW_UP = Pattern.compile(
         "^(?:(?:现在|目前)?(?:还|也)?(?:能|可以)(?:把)?|"
+            + "[\\p{IsHan}A-Za-z0-9]{1,12}(?:还|也)(?:能|可以)(?:把)?|"
             + "(?:号码|手机号|接收人号码|接收方号码)(?:还)?(?:能|可以))"
-            + ".{0,16}(?:改掉|修改|更换|换掉|撤回|重发|重新发起|补充|添加|删除|取消|继续使用|改|换)"
+            + ".{0,16}(?:改掉|修改|更换|换掉|撤回|重发|重新发起|补进去|补充|添加|删除|取消|继续使用|改|换)"
             + "(?:吗|么|呢|不)?$");
     private static final List<String> BUSINESS_SUBJECTS = List.of(
         "管理员", "企业", "公司", "单位", "机构", "组织", "个人", "员工", "用户", "法人");
@@ -46,11 +69,13 @@ public class ContextualQueryResolver {
         "合同", "签名", "签章", "印章", "文件", "数据", "套餐", "会员");
     private static final List<String> ACTIVE_PRODUCT_MARKERS = List.of(
         "点签电子合同", "点签平台", "点签");
+    private static final List<String> ACTIVE_PRODUCT_CONTEXT_MARKERS = List.of(
+        "电子合同平台");
     private static final List<String> CONTEXTUAL_BUSINESS_MARKERS = List.of(
         "点签", "电子合同", "合同", "签署", "签约", "签名", "签章", "印章", "用印",
         "认证", "实名", "账号", "账户", "模板", "附件", "发起", "撤回", "审批",
         "归档", "存证", "证书", "发票", "套餐", "验证码", "管理员", "接收方",
-        "发起方", "签署方", "手机号");
+        "发起方", "签署方", "手机号", "企业", "公司", "法人");
     private static final List<String> CONTEXT_CARRY_TERMS = List.of(
         "改", "修改", "更换", "换", "撤回", "重发", "重新发起", "补充", "添加",
         "删除", "取消", "发起", "上传", "下载", "查看", "查询", "签", "签署",
@@ -60,11 +85,16 @@ public class ContextualQueryResolver {
         "CA锁", "实体锁", "UKey", "U-Key", "安全控件", "守信签", "翔晟电子签章");
     private static final List<String> TOPIC_RESET_MARKERS = List.of(
         "换个问题", "另外一个问题", "另一个问题", "不说这个", "聊点别的");
+    private static final Pattern TOPIC_RESET_PREFIX = Pattern.compile(
+        "^(?:另外(?:问|咨询|[，,])|顺便问(?:一下)?|再问一个|还有个问题).*$");
     private static final Pattern LEADING_FIRST_PERSON = Pattern.compile(
         "^(?:请问|麻烦问一下|想问一下|咨询一下)?(?:我们|我)?(?:想要|需要|想|要)?");
 
     public Resolution resolve(List<BotMessage> messages, String currentQuestion) {
         String question = currentQuestion == null ? "" : currentQuestion.trim();
+        if (isExplicitTopicReset(question)) {
+            return new Resolution(question, false, null, null, null, false);
+        }
         boolean contextDependent = isContextDependent(question);
         String activeProduct = activeProduct(messages, question);
         boolean inheritProduct = activeProduct != null && shouldInheritProduct(question);
@@ -93,9 +123,11 @@ public class ContextualQueryResolver {
 
     boolean isContextDependent(String question) {
         if (question == null || question.isBlank()) return false;
+        if (isExplicitTopicReset(question)) return false;
         String normalized = normalize(question);
         if (REFERENCE_MARKERS.stream().anyMatch(normalized::contains)) return true;
         if (SUBJECTLESS_FOLLOW_UPS.contains(normalized)) return true;
+        if (isEllipticalBusinessFollowUp(normalized)) return true;
         if (normalized.length() <= 24
                 && SUBJECTLESS_FOLLOW_UPS.stream().anyMatch(normalized::endsWith)) {
             return true;
@@ -115,9 +147,29 @@ public class ContextualQueryResolver {
     private boolean shouldMergePreviousQuestion(String previousQuestion, String question) {
         if (previousQuestion == null || previousQuestion.isBlank()) return false;
         String normalizedQuestion = normalize(question);
-        return normalizedQuestion.length() <= 32
+        return normalizedQuestion.length() <= 48
             && containsAny(previousQuestion, CONTEXTUAL_BUSINESS_MARKERS)
-            && containsAny(normalizedQuestion, CONTEXT_CARRY_TERMS);
+            && (containsAny(normalizedQuestion, CONTEXT_CARRY_TERMS)
+                || isEllipticalBusinessFollowUp(normalizedQuestion));
+    }
+
+    private boolean isEllipticalBusinessFollowUp(String normalizedQuestion) {
+        if (normalizedQuestion == null || normalizedQuestion.isBlank()
+                || normalizedQuestion.length() > 48) {
+            return false;
+        }
+        return PROCEDURAL_FOLLOW_UP.matcher(normalizedQuestion).matches()
+            || MATERIAL_FOLLOW_UP.matcher(normalizedQuestion).matches()
+            || CONCRETE_FACT_FOLLOW_UP.matcher(normalizedQuestion).matches()
+            || STATE_ACTION_FOLLOW_UP.matcher(normalizedQuestion).matches()
+            || CORRECTION_FOLLOW_UP.matcher(normalizedQuestion).matches();
+    }
+
+    private boolean isExplicitTopicReset(String question) {
+        if (question == null || question.isBlank()) return false;
+        String trimmed = question.trim();
+        return containsAny(trimmed, TOPIC_RESET_MARKERS)
+            || TOPIC_RESET_PREFIX.matcher(trimmed).matches();
     }
 
     private String previousUserQuestion(List<BotMessage> messages, String currentQuestion) {
@@ -171,9 +223,12 @@ public class ContextualQueryResolver {
                 continue;
             }
             inspectedMessages++;
-            if (containsAny(content, TOPIC_RESET_MARKERS)
+            if (isExplicitTopicReset(content)
                     || containsAny(content, OTHER_PRODUCT_MARKERS)) return null;
-            if (containsAny(content, ACTIVE_PRODUCT_MARKERS)) return "点签电子合同";
+            if (containsAny(content, ACTIVE_PRODUCT_MARKERS)
+                    || containsAny(content, ACTIVE_PRODUCT_CONTEXT_MARKERS)) {
+                return "点签电子合同";
+            }
         }
         return null;
     }

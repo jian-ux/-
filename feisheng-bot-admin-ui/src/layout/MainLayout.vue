@@ -15,7 +15,7 @@
     >
       <div class="app-brand">飞晟智能客服</div>
       <el-menu :default-active="route.path" router background-color="#304156" text-color="#bfcbd9" active-text-color="#409eff">
-        <el-menu-item index="/dashboard"><el-icon><Odometer /></el-icon><span>总览</span></el-menu-item>
+        <el-menu-item index="/dashboard"><el-icon><Odometer /></el-icon><span>统计数据</span></el-menu-item>
         <el-menu-item index="/channel"><el-icon><Connection /></el-icon><span>渠道配置</span></el-menu-item>
         <el-menu-item index="/conversation"><el-icon><ChatDotSquare /></el-icon><span>对话监控</span></el-menu-item>
         <el-menu-item index="/playground"><el-icon><ChatLineSquare /></el-icon><span>智能试聊</span></el-menu-item>
@@ -25,10 +25,11 @@
         <el-menu-item index="/ticket"><el-icon><Ticket /></el-icon><span>工单管理</span></el-menu-item>
         <el-menu-item index="/log"><el-icon><Document /></el-icon><span>操作日志</span></el-menu-item>
         <el-sub-menu index="/knowledge">
-          <template #title><el-icon><Notebook /></el-icon><span>知识库</span></template>
+          <template #title><el-icon><Notebook /></el-icon><span>知识库管理</span></template>
           <el-menu-item index="/knowledge/faq"><span>常见问题管理</span></el-menu-item>
           <el-menu-item index="/knowledge/upload"><span>知识库上传</span></el-menu-item>
           <el-menu-item index="/knowledge/semantic-units"><span>结构化知识审核</span></el-menu-item>
+          <el-menu-item index="/knowledge/quality-audit"><span>知识质量审计</span></el-menu-item>
           <el-menu-item index="/knowledge/unmatched"><span>未命中问题</span></el-menu-item>
         </el-sub-menu>
         <el-sub-menu index="/system">

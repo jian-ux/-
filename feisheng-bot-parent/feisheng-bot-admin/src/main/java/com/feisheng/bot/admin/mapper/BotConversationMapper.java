@@ -11,8 +11,19 @@ import org.apache.ibatis.annotations.Select;
 public interface BotConversationMapper extends BaseMapper<BotConversation> {
     String MONITOR_SELECT = """
         SELECT c.*,
+               COALESCE(
+                   NULLIF((
+                       SELECT channel.channel_name
+                       FROM bot_channel_config channel
+                       WHERE channel.channel_type = c.channel_type
+                         AND channel.deleted = 0
+                       ORDER BY channel.status DESC, channel.id DESC
+                       LIMIT 1
+                   ), ''),
+                   c.channel_type
+               ) AS channel_name,
                COALESCE(NULLIF(customer.name, ''), NULLIF(customer.nickname, ''),
-                        NULLIF(channel_user.nickname, '')) AS customer_name
+                        NULLIF(channel_user.nickname, ''), c.channel_user_id) AS customer_name
         FROM bot_conversation c
         LEFT JOIN bot_customer customer
           ON customer.channel_type = c.channel_type
@@ -34,6 +45,17 @@ public interface BotConversationMapper extends BaseMapper<BotConversation> {
         <if test="emotionRisk != null and emotionRisk != ''">
           AND c.emotion_risk = #{emotionRisk}
         </if>
+        <if test="channelType != null and channelType != ''">
+          AND c.channel_type = #{channelType}
+        </if>
+        <if test="customerName != null and customerName != ''">
+          AND (
+            customer.name LIKE CONCAT('%', #{customerName}, '%')
+            OR customer.nickname LIKE CONCAT('%', #{customerName}, '%')
+            OR channel_user.nickname LIKE CONCAT('%', #{customerName}, '%')
+            OR c.channel_user_id LIKE CONCAT('%', #{customerName}, '%')
+          )
+        </if>
         ORDER BY FIELD(c.status, 'transferred', 'active', 'closed') ASC,
                  FIELD(c.priority, 'P0', 'P1', 'P2', 'P3') ASC,
                  c.update_time DESC
@@ -43,7 +65,9 @@ public interface BotConversationMapper extends BaseMapper<BotConversation> {
         Page<BotConversation> page,
         @Param("status") String status,
         @Param("emotionLabel") String emotionLabel,
-        @Param("emotionRisk") String emotionRisk);
+        @Param("emotionRisk") String emotionRisk,
+        @Param("channelType") String channelType,
+        @Param("customerName") String customerName);
 
     @Select(MONITOR_SELECT + " WHERE c.id = #{id} AND c.deleted = 0")
     BotConversation selectMonitorById(@Param("id") Long id);

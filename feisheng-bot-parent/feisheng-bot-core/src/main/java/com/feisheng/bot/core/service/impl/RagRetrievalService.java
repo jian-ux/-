@@ -58,6 +58,10 @@ public class RagRetrievalService {
     private static final double KEYWORD_RRF_WEIGHT = 1.2;
     private static final double EXPANSION_RRF_WEIGHT = 0.65;
     private static final int MAX_STRUCTURED_EVIDENCE_CHUNKS = 50;
+    private static final double FOCUSED_QA_MAX_TOP_QUESTION_SIMILARITY = 0.15;
+    private static final double FOCUSED_QA_MIN_QUESTION_SIMILARITY = 0.30;
+    private static final double FOCUSED_QA_MIN_SIMILARITY_GAIN = 0.15;
+    private static final double FOCUSED_QA_MAX_RERANK_SCORE_GAP = 0.12;
 
     private final FaqMatchServiceImpl faqMatchService;
     private final EmbeddingService embeddingService;
@@ -388,6 +392,8 @@ public class RagRetrievalService {
         List<Map<String, Object>> selected = rerankConfidence.tier() == RerankConfidenceTier.LOW
             ? Collections.emptyList()
             : selectAcceptedCandidates(candidates, query, rerankConfidence.applied());
+        selected = ensureRequestedFactCoverage(query, candidates, selected);
+        selected = promoteFocusedStructuredQa(query, candidates, selected);
         selected = isolateFocusedStructuredQa(query, selected);
         double topCombinedScore = selected.isEmpty()
             ? candidates.stream().mapToDouble(candidate -> number(candidate.get("combinedScore")))
@@ -827,6 +833,148 @@ public class RagRetrievalService {
     }
 
     /**
+     * Ranking must not let generic snippets crowd an already recalled concrete price,
+     * quantity, or duration fact out of the model context. The candidate still has to
+     * pass the normal topic, conflict, and retrieval-confidence checks.
+     */
+    private List<Map<String, Object>> ensureRequestedFactCoverage(
+            String query, List<Map<String, Object>> candidates,
+            List<Map<String, Object>> selected) {
+        if (selected == null || selected.isEmpty()
+                || candidates == null || candidates.isEmpty()
+                || selected.stream().anyMatch(candidate ->
+                    Boolean.TRUE.equals(candidate.get("structuredQaExactMatch"))
+                        || Boolean.TRUE.equals(candidate.get("exactMatch")))) {
+            return selected;
+        }
+        List<EvidenceAnswerTypeMatcher.Requirement> requirements =
+            EvidenceAnswerTypeMatcher.requirements(query);
+        if (requirements.isEmpty()) return selected;
+
+        List<Map<String, Object>> result = new ArrayList<>(selected);
+        int insertionIndex = 0;
+        for (EvidenceAnswerTypeMatcher.Requirement requirement : requirements) {
+            Map<String, Object> concrete = candidates.stream()
+                .filter(this::eligibleRequestedFactEvidence)
+                .filter(candidate -> EvidenceAnswerTypeMatcher.matches(
+                    requirement, candidateEvidenceText(candidate)))
+                .max(Comparator
+                    .comparingInt((Map<String, Object> candidate) ->
+                        EvidenceAnswerTypeMatcher.specificity(
+                            requirement, candidateEvidenceText(candidate)))
+                    .thenComparingDouble(candidate ->
+                        number(candidate.get("combinedScore")))
+                    .thenComparingDouble(candidate ->
+                        number(candidate.get("rerankScore"))))
+                .orElse(null);
+            if (concrete == null) continue;
+
+            result.remove(concrete);
+            result.add(Math.min(insertionIndex, result.size()), concrete);
+            insertionIndex++;
+            concrete.put("answerTypeCoverage", requirement.name().toLowerCase(Locale.ROOT));
+            concrete.put("answerTypeCoveragePromoted", true);
+            while (result.size() > Math.max(topK, 0)) result.remove(result.size() - 1);
+        }
+        return List.copyOf(result);
+    }
+
+    private boolean eligibleRequestedFactEvidence(Map<String, Object> candidate) {
+        return candidate != null
+            && !Boolean.TRUE.equals(candidate.get("topicMismatch"))
+            && !Boolean.TRUE.equals(candidate.get("qaConflict"))
+            && (isReviewedExactStructuredQa(candidate)
+                || number(candidate.get("combinedScore")) >= contextThreshold);
+    }
+
+    private String candidateEvidenceText(Map<String, Object> candidate) {
+        return firstNonBlank(string(candidate.get("fullAnswer")),
+            string(candidate.get("answer")), string(candidate.get("content")),
+            string(candidate.get("sectionPath")), string(candidate.get("title")));
+    }
+
+    /**
+     * A reranker can prefer a long, broadly related answer over a shorter standard
+     * Q&A whose question is materially closer to the user's wording. Correct this
+     * only for a narrow near-tie so the reranker remains authoritative otherwise.
+     */
+    private List<Map<String, Object>> promoteFocusedStructuredQa(
+            String query, List<Map<String, Object>> candidates,
+            List<Map<String, Object>> selected) {
+        if (isCompositeQuestion(query) || selected == null || selected.isEmpty()
+                || candidates == null || candidates.isEmpty()) {
+            return selected;
+        }
+        Map<String, Object> currentTop = selected.get(0);
+        if (Boolean.TRUE.equals(currentTop.get("structuredQaExactMatch"))
+                || Boolean.TRUE.equals(currentTop.get("exactMatch"))
+                || !Boolean.TRUE.equals(currentTop.get("reranked"))) {
+            return selected;
+        }
+        double currentSimilarity = questionSimilarity(query,
+            focusQuestion(currentTop));
+        if (currentSimilarity > FOCUSED_QA_MAX_TOP_QUESTION_SIMILARITY) {
+            return selected;
+        }
+
+        double currentRerankScore = number(currentTop.get("rerankScore"));
+        Map<String, Object> focused = candidates.stream()
+            .filter(candidate -> candidate != currentTop)
+            .filter(this::eligibleFocusedStructuredQa)
+            .filter(candidate -> {
+                double rerankGap = currentRerankScore
+                    - number(candidate.get("rerankScore"));
+                if (rerankGap < 0 || rerankGap > FOCUSED_QA_MAX_RERANK_SCORE_GAP) {
+                    return false;
+                }
+                double similarity = questionSimilarity(query, focusQuestion(candidate));
+                return similarity >= FOCUSED_QA_MIN_QUESTION_SIMILARITY
+                    && similarity - currentSimilarity >= FOCUSED_QA_MIN_SIMILARITY_GAIN;
+            })
+            .max(Comparator
+                .comparingDouble((Map<String, Object> candidate) ->
+                    questionSimilarity(query, focusQuestion(candidate)))
+                .thenComparingDouble(candidate -> number(candidate.get("rerankScore"))))
+            .orElse(null);
+        if (focused == null) return selected;
+
+        double focusedSimilarity = questionSimilarity(query, focusQuestion(focused));
+        focused.put("focusedStructuredQaPromoted", true);
+        focused.put("focusedStructuredQaPromotionReason",
+            "question_alignment_near_rerank_tie");
+        focused.put("focusedStructuredQaReplacedSourceId", currentTop.get("sourceId"));
+        focused.put("focusedStructuredQaQuestionSimilarity", round6(focusedSimilarity));
+        focused.put("focusedStructuredQaPreviousQuestionSimilarity",
+            round6(currentSimilarity));
+        focused.put("focusedStructuredQaRerankGap", round6(
+            currentRerankScore - number(focused.get("rerankScore"))));
+
+        List<Map<String, Object>> promoted = new ArrayList<>(selected);
+        promoted.remove(focused);
+        promoted.add(0, focused);
+        while (promoted.size() > Math.max(topK, 0)) {
+            promoted.remove(promoted.size() - 1);
+        }
+        return List.copyOf(promoted);
+    }
+
+    private boolean eligibleFocusedStructuredQa(Map<String, Object> candidate) {
+        return isStructuredQaCandidate(candidate)
+            && hasCompleteStructuredAnswer(candidate)
+            && Boolean.TRUE.equals(candidate.get("reranked"))
+            && number(candidate.get("rerankScore")) >= rerankMediumMinScore
+            && !Boolean.TRUE.equals(candidate.get("topicMismatch"))
+            && !Boolean.TRUE.equals(candidate.get("qaConflict"));
+    }
+
+    private String focusQuestion(Map<String, Object> candidate) {
+        return isStructuredQaCandidate(candidate)
+            ? firstNonBlank(structuredQuestion(candidate), string(candidate.get("title")))
+            : firstNonBlank(string(candidate.get("title")),
+                string(candidate.get("question")), string(candidate.get("sectionPath")));
+    }
+
+    /**
      * BM25 is normally a ranking signal, not an absolute confidence score. During
      * reranker outages, however, a clearly leading standard question with strong
      * textual alignment is safer than accepting an unrelated vector hit at the
@@ -903,15 +1051,17 @@ public class RagRetrievalService {
             normalizedQuery, top);
         if (!exact && !embeddedStandardQuestion) {
             if (isCompositeQuestion(query)) return selected;
-            double topScore = focusScore(top);
-            double competingScore = selected.stream()
-                .skip(1)
-                .filter(candidate -> !sameStructuredQaGroup(top, candidate))
-                .mapToDouble(this::focusScore)
-                .max().orElse(0);
-            if (topScore < contextThreshold
-                    || topScore - competingScore < structuredQaRerankMinGap) {
-                return selected;
+            if (!Boolean.TRUE.equals(top.get("focusedStructuredQaPromoted"))) {
+                double topScore = focusScore(top);
+                double competingScore = selected.stream()
+                    .skip(1)
+                    .filter(candidate -> !sameStructuredQaGroup(top, candidate))
+                    .mapToDouble(this::focusScore)
+                    .max().orElse(0);
+                if (topScore < contextThreshold
+                        || topScore - competingScore < structuredQaRerankMinGap) {
+                    return selected;
+                }
             }
         }
 
@@ -1196,6 +1346,20 @@ public class RagRetrievalService {
             copy.put("qaDirectStatus", candidate.get("qaDirectStatus"));
             copy.put("directMatchMode", candidate.get("directMatchMode"));
             copy.put("structuredQaExactMatch", candidate.get("structuredQaExactMatch"));
+            copy.put("answerTypeCoverage", candidate.get("answerTypeCoverage"));
+            copy.put("answerTypeCoveragePromoted", candidate.get("answerTypeCoveragePromoted"));
+            copy.put("focusedStructuredQaPromoted",
+                candidate.get("focusedStructuredQaPromoted"));
+            copy.put("focusedStructuredQaPromotionReason",
+                candidate.get("focusedStructuredQaPromotionReason"));
+            copy.put("focusedStructuredQaReplacedSourceId",
+                candidate.get("focusedStructuredQaReplacedSourceId"));
+            copy.put("focusedStructuredQaQuestionSimilarity",
+                candidate.get("focusedStructuredQaQuestionSimilarity"));
+            copy.put("focusedStructuredQaPreviousQuestionSimilarity",
+                candidate.get("focusedStructuredQaPreviousQuestionSimilarity"));
+            copy.put("focusedStructuredQaRerankGap",
+                candidate.get("focusedStructuredQaRerankGap"));
             copy.put("score", candidate.get("combinedScore"));
             result.add(copy);
         }

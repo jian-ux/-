@@ -2,13 +2,13 @@
   <el-card>
     <template #header>
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <span>智能模型配置</span>
-        <el-button type="primary" @click="openAdd">新增模型</el-button>
+        <span>智能模型管理</span>
+        <el-button type="primary" :icon="Plus" @click="openAdd">新增模型</el-button>
       </div>
     </template>
 
     <el-alert type="info" :closable="false" style="margin-bottom:15px" show-icon>
-      每种模型类型可分别设置默认项；大语言模型用于对话，向量嵌入用于检索，语音识别用于转写，语音合成用于回复。
+      对话、知识抽取、向量检索、检索重排和语音能力分别使用各自的默认模型。
     </el-alert>
 
     <el-table :data="models" border stripe>
@@ -18,7 +18,7 @@
           <span v-else style="color:#ccc;font-size:20px;cursor:pointer" title="点击设为默认" @click="setDefault(row.id)">☆</span>
         </template>
       </el-table-column>
-      <el-table-column prop="modelName" label="模型名称" min-width="140">
+      <el-table-column prop="modelName" label="模型标识" min-width="140">
         <template #default="{row}">{{ modelDisplayName(row) }}</template>
       </el-table-column>
       <el-table-column prop="provider" label="供应商" width="110">
@@ -43,9 +43,9 @@
     </el-table>
   </el-card>
 
-  <el-dialog v-model="dialogVisible" :title="isEdit?'编辑模型':'新增模型'" width="520px">
-    <el-form :model="form" label-width="100px">
-      <el-form-item label="模型名称"><el-input v-model="form.modelName" placeholder="请输入模型名称" /></el-form-item>
+  <el-dialog v-model="dialogVisible" :title="isEdit?'编辑模型':'新增模型'" width="min(560px, calc(100vw - 28px))">
+    <el-form :model="form" label-width="108px">
+      <el-form-item label="模型标识"><el-input v-model="form.modelName" placeholder="请输入服务商提供的模型标识" /></el-form-item>
       <el-form-item label="供应商">
         <el-select v-model="form.provider" style="width:100%">
           <el-option label="开放式智能" value="openai" />
@@ -56,9 +56,16 @@
           <el-option label="其他" value="other" />
         </el-select>
       </el-form-item>
-      <el-form-item label="接口地址"><el-input v-model="form.apiUrl" placeholder="请输入服务接口地址" /></el-form-item>
-      <el-form-item label="接口密钥"><el-input v-model="form.apiKey" show-password placeholder="请输入接口密钥" /></el-form-item>
-      <el-form-item label="类型">
+      <el-form-item label="服务地址"><el-input v-model="form.apiUrl" placeholder="请输入兼容接口的完整服务地址" /></el-form-item>
+      <el-form-item label="接口密钥">
+        <el-input
+          v-model="form.apiKey"
+          show-password
+          autocomplete="new-password"
+          :placeholder="isEdit ? '已配置，留空保持原密钥' : '请输入服务商接口密钥'"
+        />
+      </el-form-item>
+      <el-form-item label="模型用途">
         <el-select v-model="form.modelType" style="width:100%">
           <el-option label="大语言模型" value="LLM" />
           <el-option label="知识抽取模型" value="Extraction" />
@@ -73,7 +80,7 @@
           v-model="form.parameters"
           type="textarea"
           :rows="3"
-          placeholder="请输入语音、格式和语速等合成参数"
+          placeholder="请输入声音、音频格式、语速等合成参数"
         />
       </el-form-item>
       <el-form-item label="启用">
@@ -86,6 +93,7 @@
 
 <script setup>
 import { ref, onMounted, reactive } from 'vue'
+import { Plus } from '@element-plus/icons-vue'
 import request from '../../api/index.js'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { modelTypeText, providerText } from '../../utils/displayText.js'

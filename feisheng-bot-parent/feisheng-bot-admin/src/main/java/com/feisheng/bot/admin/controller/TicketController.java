@@ -23,12 +23,14 @@ public class TicketController {
     @GetMapping("/list")
     public R<Page<BotTicket>> list(
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String channelType,
+            @RequestParam(required = false) String customerName,
             @RequestParam(defaultValue = "false") boolean mine,
             Authentication authentication) {
         return R.ok(handoffService.list(page, size, status,
-            mine ? operatorId(authentication) : null));
+            mine ? operatorId(authentication) : null, channelType, customerName));
     }
 
     @GetMapping("/{id}")

@@ -35,6 +35,12 @@ export function channelTypeText(value) {
   return CHANNEL_TYPE_TEXT[value] || '未知渠道'
 }
 
+export function channelNameText(row) {
+  const name = String(row?.channelName || '').trim()
+  if (name && name !== row?.channelType) return name
+  return channelTypeText(row?.channelType)
+}
+
 export function priorityText(value) {
   return PRIORITY_TEXT[value] || '中'
 }

@@ -11,6 +11,8 @@ public class BotConversation extends BaseEntity {
     private String channelType;
     private String channelUserId;
     @TableField(exist = false)
+    private String channelName;
+    @TableField(exist = false)
     private String customerName;
     private String title;
     private String status;

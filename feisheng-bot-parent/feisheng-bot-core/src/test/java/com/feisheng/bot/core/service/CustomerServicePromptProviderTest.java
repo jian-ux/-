@@ -46,6 +46,9 @@ class CustomerServicePromptProviderTest {
         assertTrue(prompt.contains("不得因为其中一项缺少依据而拒答全部问题"));
         assertTrue(prompt.contains("自动/手动"));
         assertTrue(prompt.contains("禁止颠倒结论"));
+        assertTrue(prompt.contains("不得只给出笼统规则"));
+        assertTrue(prompt.contains("必须紧接着说明该替代方式"));
+        assertTrue(prompt.contains("不能把多个具体能力合并成一个笼统说法"));
         assertTrue(prompt.contains("答完即止"));
         assertTrue(!prompt.contains("80%"));
         assertTrue(!prompt.contains("12小时"));
@@ -62,6 +65,8 @@ class CustomerServicePromptProviderTest {
         assertEquals("configured_v2", provider.sourceFor("v2"));
         assertTrue(provider.mandatoryPolicy().contains("通用法律知识不得用于推导点签产品支持"));
         assertTrue(provider.mandatoryPolicy().contains("未获得业务工具成功结果"));
+        assertTrue(provider.mandatoryPolicy().contains("咨询客服”替代已经提供的公开事实"));
+        assertTrue(provider.mandatoryPolicy().contains("必须保留所有与当前问题直接相关的关键动作和能力"));
         assertEquals(CustomerServicePromptProvider.fingerprint("configured v2"),
             CustomerServicePromptProvider.fingerprint(provider.promptFor("v2")));
         assertEquals(64, CustomerServicePromptProvider.fingerprint("configured v2").length());

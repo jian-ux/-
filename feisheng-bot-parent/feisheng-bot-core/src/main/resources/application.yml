@@ -136,6 +136,7 @@ ai:
     connect-timeout: ${AI_LLM_CONNECT_TIMEOUT_MS:10000}
     read-timeout: ${AI_LLM_READ_TIMEOUT_MS:60000}
     max-retries: ${AI_LLM_MAX_RETRIES:1}
+    temperature: ${AI_LLM_TEMPERATURE:0.0}
 speech:
   synthesis:
     enabled: ${TTS_ENABLED:false}

@@ -325,7 +325,8 @@ public class DialogEvaluationService {
             .replace("一个月", "1个月")
             .replace("一小时", "1小时")
             .replace("一个小时", "1小时")
-            .replace("一天", "1天");
+            .replace("一天", "1天")
+            .replace("查看", "查阅");
     }
 
     @SuppressWarnings("unchecked")

@@ -112,6 +112,74 @@ class RagRetrievalServiceTest {
     }
 
     @Test
+    void promotesConcretePriceEvidenceWhenRerankerIsUnavailable() {
+        String query = "点签企业版多少钱？";
+        ReflectionTestUtils.setField(service, "contextThreshold", 0.50);
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+
+        Map<String, Object> packageRule = structuredQa(1L, 63L,
+            "怎么买套餐？", "企业可根据需求选择套餐份数购买。", 0.70, false, false);
+        Map<String, Object> genericPrice = structuredQa(2L, 63L,
+            "收费标准是什么？", "新用户可免费试用，单份低至5元。", 0.68, false, false);
+        Map<String, Object> volumeRule = structuredQa(3L, 63L,
+            "一年签署量是多少？", "200份以下按标准套餐购买，以上对接客户经理。", 0.66, false, false);
+        Map<String, Object> concretePrice = structuredQa(4L, 63L,
+            "专业版和高级版的价格？",
+            "专业版1999元；高级版3999元。", 0.63, false, false);
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(packageRule, genericPrice, volumeRule, concretePrice));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertTrue(result.answerable());
+        assertEquals(4L, result.citations().get(0).get("sourceId"));
+        assertTrue(result.context().contains("专业版1999元"));
+        Map<String, Object> diagnostic = result.candidates().stream()
+            .filter(candidate -> Long.valueOf(4L).equals(candidate.get("sourceId")))
+            .findFirst().orElseThrow();
+        assertEquals("price", diagnostic.get("answerTypeCoverage"));
+        assertEquals(true, diagnostic.get("answerTypeCoveragePromoted"));
+    }
+
+    @Test
+    void promotesConcretePriceEvidenceWhenRerankerFavorsGenericCandidates() {
+        String query = "点签企业版多少钱？";
+        ReflectionTestUtils.setField(service, "contextThreshold", 0.50);
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+
+        Map<String, Object> packageRule = structuredQa(1L, 63L,
+            "怎么买套餐？", "企业可根据需求选择套餐份数购买。", 0.70, false, false);
+        Map<String, Object> genericPrice = structuredQa(2L, 63L,
+            "收费标准是什么？", "新用户可免费试用，单份低至5元。", 0.68, false, false);
+        Map<String, Object> volumeRule = structuredQa(3L, 63L,
+            "一年签署量是多少？", "200份以下按标准套餐购买，以上对接客户经理。", 0.66, false, false);
+        Map<String, Object> concretePrice = structuredQa(4L, 63L,
+            "专业版和高级版的价格？",
+            "专业版1999元；高级版3999元。", 0.63, false, false);
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(packageRule, genericPrice, volumeRule, concretePrice));
+        when(rerankService.isAvailable()).thenReturn(true);
+        when(rerankService.rerank(eq(query), anyList()))
+            .thenReturn(Map.of(0, 0.95, 1, 0.85, 2, 0.75, 3, 0.40));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertTrue(result.answerable());
+        assertEquals(4L, result.citations().get(0).get("sourceId"));
+        assertTrue(result.context().contains("专业版1999元"));
+        Map<String, Object> diagnostic = result.candidates().stream()
+            .filter(candidate -> Long.valueOf(4L).equals(candidate.get("sourceId")))
+            .findFirst().orElseThrow();
+        assertEquals("price", diagnostic.get("answerTypeCoverage"));
+        assertEquals(true, diagnostic.get("answerTypeCoveragePromoted"));
+        assertEquals(true, result.rerankDiagnostics().get("applied"));
+    }
+
+    @Test
     void strongKeywordMatchIsNotSuppressedByLowVectorScore() {
         Map<String, Object> keyword = new HashMap<>();
         keyword.put("itemId", 7L);
@@ -1431,6 +1499,79 @@ class RagRetrievalServiceTest {
         assertEquals(2, result.citations().size());
         assertTrue(result.context().contains("管理员认证"));
         assertTrue(result.context().contains("其他方式认证"));
+    }
+
+    @Test
+    void promotesFocusedStructuredQaWhenTopRerankHitHasVeryLowQuestionAlignment() {
+        String query = "一个账号能管理多家子公司的合同吗？";
+        ReflectionTestUtils.setField(service, "rerankHighMinScore", 0.65);
+        ReflectionTestUtils.setField(service, "rerankMediumMinScore", 0.40);
+        ReflectionTestUtils.setField(service, "rerankMediumMinGap", -0.10);
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+
+        Map<String, Object> broad = structuredQa(5697L, 70L,
+            "怎样完成点签标准签约流程？",
+            "先认证，再发起合同并完成签署。", 0.82, false, false);
+        broad.put("qaGroupKey", "signing-flow");
+        Map<String, Object> focused = structuredQa(5609L, 70L,
+            "一个账号可以认证和管理多家企业吗？",
+            "可以认证多家企业，并在企业之间切换管理合同。", 0.78, false, false);
+        focused.put("qaGroupKey", "multiple-enterprises");
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(broad, focused));
+        when(rerankService.isAvailable()).thenReturn(true);
+        when(rerankService.rerank(eq(query), anyList()))
+            .thenReturn(Map.of(0, 0.718750, 1, 0.621094));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertTrue(result.answerable());
+        assertEquals(1, result.citations().size());
+        assertEquals(5609L, result.citations().get(0).get("sourceId"));
+        assertTrue(result.context().contains("认证多家企业"));
+        assertFalse(result.context().contains("标准签约流程"));
+        Map<String, Object> diagnostic = result.candidates().stream()
+            .filter(candidate -> Long.valueOf(5609L).equals(candidate.get("sourceId")))
+            .findFirst().orElseThrow();
+        assertEquals(true, diagnostic.get("focusedStructuredQaPromoted"));
+        assertEquals(5697L, diagnostic.get("focusedStructuredQaReplacedSourceId"));
+        assertTrue(((Number) diagnostic.get("focusedStructuredQaQuestionSimilarity"))
+            .doubleValue() > ((Number) diagnostic.get(
+                "focusedStructuredQaPreviousQuestionSimilarity")).doubleValue());
+    }
+
+    @Test
+    void keepsRerankerWinnerWhenFocusedStructuredQaScoreGapIsLarge() {
+        String query = "一个账号能管理多家子公司的合同吗？";
+        ReflectionTestUtils.setField(service, "rerankHighMinScore", 0.65);
+        ReflectionTestUtils.setField(service, "rerankMediumMinScore", 0.40);
+        ReflectionTestUtils.setField(service, "rerankMediumMinGap", -0.10);
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+
+        Map<String, Object> broad = structuredQa(5697L, 70L,
+            "怎样完成点签标准签约流程？",
+            "先认证，再发起合同并完成签署。", 0.82, true, false);
+        broad.put("qaGroupKey", "signing-flow");
+        Map<String, Object> focused = structuredQa(5609L, 70L,
+            "一个账号可以认证和管理多家企业吗？",
+            "可以认证多家企业，并在企业之间切换管理合同。", 0.78, true, false);
+        focused.put("qaGroupKey", "multiple-enterprises");
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(broad, focused));
+        when(rerankService.isAvailable()).thenReturn(true);
+        when(rerankService.rerank(eq(query), anyList()))
+            .thenReturn(Map.of(0, 0.86, 1, 0.60));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertEquals(5697L, result.citations().get(0).get("sourceId"));
+        assertTrue(result.candidates().stream()
+            .noneMatch(candidate -> Boolean.TRUE.equals(
+                candidate.get("focusedStructuredQaPromoted"))));
     }
 
     @Test

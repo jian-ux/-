@@ -60,14 +60,12 @@ public class HumanHandoffService {
         this.objectMapper = objectMapper;
     }
 
-    public Page<BotTicket> list(int page, int size, String status, Long assigneeId) {
-        LambdaQueryWrapper<BotTicket> query = new LambdaQueryWrapper<>();
-        if (hasText(status)) query.eq(BotTicket::getStatus, status.trim().toLowerCase());
-        if (assigneeId != null) query.eq(BotTicket::getAssigneeId, assigneeId);
-        query.last("ORDER BY FIELD(status, 'pending', 'processing', 'resolved', 'closed'), "
-            + "FIELD(priority, 'P0', 'P1', 'P2', 'P3'), "
-            + "CASE WHEN sla_deadline IS NULL THEN 1 ELSE 0 END, sla_deadline ASC, create_time DESC");
-        Page<BotTicket> result = ticketMapper.selectPage(new Page<>(page, size), query);
+    public Page<BotTicket> list(int page, int size, String status, Long assigneeId,
+                                String channelType, String customerName) {
+        Page<BotTicket> result = ticketMapper.selectAdminPage(
+            new Page<>(Math.max(page, 1), Math.min(Math.max(size, 1), 100)),
+            normalized(status, true), assigneeId,
+            normalized(channelType, true), normalized(customerName, false));
         enrichAssigneeNames(result.getRecords());
         return result;
     }
@@ -285,6 +283,12 @@ public class HumanHandoffService {
 
     private boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private String normalized(String value, boolean lowerCase) {
+        if (!hasText(value)) return null;
+        String normalized = value.trim();
+        return lowerCase ? normalized.toLowerCase() : normalized;
     }
 
     public record ReplyResult(boolean delivered, String deliveryStatus,

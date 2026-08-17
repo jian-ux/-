@@ -31,7 +31,7 @@ public class LlmHttpClient {
     @Value("${ai.llm.max-retries:2}")
     private int maxRetries;
 
-    @Value("${ai.llm.temperature:0.2}")
+    @Value("${ai.llm.temperature:0.0}")
     private double temperature;
 
     @Value("${ai.llm.system-prompt:You are a helpful customer service assistant.}")

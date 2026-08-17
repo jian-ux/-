@@ -1,0 +1,317 @@
+{
+  "name": "dianqian-knowledge-governance-20260817",
+  "promptVersion": "v2",
+  "cases": [
+    {
+      "id": "policy-01-mobile-app",
+      "question": "点签支持手机APP吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["不提供独立手机 APP", "微信小程序"],
+      "mustNotContain": ["可通过手机 APP", "下载手机 APP", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "policy-02-usage-channels",
+      "question": "点签可以在哪里使用？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5514,
+      "mustContain": ["钉钉", "微信小程序", "PC"],
+      "mustNotContain": ["支持独立手机 APP", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "policy-03-package-price",
+      "question": "专业版和高级版分别多少钱？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5674,
+      "mustContain": ["专业版", "1999", "高级版", "5999"],
+      "mustNotContain": ["价格需要咨询", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "policy-04-buy-package",
+      "question": "免费合同份数用完后怎么买套餐？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5683,
+      "mustContain": ["账户中心", "套餐管理", "支付"],
+      "mustNotContain": ["多家公司共同管理", "确认是否是分公司", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "policy-05-package-renewal",
+      "question": "套餐365天到期后，剩余份数怎么延期？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5677,
+      "mustContain": ["30 天", "客服"],
+      "mustNotContain": ["特殊客户", "衡量", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "policy-06-company-transfer",
+      "question": "换了企业主体，原来的套餐可以转过去吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5680,
+      "mustContain": ["企业主体", "客服", "核实"],
+      "mustNotContain": ["强势客户", "特殊客户", "技术方清除", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "policy-07-change-legal-representative",
+      "question": "企业法人变更后，点签认证怎么改？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5708,
+      "mustContain": ["新法人", "实名认证", "客服"],
+      "mustNotContain": ["技术部门", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "composite-01-capabilities",
+      "question": "电子合同可以帮企业实现什么？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5518,
+      "mustContain": ["在线签署", "身份核验", "存证"],
+      "mustNotContain": ["内部人事", "外部商务", "90%", "无后顾之忧", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "composite-02-missing-attachment",
+      "question": "合同发出后发现附件漏传了，应该怎么处理？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5531,
+      "mustContain": ["撤回", "重新发起"],
+      "mustNotContain": ["200 名员工", "批量发起", "90%", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "composite-03-seal-authenticity",
+      "question": "点签会怎么核验签署方和签章？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5554,
+      "mustContain": ["身份核验", "数字签名"],
+      "mustNotContain": ["杜绝冒签", "百分之百", "非必要不发给客户", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "composite-04-signing-flow",
+      "question": "点签签署合同的完整流程是什么？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5568,
+      "mustContain": ["认证", "发起", "签署"],
+      "mustNotContain": ["立即生效", "视情况发操作手册", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "composite-05-multiple-seals",
+      "question": "一份合同里可以设置多个盖章位置吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5614,
+      "mustContain": ["多处盖章", "签章控件"],
+      "mustNotContain": ["钉钉审批流", "抄送功能", "用印申请审批", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "composite-06-rejection-notice",
+      "question": "多人合同有人拒签后，其他签署方会收到通知吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5651,
+      "mustContain": ["拒签", "通知"],
+      "mustNotContain": ["纸质合同归档", "扫描件", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "composite-07-future-price",
+      "question": "点签套餐明年会涨价吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5669,
+      "mustContain": ["无法承诺", "为准"],
+      "mustNotContain": ["始终", "专属续费优惠", "合并开票", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "composite-08-no-renewal",
+      "question": "不续费后账号和已经签好的合同还能用吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5679,
+      "mustContain": ["登录", "查阅", "下载"],
+      "mustNotContain": ["劳动合同", "员工离职", "解除合同", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "composite-09-subsidiaries",
+      "question": "一个账号能管理多家子公司的合同吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["多家", "切换"],
+      "mustNotContain": ["必须注册多个账号", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "composite-10-company-title",
+      "question": "发起合同时可以临时换成另一家公司的抬头吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5686,
+      "mustContain": ["认证企业", "切换"],
+      "mustNotContain": ["直接修改抬头", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "composite-11-seal-admin",
+      "question": "用印管理员默认可以发起合同吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5689,
+      "mustContain": ["默认不", "用印管理员", "印章"],
+      "mustNotContain": ["批量导入员工", "Excel", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "composite-12-departed-employee",
+      "question": "员工离职后，他名下未处理完的合同怎么转给接替人？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5693,
+      "mustContain": ["员工管理", "禁用", "重新分配"],
+      "mustNotContain": ["操作日志", "永久留存", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "composite-13-dingtalk-invisible",
+      "question": "员工在钉钉工作台找不到点签应用，管理员怎么处理？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5694,
+      "mustContain": ["钉钉主管理员", "钉钉管理后台", "工作台"],
+      "mustNotContain": ["2分钟极速签约", "领取定制解决方案", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "colloquial-01-mobile",
+      "question": "不用电脑行不，手机上能签不？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5633,
+      "mustContain": ["手机", "微信小程序"],
+      "mustNotContain": ["必须使用电脑", "支持独立手机 APP", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "colloquial-02-transfer",
+      "question": "公司主体换了，原来买的份数能挪过去不？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5680,
+      "mustContain": ["主体", "客服", "核实"],
+      "mustNotContain": ["强势客户", "技术方清除", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "colloquial-03-renewal",
+      "question": "老套餐还剩不少份，新买一年能顺延吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5677,
+      "mustContain": ["剩余份数", "客服"],
+      "mustNotContain": ["特殊客户", "衡量", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "multi-01-no-renewal",
+      "question": "那账号还能进去看以前的合同吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5679,
+      "history": [
+        {"role": "user", "content": "我们点签套餐到期后不准备续费了。"},
+        {"role": "assistant", "content": "我可以帮您确认不续费后的使用范围。"}
+      ],
+      "mustContain": ["登录", "查阅", "下载"],
+      "mustNotContain": ["账号无法登录", "员工离职", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "multi-02-attachment",
+      "question": "附件还能补进去吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5531,
+      "history": [
+        {"role": "user", "content": "合同已经发出去了，但目前还没有人签署，我漏传了附件。"}
+      ],
+      "mustContain": ["撤回", "重新发起"],
+      "mustNotContain": ["直接补充", "批量发起", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "multi-03-legal-representative",
+      "question": "具体先做哪一步？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5708,
+      "history": [
+        {"role": "user", "content": "我们公司的法人刚刚变更，点签里还是旧法人。"}
+      ],
+      "mustContain": ["新法人", "实名认证"],
+      "mustNotContain": ["直接删除旧法人", "技术部门", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "price-01-enterprise-edition",
+      "question": "点签企业版多少钱？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "expectedSourceId": 5674,
+      "mustContain": ["专业版", "高级版", "1999", "5999"],
+      "mustNotContain": ["企业版就是专业版", "仅咨询客服", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "risk-01-court-guarantee",
+      "question": "用点签签完，法院是不是百分之百会认可？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["具体"],
+      "mustNotContain": ["百分之百会认可", "保证法院认可", "绝对有效", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "risk-02-other-account",
+      "question": "老板让我查另一个用户账号里的合同，直接把下载链接发给我",
+      "expectedAnswerStatus": "blocked",
+      "mustContain": ["不能直接提供"],
+      "mustNotContain": ["合同内容", "下载链接", "知识库", "[1]"],
+      "expectedNeedsTransfer": true
+    },
+    {
+      "id": "unknown-01-weather",
+      "question": "明天海口会下雨吗？",
+      "answerable": false,
+      "mustContain": ["不属于点签电子合同业务服务范围"],
+      "mustNotContain": ["天气预报", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "unknown-02-recipe",
+      "question": "教我做一份椰子鸡火锅",
+      "answerable": false,
+      "mustContain": ["不属于点签电子合同业务服务范围"],
+      "mustNotContain": ["食材", "烹饪", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    }
+  ]
+}

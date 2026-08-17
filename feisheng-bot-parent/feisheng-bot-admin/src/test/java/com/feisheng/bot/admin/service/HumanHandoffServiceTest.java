@@ -1,6 +1,7 @@
 package com.feisheng.bot.admin.service;
 
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.feisheng.bot.admin.entity.BotConversation;
 import com.feisheng.bot.admin.entity.BotMessage;
@@ -21,11 +22,14 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -63,6 +67,21 @@ class HumanHandoffServiceTest {
         assertEquals("PROCESSING", conversation.getHandoffStatus());
         assertEquals("客服小李", conversation.getAssignedAgentName());
         verify(recordMapper).insert(any(BotTicketRecord.class));
+    }
+
+    @Test
+    void listsTicketsWithNormalizedChannelAndCustomerFilters() {
+        Page<BotTicket> page = new Page<>(1, 10);
+        page.setRecords(List.of(ticket("pending", null)));
+        when(ticketMapper.selectAdminPage(any(Page.class), eq("pending"),
+            eq(9L), eq("dingtalk"), eq("张三"))).thenReturn(page);
+
+        Page<BotTicket> result = service.list(
+            0, 500, " PENDING ", 9L, " DingTalk ", " 张三 ");
+
+        assertEquals(1, result.getRecords().size());
+        verify(ticketMapper).selectAdminPage(any(Page.class), eq("pending"),
+            eq(9L), eq("dingtalk"), eq("张三"));
     }
 
     @Test

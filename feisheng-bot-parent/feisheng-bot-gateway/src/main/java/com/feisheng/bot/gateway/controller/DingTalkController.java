@@ -135,11 +135,11 @@ public class DingTalkController {
         ChannelMessageDTO dto = channelMessage(
             "dingtalk", senderId, stringValue(body.get("senderNick")),
             msgId, text, msgType);
+        String sessionWebhook = stringValue(body.get("sessionWebhook")).trim();
         if (media != null) {
             DingTalkMediaRequest identified = new DingTalkMediaRequest(
                 msgId, media.msgType(), media.downloadCode(), media.recognition(),
                 media.fileName(), media.robotCode(), media.caption());
-            String sessionWebhook = stringValue(body.get("sessionWebhook")).trim();
             if (!sessionWebhook.isBlank() && streamCallbackListener != null) {
                 streamCallbackListener.dispatchMedia(dto, identified, sessionWebhook);
                 return ResponseEntity.ok(new LinkedHashMap<>());
@@ -149,6 +149,10 @@ public class DingTalkController {
             } catch (DingTalkMediaProcessingException e) {
                 return ResponseEntity.ok(textResponse(e.getUserMessage()));
             }
+        }
+        if (!sessionWebhook.isBlank() && streamCallbackListener != null) {
+            streamCallbackListener.dispatchText(dto, sessionWebhook);
+            return ResponseEntity.ok(new LinkedHashMap<>());
         }
         return ResponseEntity.ok(replyResponse(channelService.processMessage(dto)));
     }
@@ -343,10 +347,10 @@ public class DingTalkController {
     }
 
     private static String replyFrom(Map<String, Object> result) {
+        if (result != null && Boolean.TRUE.equals(result.get("duplicate"))) return "";
         String reply = stringValue(result.get("reply"));
         if (!reply.isBlank()) return reply;
-        return Boolean.TRUE.equals(result.get("duplicate"))
-            ? "消息已处理，无需重复发送。" : "服务暂时不可用，请稍后再试。";
+        return "服务暂时不可用，请稍后再试。";
     }
 
     private static Map<String, Object> textResponse(String content) {
@@ -355,14 +359,17 @@ public class DingTalkController {
 
     private static Map<String, Object> replyResponse(Map<String, Object> result) {
         String reply = replyFrom(result);
+        if (reply.isBlank()) return Map.of();
+        String richReply = ReplyAttachmentUtils.richReply(result);
         List<ReplyAttachmentUtils.ImageAttachment> images =
             ReplyAttachmentUtils.publicImages(result);
-        if (images.isEmpty()) return textResponse(reply);
+        if (images.isEmpty() && richReply.isBlank()) return textResponse(reply);
         return Map.of(
             "msgtype", "markdown",
             "markdown", Map.of(
                 "title", "智能客服回复",
-                "text", ReplyAttachmentUtils.markdown(reply, images)));
+                "text", ReplyAttachmentUtils.markdown(
+                    richReply.isBlank() ? reply : richReply, images)));
     }
 
     private static String nestedContent(Object value) {

@@ -1,0 +1,293 @@
+{
+    "code":  200,
+    "msg":  "success",
+    "data":  {
+                 "name":  "rag-repair-dialog-regression-20260813",
+                 "promptVersion":  "v2",
+                 "evaluatedAt":  "2026-08-13T14:36:41.744128452Z",
+                 "usesRealModel":  true,
+                 "databaseRolledBack":  true,
+                 "costNotice":  "评测会调用真实模型并产生 API 成本；会话、消息、工单和日志数据均按样本回滚。",
+                 "total":  5,
+                 "decisionExpected":  5,
+                 "decisionCorrect":  5,
+                 "decisionAccuracy":  1.0,
+                 "groundingExpected":  5,
+                 "groundingMatched":  5,
+                 "groundingAccuracy":  1.0,
+                 "requiredPhraseTotal":  15,
+                 "requiredPhraseHit":  15,
+                 "requiredPhraseHitRate":  1.0,
+                 "forbiddenPhraseTotal":  20,
+                 "forbiddenPhraseViolations":  0,
+                 "handoffExpected":  0,
+                 "handoffCorrect":  0,
+                 "handoffAccuracy":  0.0,
+                 "piiLeakCount":  0,
+                 "modelErrorCount":  0,
+                 "cases":  [
+                               {
+                                   "id":  "company",
+                                   "question":  "你们是做什么的？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.578,
+                                   "reply":  "我们是点签电子合同平台，用户可全程在线上发起和签署合同，包含合同签发、管理、公章授权管控等电子合同应用，与纸质合同具有同等法律效力。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  null,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  null,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  6081,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:5014",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  5014,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  6,
+                                                         "sectionPath":  "点签是做什么的？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.0,
+                                                         "snippet":  "我们是电子合同平台，用户可全程在线上发起以及签署，包含对合同签发、管理，公章的授权管控等一系列关于电子合同的应用，与传统的纸质合同一样，具有同等的法律效力。"
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:5009",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  5009,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  1,
+                                                         "sectionPath":  "我们主要是做什么的？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.417,
+                                                         "snippet":  "我们是互联网软件开发公司，主要是做信息安全技术的。目前依托于电子签章技术，我们主要孵化了十款标准化产品：点签电子合同、OpenApi、教育电子签章平台、电子证件管理系统、医疗电子签章平台、互联网医院平台、数字安信云平台、会计师事务所电子文档签署平台、检验检测在线业务受理平台、电子报告管理平台，以及其他两大板块业务：数据可视化大屏、定制化开发。\n公司介绍\n介绍..."
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "legal-change",
+                                   "question":  "更换法人认证",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.754,
+                                   "reply":  "更换法人认证需要新法人先完成认证，才能解除旧的主体法人。新法人认证完成后，请将新法人和之前法人的姓名、手机号分别发送给客服，由客服反馈技术部门处理。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  null,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  null,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  6468,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:5209",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  5209,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  201,
+                                                         "sectionPath":  "更换法人认证",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  1.0,
+                                                         "snippet":  "需要新的法人进行认证，才可以将旧的主体法人解除，法人认证后完成后将新法人和之前法人的姓名、手机号分别发送至客服，客服这边反馈至技术部门进行处理。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "sms-limit",
+                                   "question":  "发起多次后接收不到验证短信",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.621,
+                                   "reply":  "您好，这是因为运营商会限制短信发送次数，短信发送频繁会导致接收不到验证短信。请您等待一天后再发起，同时不要在同一时间发送太多份合同。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  null,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  null,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  5648,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:5208",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  5208,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  200,
+                                                         "sectionPath":  "发起多次后接收不到验证短信",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  1.0,
+                                                         "snippet":  "您好，这是因为运营商会限制短信发送的次数，会导致短信发送频繁，请您等待一天后再进行发起，客服建议您这边不要同一时间发送太多份合同呢。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "usage-channel",
+                                   "question":  "点签可以在哪里使用？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "knowledge_qa",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.852,
+                                   "reply":  "点签可以在钉钉、微信公众号、微信小程序、PC网页版、企业微信和短信链接中使用，不支持独立的手机APP。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  null,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  null,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  1782,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:5015",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  5015,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  7,
+                                                         "sectionPath":  "点签可以在哪里使用？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  1.0,
+                                                         "snippet":  "点签可以在钉钉、微信公众号、微信小程序、PC网页版、企业微信和短信链接中使用，不支持独立的手机APP。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "operation-flow",
+                                   "question":  "点签电子合同操作流程是怎样的？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.777,
+                                   "reply":  "点签电子合同的操作流程如下：\n1. 首次使用时，先完成个人和企业认证，确认操作人及企业身份真实后即可进入使用。\n2. 完成认证后，操作人自动成为企业管理员，可在应用的“设置”中上传公司印章。\n3. 发起合同前，可上传企业内部合同模板，设定模板内应签署的区域并保存；发起合同时填写接收方信息后直接发起。\n4. 合同发起后，对方可在收到的签署短信中签署，也可将签署链接或签署二维码发给对方。\n5. 双方完成盖章或签名后，合同即完成签署并立即生效，双方账号中各自存档一份，可随时查阅、下载，与纸质合同具有同等法律效力。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  null,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  null,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  15170,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:5065",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  5065,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  57,
+                                                         "sectionPath":  "点签电子合同操作流程是怎样的？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  1.0,
+                                                         "snippet":  "1、用户首次使用点签应用时，需进行个人以及企业的认证，确保操作人、归属企业身份的真实性后，即可进入使用。\n2、完成认证后，该操作人将自动成为企业管理员，可在应用中的“设置”，上传公司的印章。\n3、合同发起前，可将企业内部的合同模板上传至点签平台，设定模板内应签署的区域后进行保存，发起合同时，填写合同相应的接收方信息后可直接发起合同。\n4、合同发起后，对方可在..."
+                                                     }
+                                                 ],
+                                   "error":  null
+                               }
+                           ]
+             }
+}

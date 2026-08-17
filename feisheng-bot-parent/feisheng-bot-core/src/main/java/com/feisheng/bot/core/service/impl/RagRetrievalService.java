@@ -219,13 +219,17 @@ public class RagRetrievalService {
                                     String modalityContext, Map<String, Object> filters,
                                     List<QueryVariant> supplementalVariants,
                                     boolean trackHit) {
+        RetrievalTimingCollector timings = new RetrievalTimingCollector();
         if (businessSafetyBoundaryService.checkRetrievalAuthorization(query).isBlocked()) {
             return new RetrievalResult(false, false, null, null, 0,
                 "authorization_blocked", false,
-                Collections.emptyList(), Collections.emptyList());
+                Collections.emptyList(), Collections.emptyList(),
+                defaultRerankDiagnostics(), timings.snapshot(0, 0));
         }
         Map<String, Object> searchFilters = trustedFilters(filters);
+        long keywordStarted = System.nanoTime();
         Map<String, Object> keywordMatch = keywordMatch(query, trackHit, searchFilters);
+        timings.keywordNanos += elapsedNanos(keywordStarted);
         boolean hasKeywordMatch = keywordMatch != null && keywordMatch.containsKey("answer");
         double keywordScore = hasKeywordMatch ? number(keywordMatch.get("score")) : 0;
         boolean exactKeywordMatch = hasKeywordMatch
@@ -235,7 +239,9 @@ public class RagRetrievalService {
 
         if (exactKeywordMatch && directAnswerEnabled && keywordScore >= directThreshold
                 && isBlank(conversationContext) && isBlank(modalityContext)) {
-            return directKeywordResult(keywordMatch, keywordScore);
+            RetrievalResult direct = directKeywordResult(keywordMatch, keywordScore);
+            return direct.withStageLatencies(
+                timings.snapshot(0, direct.candidates().size()));
         }
 
         List<QueryVariant> queryVariants = queryVariants(
@@ -248,12 +254,19 @@ public class RagRetrievalService {
             for (QueryVariant variant : queryVariants) {
                 String semanticQuery = semanticQuery(
                     variant.query(), conversationContext, modalityContext);
-                List<Double> embedding = getEmbedding(semanticQuery);
+                long embeddingStarted = System.nanoTime();
+                EmbeddingLookup embeddingLookup = getEmbedding(semanticQuery);
+                timings.embeddingNanos += elapsedNanos(embeddingStarted);
+                if (embeddingLookup.cacheHit()) timings.embeddingCacheHits++;
+                else timings.embeddingCacheMisses++;
+                List<Double> embedding = embeddingLookup.vector();
                 if (embedding.isEmpty()) continue;
                 if (variant.original()) originalEmbedding = embedding;
                 semanticAvailable = true;
+                long vectorStarted = System.nanoTime();
                 List<Map<String, Object>> matches = semanticMatch(
                     semanticQuery, embedding, recallLimit, searchFilters);
+                timings.vectorSearchNanos += elapsedNanos(vectorStarted);
                 if (variant.original()) {
                     mergeRankedMatches(candidates, semanticMatches(matches),
                         "semanticScore", null, "vectorRank");
@@ -264,13 +277,16 @@ public class RagRetrievalService {
             }
         }
 
+        long structuredStarted = System.nanoTime();
         StructuredUnitRecall structuredUnitRecall = recallStructuredUnits(
             originalEmbedding, searchFilters);
+        timings.vectorSearchNanos += elapsedNanos(structuredStarted);
         if (!structuredUnitRecall.evidenceCandidates().isEmpty()) {
             mergeRankedMatches(candidates, structuredUnitRecall.evidenceCandidates(),
                 "structuredUnitScore", "structured_unit_evidence", "structuredUnitRank");
         }
 
+        long sparseStarted = System.nanoTime();
         if (bm25Enabled) {
             mergeRankedMatches(candidates,
                 bm25Match(query, recallLimit, searchFilters),
@@ -301,6 +317,7 @@ public class RagRetrievalService {
                 query, recallLimit, searchFilters),
                 "phoneticScore", "phonetic", "phoneticRank");
         }
+        timings.sparseSearchNanos += elapsedNanos(sparseStarted);
 
         if (hasKeywordMatch) {
             Map<String, Object> keywordCandidate = findFaq(candidates, keywordMatch.get("itemId"));
@@ -364,7 +381,8 @@ public class RagRetrievalService {
         }
 
         candidates.sort(this::compareCandidates);
-        applyReranking(query, candidates);
+        RerankService.RerankDiagnostics rerankDiagnostics =
+            applyReranking(query, candidates);
         candidates.sort(this::compareCandidates);
         RerankConfidenceDecision rerankConfidence = assessRerankConfidence(candidates);
         List<Map<String, Object>> selected = rerankConfidence.tier() == RerankConfidenceTier.LOW
@@ -416,7 +434,9 @@ public class RagRetrievalService {
         return new RetrievalResult(answerable, direct, directAnswer, context,
             round(confidence), decision, semanticAvailable,
             List.copyOf(citations), candidatesWithDiagnostics(
-                candidates, structuredUnitRecall.diagnostics()));
+                candidates, structuredUnitRecall.diagnostics()),
+            rerankDiagnostics.asMap(), timings.snapshot(
+                rerankDiagnostics.latencyMs(), candidates.size()));
     }
 
     /**
@@ -446,7 +466,8 @@ public class RagRetrievalService {
         String decision = base.answerable() ? "multimodal_rag" : "provided_context";
         double confidence = base.answerable() ? base.confidence() : 1.0;
         return new RetrievalResult(true, false, null, context.toString(), confidence,
-            decision, base.semanticAvailable(), List.copyOf(citations), base.candidates());
+            decision, base.semanticAvailable(), List.copyOf(citations), base.candidates(),
+            base.rerankDiagnostics(), base.stageLatencies());
     }
 
     public List<Map<String, Object>> citationsForProvidedContext(String context) {
@@ -462,7 +483,7 @@ public class RagRetrievalService {
         return List.of(citation);
     }
 
-    private List<Double> getEmbedding(String query) {
+    private EmbeddingLookup getEmbedding(String query) {
         EmbeddingService.EmbeddingDescriptor descriptor = embeddingService.descriptor();
         String modelVersion = descriptor == null || descriptor.version() == null
             || descriptor.version().isBlank() ? "legacy" : descriptor.version();
@@ -470,7 +491,8 @@ public class RagRetrievalService {
         try {
             Object cached = redisUtil.get(key);
             if (cached != null) {
-                return objectMapper.readValue(cached.toString(), new TypeReference<List<Double>>() {});
+                return new EmbeddingLookup(objectMapper.readValue(cached.toString(),
+                    new TypeReference<List<Double>>() {}), true);
             }
         } catch (Exception ignored) {}
 
@@ -481,7 +503,7 @@ public class RagRetrievalService {
                     CACHE_TTL_SECONDS, TimeUnit.SECONDS);
             } catch (Exception ignored) {}
         }
-        return embedding;
+        return new EmbeddingLookup(embedding, false);
     }
 
     private String semanticQuery(String query, String conversationContext,
@@ -1305,18 +1327,38 @@ public class RagRetrievalService {
         return values;
     }
 
-    private void applyReranking(String query, List<Map<String, Object>> candidates) {
-        if (rerankService == null || !rerankService.isAvailable() || candidates.isEmpty()) return;
+    private RerankService.RerankDiagnostics applyReranking(
+            String query, List<Map<String, Object>> candidates) {
+        if (rerankService == null) {
+            return new RerankService.RerankDiagnostics(false, false, false,
+                "service_unavailable", 0, "none", null);
+        }
+        if (!rerankService.isAvailable()) {
+            return firstNonNullRerankDiagnostics(rerankService.diagnostics(),
+                "not_configured");
+        }
+        if (candidates.isEmpty()) {
+            return firstNonNullRerankDiagnostics(rerankService.diagnostics(),
+                "no_candidates");
+        }
         int limit = Math.min(Math.max(candidateK, topK), candidates.size());
         List<Map<String, Object>> selected = new ArrayList<>(candidates.subList(0, limit));
         List<String> documents = selected.stream().map(this::rerankDocument).toList();
         Map<Integer, Double> scores = rerankService.rerank(query, documents);
+        RerankService.RerankDiagnostics diagnostics = rerankService.diagnostics();
+        if (diagnostics == null) {
+            diagnostics = new RerankService.RerankDiagnostics(true, true,
+                scores.size() == selected.size(),
+                scores.size() == selected.size() ? null : "partial_response",
+                0, scores.size() == selected.size() ? "rerank" : "fused", "unknown");
+        }
         if (scores.size() != selected.size()) {
             if (!scores.isEmpty()) {
                 log.warn("Ignoring partial rerank response: expected {} scores but received {}",
                     selected.size(), scores.size());
             }
-            return;
+            return diagnostics.applied() ? diagnostics.withFailure(
+                "partial_response", "fused") : diagnostics;
         }
         for (Map.Entry<Integer, Double> score : scores.entrySet()) {
             if (score.getKey() < 0 || score.getKey() >= selected.size()) continue;
@@ -1325,6 +1367,14 @@ public class RagRetrievalService {
             candidate.put("rankScore", round6(score.getValue()));
             candidate.put("reranked", true);
         }
+        return diagnostics;
+    }
+
+    private RerankService.RerankDiagnostics firstNonNullRerankDiagnostics(
+            RerankService.RerankDiagnostics diagnostics, String failureReason) {
+        if (diagnostics != null) return diagnostics;
+        return new RerankService.RerankDiagnostics(true, false, false,
+            failureReason, 0, "fused", "unknown");
     }
 
     private RerankConfidenceDecision assessRerankConfidence(
@@ -1354,11 +1404,14 @@ public class RagRetrievalService {
     }
 
     private String rerankDocument(Map<String, Object> candidate) {
-        return String.join("\n", firstNonBlank(string(candidate.get("title")),
-                string(candidate.get("question"))),
-            Boolean.TRUE.equals(candidate.get("structuredQa"))
-                ? firstNonBlank(string(candidate.get("fullAnswer")), string(candidate.get("answer")))
-                : firstNonBlank(string(candidate.get("content")), string(candidate.get("answer"))));
+        boolean structuredQa = Boolean.TRUE.equals(candidate.get("structuredQa"));
+        String heading = structuredQa
+            ? firstNonBlank(structuredQuestion(candidate), string(candidate.get("title")))
+            : firstNonBlank(string(candidate.get("title")), string(candidate.get("question")));
+        String body = structuredQa
+            ? firstNonBlank(string(candidate.get("fullAnswer")), string(candidate.get("answer")))
+            : firstNonBlank(string(candidate.get("content")), string(candidate.get("answer")));
+        return String.join("\n", heading, body);
     }
 
     private int compareCandidates(Map<String, Object> left, Map<String, Object> right) {
@@ -1588,6 +1641,14 @@ public class RagRetrievalService {
         return Math.round(value * 1_000_000) / 1_000_000.0;
     }
 
+    private static long elapsedNanos(long started) {
+        return Math.max(0L, System.nanoTime() - started);
+    }
+
+    private static long nanosToMillis(long nanos) {
+        return Math.max(0L, nanos / 1_000_000L);
+    }
+
     private static String string(Object value) {
         return value == null ? "" : value.toString();
     }
@@ -1606,12 +1667,78 @@ public class RagRetrievalService {
         return value.length() <= maxLength ? value : value.substring(0, maxLength) + "...";
     }
 
+    private record EmbeddingLookup(List<Double> vector, boolean cacheHit) {}
+
+    private static final class RetrievalTimingCollector {
+        private final long startedNanos = System.nanoTime();
+        private long keywordNanos;
+        private long embeddingNanos;
+        private long vectorSearchNanos;
+        private long sparseSearchNanos;
+        private int embeddingCacheHits;
+        private int embeddingCacheMisses;
+
+        private Map<String, Object> snapshot(long rerankMs, int candidateCount) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("retrievalTotalMs", nanosToMillis(elapsedNanos(startedNanos)));
+            result.put("keywordMatchMs", nanosToMillis(keywordNanos));
+            result.put("embeddingMs", nanosToMillis(embeddingNanos));
+            result.put("vectorSearchMs", nanosToMillis(vectorSearchNanos));
+            result.put("sparseSearchMs", nanosToMillis(sparseSearchNanos));
+            result.put("rerankMs", Math.max(0L, rerankMs));
+            result.put("embeddingCacheHits", embeddingCacheHits);
+            result.put("embeddingCacheMisses", embeddingCacheMisses);
+            result.put("candidateCount", Math.max(0, candidateCount));
+            return Collections.unmodifiableMap(result);
+        }
+    }
+
     public record RetrievalResult(boolean answerable, boolean directAnswer,
                                   String directAnswerText, String context,
                                   double confidence, String decision,
                                   boolean semanticAvailable,
                                   List<Map<String, Object>> citations,
-                                  List<Map<String, Object>> candidates) {
+                                  List<Map<String, Object>> candidates,
+                                  Map<String, Object> rerankDiagnostics,
+                                  Map<String, Object> stageLatencies) {
+        public RetrievalResult {
+            rerankDiagnostics = rerankDiagnostics == null
+                ? defaultRerankDiagnostics()
+                : Collections.unmodifiableMap(new LinkedHashMap<>(rerankDiagnostics));
+            stageLatencies = stageLatencies == null
+                ? defaultStageLatencies()
+                : Collections.unmodifiableMap(new LinkedHashMap<>(stageLatencies));
+        }
+
+        public RetrievalResult(boolean answerable, boolean directAnswer,
+                               String directAnswerText, String context,
+                               double confidence, String decision,
+                               boolean semanticAvailable,
+                               List<Map<String, Object>> citations,
+                               List<Map<String, Object>> candidates) {
+            this(answerable, directAnswer, directAnswerText, context, confidence, decision,
+                semanticAvailable, citations, candidates, defaultRerankDiagnostics(),
+                defaultStageLatencies());
+        }
+
+        public RetrievalResult(boolean answerable, boolean directAnswer,
+                               String directAnswerText, String context,
+                               double confidence, String decision,
+                               boolean semanticAvailable,
+                               List<Map<String, Object>> citations,
+                               List<Map<String, Object>> candidates,
+                               Map<String, Object> rerankDiagnostics) {
+            this(answerable, directAnswer, directAnswerText, context, confidence, decision,
+                semanticAvailable, citations, candidates, rerankDiagnostics,
+                defaultStageLatencies());
+        }
+
+        public RetrievalResult withStageLatencies(Map<String, Object> timings) {
+            return new RetrievalResult(answerable, directAnswer, directAnswerText, context,
+                confidence, decision, semanticAvailable, citations, candidates,
+                rerankDiagnostics, timings);
+        }
+
         public String rerankConfidenceTier() {
             if (candidates == null) return null;
             return candidates.stream()
@@ -1628,6 +1755,32 @@ public class RagRetrievalService {
                 .filter(candidate -> Boolean.TRUE.equals(candidate.get("diagnosticOnly")))
                 .toList();
         }
+    }
+
+    private static Map<String, Object> defaultRerankDiagnostics() {
+        Map<String, Object> diagnostics = new LinkedHashMap<>();
+        diagnostics.put("configured", false);
+        diagnostics.put("attempted", false);
+        diagnostics.put("applied", false);
+        diagnostics.put("failureReason", "not_attempted");
+        diagnostics.put("latencyMs", 0L);
+        diagnostics.put("scoreSource", "none");
+        diagnostics.put("configSource", null);
+        return Collections.unmodifiableMap(diagnostics);
+    }
+
+    private static Map<String, Object> defaultStageLatencies() {
+        Map<String, Object> timings = new LinkedHashMap<>();
+        timings.put("retrievalTotalMs", 0L);
+        timings.put("keywordMatchMs", 0L);
+        timings.put("embeddingMs", 0L);
+        timings.put("vectorSearchMs", 0L);
+        timings.put("sparseSearchMs", 0L);
+        timings.put("rerankMs", 0L);
+        timings.put("embeddingCacheHits", 0);
+        timings.put("embeddingCacheMisses", 0);
+        timings.put("candidateCount", 0);
+        return Collections.unmodifiableMap(timings);
     }
 
     private record StructuredUnitRecall(List<Map<String, Object>> evidenceCandidates,

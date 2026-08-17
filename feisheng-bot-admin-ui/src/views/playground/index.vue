@@ -247,6 +247,15 @@
         <div class="debug-section">
           <div class="debug-title">⏱️ 响应延迟</div>
           <div style="font-size:24px;font-weight:bold;color:#409eff">{{ lastDebug.latencyMs }}<span style="font-size:14px"> 毫秒</span></div>
+          <el-descriptions v-if="lastDebug.stageLatencies" :column="1" size="small" border style="margin-top:10px">
+            <el-descriptions-item label="知识检索">{{ lastDebug.stageLatencies.retrievalMs || 0 }} 毫秒</el-descriptions-item>
+            <el-descriptions-item label="向量生成">{{ lastDebug.stageLatencies.embeddingMs || 0 }} 毫秒</el-descriptions-item>
+            <el-descriptions-item label="向量检索">{{ lastDebug.stageLatencies.vectorSearchMs || 0 }} 毫秒</el-descriptions-item>
+            <el-descriptions-item label="稀疏检索">{{ lastDebug.stageLatencies.sparseSearchMs || 0 }} 毫秒</el-descriptions-item>
+            <el-descriptions-item label="相关性重排">{{ lastDebug.stageLatencies.rerankMs || 0 }} 毫秒</el-descriptions-item>
+            <el-descriptions-item label="模型生成">{{ lastDebug.stageLatencies.modelMs || 0 }} 毫秒</el-descriptions-item>
+            <el-descriptions-item label="其他处理">{{ lastDebug.stageLatencies.otherMs || 0 }} 毫秒</el-descriptions-item>
+          </el-descriptions>
         </div>
       </el-card>
     </div>

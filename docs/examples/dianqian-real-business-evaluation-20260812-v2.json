@@ -1,0 +1,190 @@
+{
+  "name": "dianqian-real-business-blackbox-round2-20260812",
+  "promptVersion": "v2",
+  "cases": [
+    {
+      "id": "biz2-01-verification-rate-limit",
+      "question": "我们HR今天连续发了很多份合同，现在员工一直收不到验证码，今晚急着签，有没有临时处理办法？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["24小时", "签约密码"],
+      "mustNotContain": ["永久封禁", "反复点击发送", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-02-former-admin-replacement",
+      "question": "公司原来的点签管理员离职了，新同事要接手管理员，后台应该怎么交接？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["原管理员", "设置为管理员", "禁用"],
+      "mustNotContain": ["删除企业", "重新注册企业", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-03-departure-contract-transfer",
+      "question": "销售小李离职了，他名下还有没处理完的客户合同，管理员怎么转给接替的人？以前签完的合同会不会一起没了？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["员工管理", "禁用", "重新分配", "企业账户"],
+      "mustNotContain": ["自动删除", "离职员工继续发起", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-04-operation-log-audit",
+      "question": "审计要查某个员工什么时候发起、签署或者拒签过合同，管理员能查到吗？员工自己能把记录删掉吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["操作日志", "发起", "签署", "拒签", "永久留存", "不可删除"],
+      "mustNotContain": ["只能查30天", "员工可以删除", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-05-dingtalk-app-invisible",
+      "question": "我们已经在钉钉装了点签，但有几个部门的员工在工作台里看不到，谁去哪里开权限？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["钉钉主管理员", "钉钉管理后台", "工作台", "权限"],
+      "mustNotContain": ["员工自己安装", "必须重建企业", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-06-dingtalk-roster-sync",
+      "question": "钉钉通讯录里明明有新员工，为什么点签花名册还没有自动出现？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["进入点签应用", "实名认证", "花名册"],
+      "mustNotContain": ["手工逐个导入", "立即无条件同步", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-07-dingtalk-approval-autoseal",
+      "question": "法务希望钉钉里发合同后先走审批，审批过了再自动盖章，点签能做吗？什么版本支持？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["高级版", "审批管理", "自动触发审批", "自动盖章"],
+      "mustNotContain": ["基础版默认支持", "无需审批直接盖章", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-08-dingtalk-cc-sync",
+      "question": "合同审批里填的抄送人能同步到点签吗？审批和签署的消息他都能收到吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["高级版", "抄送人", "审批通知", "签署通知"],
+      "mustNotContain": ["完全不支持同步", "只收到审批通知", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-09-miniprogram-slow",
+      "question": "客户在微信点签小程序里一直转圈，打开合同特别慢，我们现场先让他怎么排查？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["网络", "缓存", "更新微信"],
+      "mustNotContain": ["合同已经损坏", "只能换手机", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-10-identity-mismatch",
+      "question": "员工实名认证提示身份信息不一致，名字和身份证号看着都对，但绑定的手机号不是他本人的，接下来怎么处理？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["身份证", "有效期", "人脸识别", "人工审核"],
+      "mustNotContain": ["借用手机号继续认证", "必须重新注册企业", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-11-change-legal-representative",
+      "question": "公司法人刚变更，点签企业认证里还是老法人，需要按什么顺序改？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["新法人", "认证", "姓名", "手机号", "客服"],
+      "mustNotContain": ["直接删除旧法人", "无需新法人认证", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-12-change-mobile",
+      "question": "我的旧手机号停用了，想把点签账号换绑到新号码，是先找客服还是先认证新号码？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["新手机号", "实名认证", "客服"],
+      "mustNotContain": ["旧手机号验证码", "无需认证", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-13-contract-not-received",
+      "question": "采购说合同已经发了，但供应商手机上完全没收到。我们应该先核对哪些信息？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["发起方", "填写信息", "手机号", "注册认证"],
+      "mustNotContain": ["合同一定没发成功", "让对方反复注册", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-14-duplicate-signature-name",
+      "question": "我新增个人签名时提示名称重复，是系统坏了吗？能不能保留两个同名签名？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["不能", "同一个", "修改签名名称"],
+      "mustNotContain": ["系统故障", "可以保留两个同名", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-15-api-environment-isolation",
+      "question": "我们在点签SaaS API测试环境已经把企业注册认证好了，切到另一个环境能直接共用这套认证数据吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["两个环境", "注册认证", "不互通"],
+      "mustNotContain": ["自动同步", "直接共用", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-16-mixed-paper-electronic-signing",
+      "question": "我们已经在点签盖了一方电子章，对方嫌麻烦想打印出来盖实体章再寄回来，这样签有没有风险？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["效力风险", "电子签名", "电子签约平台"],
+      "mustNotContain": ["肯定有效", "完全没有风险", "保证法院认可", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-17-withdraw-reinitiate",
+      "question": "那我还能直接撤回重发吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "history": [
+        {"role": "user", "content": "刚发现发出去的采购合同金额写错了，对方还没有全部签完。"},
+        {"role": "assistant", "content": "需要根据当前签署状态确认处理方式。"}
+      ],
+      "mustContain": ["撤回", "重新发起", "保留"],
+      "mustNotContain": ["直接修改原合同", "必须等全部签完", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-18-multi-company-management",
+      "question": "集团财务一个人要管理三家子公司的合同，是不是得注册三个账号来回登录？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["一个账号", "切换", "多家公司"],
+      "mustNotContain": ["必须注册三个账号", "无法管理子公司", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-19-local-deployment-openapi",
+      "question": "我们是自研采购系统，数据希望留在本地，点签支持本地部署并接到现有审批流程里吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["支持", "本地部署", "OpenApi", "接入"],
+      "mustNotContain": ["只能使用公有云", "不支持业务系统集成", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "biz2-20-electronic-invoice-fields",
+      "question": "套餐买完要开电子发票，最少要把哪些开票资料发给客服？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["单位名称", "纳税人识别号"],
+      "mustNotContain": ["只要手机号", "必须提供法人身份证", "知识库", "[1]"],
+      "expectedNeedsTransfer": false
+    }
+  ]
+}

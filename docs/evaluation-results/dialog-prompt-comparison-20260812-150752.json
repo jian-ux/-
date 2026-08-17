@@ -1,0 +1,457 @@
+{
+    "evaluatedAt":  "2026-08-12T15:10:30.2760664+08:00",
+    "sampleName":  "dianqian-document-dialog-20260807",
+    "totalCases":  30,
+    "productionDefault":  "v1",
+    "recommendation":  "candidate_v2",
+    "metrics":  [
+                    {
+                        "name":  "decisionAccuracy",
+                        "direction":  "higher",
+                        "v1":  1,
+                        "v2":  1,
+                        "winner":  "tie"
+                    },
+                    {
+                        "name":  "groundingAccuracy",
+                        "direction":  "higher",
+                        "v1":  1,
+                        "v2":  1,
+                        "winner":  "tie"
+                    },
+                    {
+                        "name":  "requiredPhraseHitRate",
+                        "direction":  "higher",
+                        "v1":  0.9811,
+                        "v2":  1,
+                        "winner":  "v2"
+                    },
+                    {
+                        "name":  "forbiddenPhraseViolations",
+                        "direction":  "lower",
+                        "v1":  1,
+                        "v2":  0,
+                        "winner":  "v2"
+                    },
+                    {
+                        "name":  "handoffAccuracy",
+                        "direction":  "higher",
+                        "v1":  1,
+                        "v2":  1,
+                        "winner":  "tie"
+                    },
+                    {
+                        "name":  "piiLeakCount",
+                        "direction":  "lower",
+                        "v1":  0,
+                        "v2":  0,
+                        "winner":  "tie"
+                    },
+                    {
+                        "name":  "modelErrorCount",
+                        "direction":  "lower",
+                        "v1":  0,
+                        "v2":  0,
+                        "winner":  "tie"
+                    }
+                ],
+    "changedReplyCount":  18,
+    "caseDifferences":  [
+                            {
+                                "id":  "normal-03-service-modes",
+                                "question":  "点签电子合同有几种服务模式？",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "点签电子合同共有3种服务模式：\n\n1. SaaS（软件即服务）：可直接使用点签现有应用，例如在微信公众号、小程序、PC网页版、钉钉、企业微信、短信中使用。\n2. OpenAPI（应用编程接口）：企业内部已有业务系统或OA、ERP等系统时，通过提供OpenAPI接口将电子合同的服务能力接入企业内部系统。\n3. 定制化开发：企业内部没有自主研发的系统且现有平台功能无法满足需求时，可根据企业需求量身定做，定制化开发一整套系统供企业使用。",
+                                "v2Reply":  "点签电子合同提供3种服务模式：\n1. SaaS模式：直接使用点签现有的应用，可通过微信公众号、小程序、PC网页版、钉钉、企业微信或短信等渠道使用。\n2. OpenAPI模式：如果企业内部已有业务系统或OA、ERP等系统，可通过OpenAPI接口将电子合同服务能力集成到自有系统中。\n3. 定制化开发模式：如果企业没有自研系统且现有平台功能不能满足需求，可根据企业实际需要量身定做一整套系统。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            },
+                            {
+                                "id":  "normal-04-expiry-reminder",
+                                "question":  "合同到期能提醒吗？",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "点签电子合同支持到期提醒功能，该功能为专业版功能。您可以设置合同到期时间，系统会在到期时自动推送通知，方便您及时处理后续履约或续签事宜。",
+                                "v2Reply":  "点签支持合同到期提醒功能。该功能是专业版功能，您可以为合同设置到期时间，系统会在到期时自动推送通知，帮助您及时处理后续履约或续签。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            },
+                            {
+                                "id":  "normal-05-modify-sent",
+                                "question":  "合同发起后发现内容错误，如何修改？",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "若对方尚未签署，发起人可在【我发起的合同】中点击“撤回”，修改内容后重新发起；若对方已签署，需双方协商一致后通过“解除合同”功能生成解除协议，再重新签署新合同。",
+                                "v2Reply":  "若对方还未签署，发起人可以在【我发起的合同】中点击“撤回”，修改合同内容后重新发起。如果对方已经签署，则需要双方协商，通过“解除合同”功能生成解除协议，之后再重新签署新的合同。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            },
+                            {
+                                "id":  "normal-07-sign-reminder",
+                                "question":  "合同发起后怎么提醒对方签署，能扫码吗？",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "可以的，合同发起后可以扫码签约。提醒对方签约有三种方式：\n\n1. 自动提醒：系统会给接收方手机发送签约短信，如果对方关注了“点签”微信公众号或通过钉钉发起，也会收到对应的微信或钉钉消息提醒，点击消息即可签署。\n2. 手动发送链接或二维码：您可以在点签平台的合同管理中点击“提醒”，将签署链接或二维码手动发送给对方，对方扫码即可签署。",
+                                "v2Reply":  "可以的。合同发起后，系统会自动通过短信、微信公众号或钉钉工作通知提醒对方签署。您也可以手动将签署链接或二维码发送给对方，扫码即可签署。\n\n操作步骤如下：\n1. 进入点签平台的合同管理。\n2. 找到对应的合同，点击“提醒”。\n3. 在弹出的选项中，您可以复制签署链接或下载二维码，然后发送给对方即可。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+                                                         "三种方式"
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            },
+                            {
+                                "id":  "normal-08-legal-validity",
+                                "question":  "电子合同具有法律效力吗？",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "电子合同具有法律效力。依据《电子签名法》，可靠的电子签名与手写签名或盖章具有同等的法律效力。",
+                                "v2Reply":  "电子合同具有法律效力。根据2004年出台的《电子签名法》，可靠的电子签名与手写签名或盖章具有同等的法律效力。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            },
+                            {
+                                "id":  "normal-11-enterprise-certification",
+                                "question":  "企业怎么认证？",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "企业认证有三种方式，您可以根据情况选择：\n\n1. 我是法人：在线即时完成认证（需使用法人手机号并完成人脸识别）。\n2. 我不是法人：系统会发送授权书短信给法人，由法人在线签署授权书后完成认证。\n3. 对公账户打款：使用您公司的对公账户向点签官方账户打款1分钱，验证后完成认证。\n\n首次创建企业并认证成功的人，将默认成为企业管理员。",
+                                "v2Reply":  "企业认证有三种方式：\n\n1. 我是法人：在线完成即时认证（手机号/人脸）。\n2. 不是法人：系统向法人发送授权书短信，法人远程签署授权书后完成认证。\n3. 对公账户打款：使用对公账号打款1分钱至点签官方账户，完成认证。\n\n首次创建企业并认证成功的人，默认成为企业管理员。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            },
+                            {
+                                "id":  "normal-12-seal-permission",
+                                "question":  "印章授权后员工仍然无法用章，怎么处理？",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "管理员需要在【印章管理】中确认两个设置：\n\n1. 该员工是否已分配至“用章权限组”；\n2. 该印章是否设置了“使用范围”（如仅限采购合同使用），如范围不匹配需调整授权范围后重新保存。",
+                                "v2Reply":  "请管理员登录点签平台，进入【印章管理】按以下两点排查：\n\n1. 确认该员工是否已被加入“用章权限组”。\n2. 检查所用印章是否设置了“使用范围”（例如仅限采购合同），若范围过窄需调整并重新保存授权。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            },
+                            {
+                                "id":  "normal-13-custom-template",
+                                "question":  "可以使用自己的合同模板吗，怎么设置？",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "可以的，点签支持您上传并使用自己的合同模板。设置方法如下：\n\n操作步骤：\n1. 由主管理员登录企业后台，进入“模板管理”-“我的模板”，点击“新增模板”并上传您的合同文件。\n2. 上传后，设置模板名称并选择模板分类。\n3. 完成基本设置后，需要预设签约角色和接收方信息：\n - 签约角色：可选择个人或企业，如需多方签署可添加多个角色。\n - 参与方式：根据合同需要，开启接收方填写内容、签名或盖章的选项。\n - 签约方信息：发起人默认为本公司信息；接收方可设为“固定签约方”或“非固定签约方”。若每次发给相同对象，可设为固定并提前填写信息；若对象不固定，可设为非固定，由发起人在发送时再填写。\n4. 设置完成后保存模板。后续发起合同时，直接选用该模板，填写接收方信息后即可发送签署。\n\n关于合同文件格式，支持多种类型，为获得最佳兼容性，建议您上传PDF格式的文件。",
+                                "v2Reply":  "可以在点签使用自己的合同模板。由主管理员登录企业后台，进入模板管理，选择新增模板并上传合同文件即可设置。\n\n操作步骤：\n1. 在【模板管理】-【我的模板】中，点击新增模板，上传合同文件（支持多种格式，建议使用PDF）。\n2. 填写模板名称，选择合适的模板分类。\n3. 设置签约角色：根据需要添加企业接收方或个人接收方，支持多方签署。\n4. 设置参与方式：决定接收方是否需要填写内容、签名或盖章。\n5. 设置签约方信息：接收人可选择固定签约方（锁定接收人，发起时无需重复填写）或非固定签约方（发起时再由发起人指定接收人）。\n6. 保存模板后，发起合同时直接选用该模板并填写接收方信息即可快速发起。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            },
+                            {
+                                "id":  "normal-17-no-renewal-contracts",
+                                "question":  "以后不续费了，已经签好的合同会消失吗？",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "不续费后，已签好的合同不会消失。在点签平台完成签署的电子合同会持续保存在您的账号中，随时可以查阅和下载。",
+                                "v2Reply":  "不会消失。在点签完成签署的电子合同，即使套餐到期后不再续费，也会长期保存在您的账号中，您可以随时登录查阅和下载。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            },
+                            {
+                                "id":  "normal-20-dingtalk-notice",
+                                "question":  "钉钉端收不到合同签署通知，怎么排查？",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "请按以下步骤排查钉钉端合同签署通知：\n\n1. 打开钉钉，进入【设置】-【新消息通知】，确认“点签电子合同”已勾选“接收通知”。\n2. 如果通知仍未收到，您可以手动复制签署链接，通过钉钉单聊直接发送给对方。",
+                                "v2Reply":  "您可以在钉钉里检查“工作通知”权限：进入钉钉【设置】-【新消息通知】，确认“点签电子合同”已勾选“接收通知”。如果仍收不到，可以手动复制签署链接，通过钉钉单聊发送。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+                                                          "工作通知"
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            },
+                            {
+                                "id":  "colloquial-01-platforms",
+                                "question":  "你们这个点签能在哪儿用啊？",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "点签可以在钉钉、微信公众号、微信小程序、PC网页版、企业微信和短信链接中使用，不支持独立的手机APP。",
+                                "v2Reply":  "点签可以在钉钉、微信公众号、微信小程序、PC网页版、企业微信和短信链接中使用，目前没有独立的手机APP。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            },
+                            {
+                                "id":  "colloquial-02-wrong-contract",
+                                "question":  "合同发错了咋整，对方还没签呢",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "您直接在“我发起的合同”中找到这份合同，点击“撤回”，修改成正确内容后重新发起就行了。",
+                                "v2Reply":  "合同发错了，如果对方还没签，可以直接处理。您先在“我发起的合同”里找到这份合同，点击“撤回”，然后在本地把合同内容改对，确认无误后重新发起给对方签署就行。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            },
+                            {
+                                "id":  "colloquial-05-package-expiry",
+                                "question":  "买的套餐用不完，过期了咋算？",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "合同签署次数有效期为1年，套餐到期后未使用完的次数将自动清零。",
+                                "v2Reply":  "套餐有效期为1年，到期后未用完的签署次数会自动清零。如果不想浪费次数，在套餐到期前7天内可以这样处理：\n\n1. 剩余份数达到50份或以上：联系客服申请延长有效期30天，剩余次数同步延期。\n2. 剩余份数少于50份：在原套餐到期前购买新套餐，联系客服申请把剩余次数转入新套餐。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            },
+                            {
+                                "id":  "colloquial-06-mobile",
+                                "question":  "不用电脑行不，手机上能签不？",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "手机上可以签。点签支持在手机、平板、电脑上操作，您通过手机 APP、网页端或小程序都能随时随地完成签署。",
+                                "v2Reply":  "可以的，手机上完全能签署电子合同。您可以通过点签的手机APP、微信小程序或手机网页端操作，随时随地完成合同签署。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            },
+                            {
+                                "id":  "colloquial-10-dingtalk",
+                                "question":  "钉钉里死活收不到签合同的通知",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "请检查钉钉“工作通知”权限是否开启：进入钉钉【设置】-【新消息通知】，确保“点签电子合同”勾选“接收通知”。若仍未收到，可手动复制签署链接通过钉钉单聊发送。",
+                                "v2Reply":  "请检查钉钉“工作通知”权限：进入钉钉【设置】-【新消息通知】，确保“点签电子合同”已勾选“接收通知”。如果仍未收到，可以手动复制签署链接通过钉钉单聊发送给对方。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            },
+                            {
+                                "id":  "multi-01-no-renewal",
+                                "question":  "那到期以后账号还能用吗？",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "到期以后账号可以正常登录使用，之前的数据会一直保存在您的账户上，可以随时查阅和下载。但不能发起新合同，如需签署新合同需要续费购买套餐。",
+                                "v2Reply":  "到期后账号可以正常登录使用，之前签署的合同数据会长期保留在账户中，支持随时查阅和下载。但不能再发起新的合同签署，如需签署新合同需要续费购买套餐。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            },
+                            {
+                                "id":  "multi-02-wrong-content",
+                                "question":  "这个还能直接改吗？",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "可以修改。您可以先在“我发起的合同”中找到该合同，点击“撤回”，在本地修改合同文件并确认内容无误后重新发起。",
+                                "v2Reply":  "不能直接在已发起的合同上修改正文。您需要先撤回合同，修改文件后重新发起。\n操作步骤：\n1. 在“我发起的合同”中找到该合同；\n2. 点击“撤回”；\n3. 确认合同内容修改无误后重新发起。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            },
+                            {
+                                "id":  "multi-04-phone",
+                                "question":  "现在还能把号码改掉吗？",
+                                "sourceV1":  "rag_ai",
+                                "sourceV2":  "rag_ai",
+                                "v1Reply":  "合同处于“待签署”状态时，无法直接修改接收方手机号。您需要撤回当前合同后重新发起签署，否则签署会失败。",
+                                "v2Reply":  "不能直接修改。合同在“待签署”状态下，接收人的手机号无法更改。您需要先撤回该合同，然后重新发起一次，填入正确的手机号即可。",
+                                "v1DecisionCorrect":  true,
+                                "v2DecisionCorrect":  true,
+                                "v1MissingRequired":  [
+
+                                                      ],
+                                "v2MissingRequired":  [
+
+                                                      ],
+                                "v1ForbiddenFound":  [
+
+                                                     ],
+                                "v2ForbiddenFound":  [
+
+                                                     ]
+                            }
+                        ]
+}

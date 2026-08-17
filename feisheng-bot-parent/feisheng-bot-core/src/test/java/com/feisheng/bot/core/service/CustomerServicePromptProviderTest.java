@@ -1,6 +1,10 @@
 package com.feisheng.bot.core.service;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.core.env.MapPropertySource;
+
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -14,6 +18,15 @@ class CustomerServicePromptProviderTest {
 
         assertEquals("v1", provider.resolveVersion(null));
         assertEquals("legacy prompt", provider.promptFor("v1"));
+    }
+
+    @Test
+    void preservesLegacyV1PropertyWhenTheNewV1PropertyIsEmpty() {
+        CustomerServicePromptProvider provider =
+            new CustomerServicePromptProvider("v1", "", "legacy prompt", "");
+
+        assertEquals("legacy prompt", provider.promptFor("v1"));
+        assertEquals("configured_v1", provider.sourceFor("v1"));
     }
 
     @Test
@@ -37,11 +50,47 @@ class CustomerServicePromptProviderTest {
         assertTrue(!prompt.contains("80%"));
         assertTrue(!prompt.contains("12小时"));
         assertTrue(!prompt.contains("三种方式"));
+        assertEquals("built_in_v2", provider.sourceFor("v2"));
+    }
+
+    @Test
+    void usesConfiguredV2AndProvidesMandatoryPolicyAndStableFingerprint() {
+        CustomerServicePromptProvider provider =
+            new CustomerServicePromptProvider("v2", "configured v1", "configured v2");
+
+        assertEquals("configured v2", provider.promptFor("v2"));
+        assertEquals("configured_v2", provider.sourceFor("v2"));
+        assertTrue(provider.mandatoryPolicy().contains("通用法律知识不得用于推导点签产品支持"));
+        assertTrue(provider.mandatoryPolicy().contains("未获得业务工具成功结果"));
+        assertEquals(CustomerServicePromptProvider.fingerprint("configured v2"),
+            CustomerServicePromptProvider.fingerprint(provider.promptFor("v2")));
+        assertEquals(64, CustomerServicePromptProvider.fingerprint("configured v2").length());
     }
 
     @Test
     void rejectsUnsupportedVersions() {
         assertThrows(IllegalArgumentException.class,
             () -> new CustomerServicePromptProvider("v3", "legacy prompt"));
+    }
+
+    @Test
+    void springSelectsAutowiredConstructorAndResolvesLegacyAndV2Properties() {
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+            context.getEnvironment().getPropertySources().addFirst(new MapPropertySource(
+                "test-properties", Map.of(
+                    "ai.customer-service.prompt-version", "v2",
+                    "ai.customer-service.system-prompt-v1", "",
+                    "ai.customer-service.system-prompt-full", "legacy-from-environment",
+                    "ai.customer-service.system-prompt-v2", "v2-from-environment")));
+            context.register(CustomerServicePromptProvider.class);
+            context.refresh();
+
+            CustomerServicePromptProvider provider =
+                context.getBean(CustomerServicePromptProvider.class);
+            assertEquals("v2-from-environment", provider.promptFor("v2"));
+            assertEquals("legacy-from-environment", provider.promptFor("v1"));
+            assertEquals("configured_v2", provider.sourceFor("v2"));
+            assertEquals("configured_v1", provider.sourceFor("v1"));
+        }
     }
 }

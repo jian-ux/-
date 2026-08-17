@@ -81,7 +81,7 @@ class DingTalkControllerTest {
     }
 
     @Test
-    void returnsTextResponseForDuplicateMessage() throws Exception {
+    void silentlyAcknowledgesDuplicateMessage() throws Exception {
         ChannelServiceImpl channelService = mock(ChannelServiceImpl.class);
         when(channelService.processMessage(any())).thenReturn(Map.of("duplicate", true));
         DingTalkController controller = controller(channelService, SECRET);
@@ -90,7 +90,7 @@ class DingTalkControllerTest {
             messageBody("你好"), signedRequest(SECRET));
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals(Map.of("msgtype", "text", "text", Map.of("content", "消息已处理，无需重复发送。")), response.getBody());
+        assertEquals(Map.of(), response.getBody());
     }
 
     @Test
@@ -113,6 +113,49 @@ class DingTalkControllerTest {
                 "title", "智能客服回复",
                 "text", "产品介绍\n\n![产品图](https://bot.example.com/image/42)")),
             response.getBody());
+    }
+
+    @Test
+    void returnsMarkdownResponseWhenCoreSuppliesRichReply() throws Exception {
+        ChannelServiceImpl channelService = mock(ChannelServiceImpl.class);
+        when(channelService.processMessage(any())).thenReturn(Map.of(
+            "reply", "结论\n- 已确认",
+            "richReply", "**结论**\n\n- 已确认"));
+        DingTalkController controller = controller(channelService, SECRET);
+
+        ResponseEntity<Map<String, Object>> response = controller.receiveMessage(
+            messageBody("咨询流程"), signedRequest(SECRET));
+
+        assertEquals(Map.of(
+            "msgtype", "markdown",
+            "markdown", Map.of(
+                "title", "智能客服回复",
+                "text", "**结论**\n\n- 已确认")), response.getBody());
+    }
+
+    @Test
+    void dispatchesHttpTextAsynchronouslyWhenSessionWebhookIsPresent() throws Exception {
+        ChannelServiceImpl channelService = mock(ChannelServiceImpl.class);
+        DingTalkStreamCallbackListener streamListener =
+            mock(DingTalkStreamCallbackListener.class);
+        when(streamListener.dispatchText(any(), anyString())).thenReturn(true);
+        DingTalkController controller = new DingTalkController(
+            channelService, new ObjectMapper(), (DingTalkMediaProcessor) null, streamListener,
+            SECRET, "", "");
+        Map<String, Object> body = messageBody("慢问题");
+        body.put("sessionWebhook", "https://oapi.dingtalk.com/robot/sendBySession");
+
+        ResponseEntity<Map<String, Object>> response = controller.receiveMessage(
+            body, signedRequest(SECRET));
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(Map.of(), response.getBody());
+        ArgumentCaptor<ChannelMessageDTO> dto = ArgumentCaptor.forClass(ChannelMessageDTO.class);
+        verify(streamListener).dispatchText(dto.capture(),
+            eq("https://oapi.dingtalk.com/robot/sendBySession"));
+        assertEquals("text", dto.getValue().getMsgType());
+        assertEquals("慢问题", dto.getValue().getContent());
+        verifyNoInteractions(channelService);
     }
 
     @Test

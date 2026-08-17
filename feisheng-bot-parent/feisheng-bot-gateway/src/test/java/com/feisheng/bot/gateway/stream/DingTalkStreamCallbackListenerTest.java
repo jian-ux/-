@@ -12,14 +12,17 @@ import org.mockito.ArgumentCaptor;
 import java.util.Map;
 import java.util.List;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class DingTalkStreamCallbackListenerTest {
@@ -43,6 +46,29 @@ class DingTalkStreamCallbackListenerTest {
         assertEquals("张三", dto.getValue().getSenderName());
         assertEquals("msg-1", dto.getValue().getMsgId());
         assertEquals("你好", dto.getValue().getContent());
+    }
+
+    @Test
+    void acknowledgesTextBeforeRunningAiProcessing() throws Exception {
+        ChannelServiceImpl channelService = mock(ChannelServiceImpl.class);
+        DingTalkStreamReplySender replySender = mock(DingTalkStreamReplySender.class);
+        when(channelService.processMessage(any())).thenReturn(Map.of("reply", "异步回复"));
+        AtomicReference<Runnable> pending = new AtomicReference<>();
+        DingTalkStreamCallbackListener listener = new DingTalkStreamCallbackListener(
+            channelService, replySender, pending::set);
+
+        Map<String, Object> ack = listener.execute(message("慢问题"));
+
+        assertTrue(ack.isEmpty());
+        assertNotNull(pending.get());
+        verify(channelService, never()).processMessage(any());
+        verifyNoInteractions(replySender);
+
+        pending.get().run();
+
+        verify(channelService).processMessage(any());
+        verify(replySender).replyText(
+            "https://oapi.dingtalk.com/robot/sendBySession", "异步回复");
     }
 
     @Test
@@ -203,7 +229,24 @@ class DingTalkStreamCallbackListenerTest {
     }
 
     @Test
-    void repliesForDuplicateMessage() throws Exception {
+    void repliesWithBusyMessageWhenTextQueueIsFull() throws Exception {
+        ChannelServiceImpl channelService = mock(ChannelServiceImpl.class);
+        DingTalkStreamReplySender replySender = mock(DingTalkStreamReplySender.class);
+        Executor rejected = command -> {
+            throw new java.util.concurrent.RejectedExecutionException("full");
+        };
+        DingTalkStreamCallbackListener listener = new DingTalkStreamCallbackListener(
+            channelService, replySender, rejected);
+
+        listener.execute(message("排队问题"));
+
+        verify(channelService, never()).processMessage(any());
+        verify(replySender).replyText(
+            "https://oapi.dingtalk.com/robot/sendBySession", "当前咨询较多，请稍后重试。");
+    }
+
+    @Test
+    void silentlyAcknowledgesDuplicateMessage() throws Exception {
         ChannelServiceImpl channelService = mock(ChannelServiceImpl.class);
         DingTalkStreamReplySender replySender = mock(DingTalkStreamReplySender.class);
         when(channelService.processMessage(any())).thenReturn(Map.of("duplicate", true));
@@ -212,8 +255,8 @@ class DingTalkStreamCallbackListenerTest {
 
         listener.execute(message("重复消息"));
 
-        verify(replySender).replyText(
-            "https://oapi.dingtalk.com/robot/sendBySession", "消息已处理，无需重复发送。");
+        verify(channelService).processMessage(any());
+        verifyNoInteractions(replySender);
     }
 
     @Test
@@ -237,6 +280,24 @@ class DingTalkStreamCallbackListenerTest {
             "智能客服回复",
             "这是点签产品介绍。\n\n![点签产品图]"
                 + "(https://bot.example.com/api/public/knowledge-images/42?signature=test)");
+        verify(replySender, never()).replyText(any(), any());
+    }
+
+    @Test
+    void sendsRichReplyAsMarkdownWithoutChangingPlainReplyContract() throws Exception {
+        ChannelServiceImpl channelService = mock(ChannelServiceImpl.class);
+        DingTalkStreamReplySender replySender = mock(DingTalkStreamReplySender.class);
+        when(channelService.processMessage(any())).thenReturn(Map.of(
+            "reply", "结论\n- 已确认",
+            "richReply", "**结论**\n\n- 已确认"));
+        DingTalkStreamCallbackListener listener = new DingTalkStreamCallbackListener(
+            channelService, replySender);
+
+        listener.execute(message("咨询流程"));
+
+        verify(replySender).replyMarkdown(
+            "https://oapi.dingtalk.com/robot/sendBySession",
+            "智能客服回复", "**结论**\n\n- 已确认");
         verify(replySender, never()).replyText(any(), any());
     }
 

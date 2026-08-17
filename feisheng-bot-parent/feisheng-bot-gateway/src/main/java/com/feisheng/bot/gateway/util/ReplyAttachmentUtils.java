@@ -1,6 +1,7 @@
 package com.feisheng.bot.gateway.util;
 
 import com.feisheng.bot.knowledge.service.KnowledgeImageService;
+import com.feisheng.bot.core.service.RichReplyFormatter;
 
 import java.net.URI;
 import java.util.ArrayList;
@@ -24,6 +25,13 @@ public final class ReplyAttachmentUtils {
 
     public static List<ImageAttachment> publicImages(Map<String, Object> result) {
         return images(result).stream().filter(image -> isPublicHttpUrl(image.url())).toList();
+    }
+
+    /** Returns rich content only when Core explicitly supplied useful Markdown. */
+    public static String richReply(Map<String, Object> result) {
+        if (result == null) return "";
+        String value = text(result.get("richReply"));
+        return RichReplyFormatter.isRich(value) ? RichReplyFormatter.format(value) : "";
     }
 
     public static String markdown(String reply, List<ImageAttachment> images) {

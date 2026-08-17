@@ -12,9 +12,11 @@ import com.feisheng.bot.core.service.CustomerServicePromptProvider;
 import com.feisheng.bot.core.service.EmotionService;
 import com.feisheng.bot.core.service.HandoffCoordinator;
 import com.feisheng.bot.core.service.IntentService;
+import com.feisheng.bot.core.service.ModelAnswerSignalParser;
 import com.feisheng.bot.core.service.NlpIntentClassifier;
 import com.feisheng.bot.core.service.PlainTextReplyFormatter;
 import com.feisheng.bot.core.service.ReplyAttachmentService;
+import com.feisheng.bot.core.service.RichReplyFormatter;
 import com.feisheng.bot.core.service.SensitiveDataService;
 import com.feisheng.bot.knowledge.service.KnowledgeImageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -44,6 +46,8 @@ public class DialogServiceImpl {
     private static final double INTENT_REWRITE_RETRIEVAL_WEIGHT = 0.85;
     private static final String NO_ANSWER_SIGNAL = "__NO_ANSWER__";
     private static final String PARTIAL_ANSWER_SIGNAL = "__ANSWER_PARTIAL__";
+    private static final ModelAnswerSignalParser MODEL_ANSWER_SIGNAL_PARSER =
+        new ModelAnswerSignalParser();
     private static final Pattern STRUCTURED_ANSWER_IN_CONTEXT = Pattern.compile(
         "(?ms)^答案：(.*?)(?=^事实：|^回答时先锁定|\\z)");
     private static final String PLAIN_TEXT_OUTPUT_INSTRUCTION =
@@ -72,8 +76,13 @@ public class DialogServiceImpl {
         "点签套餐到期不续费后，还能继续发起新合同吗？";
     private static final Map<String, Object> KNOWLEDGE_RETRIEVAL_FILTERS =
         Map.of("sourceScope", "KNOWLEDGE");
-    private static final String DEFAULT_NATIVE_FALLBACK_SYSTEM_PROMPT = "你是企业客服的通用助手。"
-        + "可以回答稳定的通用知识、礼貌沟通和非企业专属概念解释。当前没有可核实的企业内部事实，"
+    private static final String NATIVE_FALLBACK_SCOPE_POLICY =
+        "Native 兜底只服务点签电子合同业务。仅可回答与电子合同、电子签名、数字证书、"
+            + "签署合规或合同管理直接相关的稳定通用概念；不得回答天气、菜谱、娱乐、投资、"
+            + "新闻等业务范围外问题。业务范围外问题必须只输出 " + NO_ANSWER_SIGNAL + "。";
+    private static final String DEFAULT_NATIVE_FALLBACK_SYSTEM_PROMPT =
+        "你是点签电子合同官方客服的受限兜底助手。"
+        + "只可以回答与电子合同业务直接相关的稳定通用概念。当前没有可核实的企业内部事实，"
         + "严禁把推测说成公司、产品、价格、合同、交付、售后、账户、隐私或合规事实，"
         + "不得编造功能、政策、案例、数据或承诺。若只能回答稳定的通用部分，先回答该部分，"
         + "再提出一个与缺失信息直接相关的问题，并在第一行输出 " + PARTIAL_ANSWER_SIGNAL + "。"
@@ -88,11 +97,8 @@ public class DialogServiceImpl {
             + "%s内容涉及具体条款，我不能在没有已审核模板和完整信息的情况下直接代写。\n\n"
             + "请回复“合同内容”或“发起签署”，我会继续为您处理。";
     private static final String CONTRACT_CAPABILITY_NO_EVIDENCE_REPLY =
-        "点签可以用于发起和签署电子合同，但目前没有关于%s是否适用的明确业务口径，"
-            + "我不能直接确认该合同类型。请补充具体签署主体和使用场景，我可以继续为您核实。";
-    private static final String PROPERTY_SALE_CONTRACT_CAPABILITY_REPLY =
-        "可以。点签支持%s的电子签署，您可以上传已拟定的合同文件，设置签署方和签署区域后发起签署。"
-            + "电子签署完成的是合同订立；房屋产权转移仍需按规定办理不动产登记。";
+        "目前没有关于%s在点签平台上的已审核产品口径，我不能据此判断是否可用。"
+            + "请补充具体签署主体和使用场景，我可以继续为您核实，或由人工客服确认。";
     private static final String CONTRACT_LEGAL_RISK_REPLY =
         "该问题涉及合同法律效力或条款判断，当前没有可核实的标准答案，我不能直接给出结论，"
             + "需要由人工客服进一步确认。";
@@ -105,8 +111,13 @@ public class DialogServiceImpl {
     private static final String SIGNED_ATTACHMENT_GUARDRAIL_REPLY =
         "已完成签署的合同内容已经固定。漏传的附件可与对方协商后，通过补充协议处理。";
     private static final String VERIFICATION_CODE_GUARDRAIL_REPLY =
-        "请先检查手机信号是否正常。若短时间内多次获取验证码，请停止重复发送，稍后再试；"
-            + "仍未收到时，请联系人工客服进一步核查。";
+        "验证码收不到时，请按以下顺序处理：\n\n"
+            + "1. 先检查手机信号是否正常，并避免连续重复获取验证码。\n"
+            + "2. 如果短时间内频繁获取验证码，可能触发运营商短信接收限制；"
+            + "这种限制需等待24小时后由运营商自动解除。\n"
+            + "3. 若急需签署，可先在点签账户内设置签约密码，使用密码完成签署，"
+            + "后续或稍晚再使用短信验证码。\n\n"
+            + "若并非频繁获取导致，或等待24小时后仍未恢复，请联系人工客服进一步核查。";
     private static final String COMPETITOR_COMPARISON_GUARDRAIL_REPLY =
         "不同电子合同平台的安全性和法律效力不能脱离具体需求直接下结论。"
             + "选型时可比较实名认证与签署意愿验证、数字证书、存证与司法举证能力、"
@@ -193,6 +204,10 @@ public class DialogServiceImpl {
         "客户一句话包含多个并列问题。请逐项核对企业内部事实并完整作答，不得只回答其中一项，"
             + "也不得因为一项缺少依据而拒答全部问题。若只能回答部分事项，必须使用 "
             + PARTIAL_ANSWER_SIGNAL + "，明确已确认部分，并只追问一个与未确认事项直接相关的问题。";
+    private static final String EVIDENCE_BACKED_ANSWER_RETRY_INSTRUCTION =
+        "当前已提供与客户问题相关的企业内部事实。请重新逐条核对并回答事实能够确认的内容，"
+            + "不得补充事实之外的产品能力、规则或承诺；只有这些事实完全不能回答核心问题时，"
+            + "才输出 " + NO_ANSWER_SIGNAL + "。";
     private static final String POLARITY_CONSISTENCY_INSTRUCTION =
         "输出前逐项核对支持与不支持、可以与不可以、自动与手动、保留与删除、收费与免费等相反结论；"
             + "不得颠倒企业内部事实，不得把同时存在的多种方式缩减成唯一方式。";
@@ -213,6 +228,16 @@ public class DialogServiceImpl {
         "审批", "归档", "存证", "公证", "仲裁", "法律效力", "证书", "发票", "套餐", "报价",
         "客服", "热线", "售后", "小程序", "钉钉", "微信", "上传", "下载", "验证码", "管理员",
         "员工", "接收方", "发起方", "签署方", "api", "pc");
+    private static final List<String> NATIVE_FALLBACK_DOMAIN_ANCHORS = List.of(
+        "点签", "飞晟", "电子合同", "电子签约", "电子签名", "数字签名", "电子签章",
+        "数字证书", "合同", "签署", "签约", "签章", "盖章", "用印", "印章", "骑缝章",
+        "存证", "公证", "仲裁", "法律效力", "实名认证", "企业认证", "合同模板", "合同附件");
+    private static final Pattern NATIVE_FALLBACK_UNRELATED_REQUEST = Pattern.compile(
+        "(?is).*(?:(?:写|作|创作|生成).{0,16}(?:诗|歌词|小说|故事|作文)|"
+            + "(?:做|煮|炒|炖|烤).{0,16}(?:饭|菜|汤|火锅|鸡|肉|面)|"
+            + "(?:饭|菜|汤|火锅|鸡|肉|面).{0,16}(?:怎么|如何)(?:做|煮|炒|炖|烤)|"
+            + "(?:登录|注册).{0,8}游戏|(?:下载|播放|唱).{0,8}(?:歌曲|音乐)|"
+            + "(?:推荐|预测|分析).{0,8}(?:股票|彩票|星座|运势|电影|足球|篮球)).*");
     private static final List<String> CLEARLY_UNRELATED_TERMS = List.of(
         "现在几点", "现在是几点", "现在多少点", "现在是多少点", "当前时间", "现在时间", "几点了",
         "今天几号", "星期几", "周几",
@@ -398,6 +423,8 @@ public class DialogServiceImpl {
             String modalityContext, boolean mergeGlobalRetrieval, Long preferredModelId,
             String requestedPromptVersion) {
         long started = System.currentTimeMillis();
+        long retrievalLatencyMs = 0L;
+        long modelLatencyMs = 0L;
         String promptVersion = promptProvider.resolveVersion(requestedPromptVersion);
         Set<String> redactedTypes = new LinkedHashSet<>();
         String safeText = redact(text, redactedTypes);
@@ -499,6 +526,7 @@ public class DialogServiceImpl {
         String semanticRetrievalHistory = retrievalQueryRewritten
             ? null : retrievalHistory;
         RagRetrievalService.RetrievalResult retrieval;
+        long retrievalStarted = System.nanoTime();
         boolean parentCompanyQuestion = isParentCompanyQuestion(safeText)
             || (!Objects.equals(safeText, retrievalQuery)
                 && isParentCompanyQuestion(retrievalQuery));
@@ -561,6 +589,7 @@ public class DialogServiceImpl {
                 ? markPartialEvidence(retrieval)
                 : rejectMissingSpecificEvidence(retrieval);
         }
+        retrievalLatencyMs = elapsedMillis(retrievalStarted);
 
         String replyText;
         String source;
@@ -573,15 +602,14 @@ public class DialogServiceImpl {
         boolean highRiskNoKnowledge = false;
         ChatResponse aiResponse = null;
         String modelPrompt = null;
+        List<PromptTrace> promptTraces = new ArrayList<>();
+        List<String> modelProtocolViolations = new ArrayList<>();
+        List<ModelProtocolViolation> modelProtocolViolationDetails = new ArrayList<>();
+        List<ChatResponse> modelResponses = new ArrayList<>();
         List<Map<String, Object>> citations = new ArrayList<>(
             redactMaps(retrieval.citations(), redactedTypes));
         boolean companyIntroductionBacked = companyIntroductionQuestion
             && hasCompanyIntroductionEvidence(retrieval);
-        boolean lowConfidenceKnowledge = retrieval.answerable()
-            && !retrieval.directAnswer()
-            && retrieval.confidence() < lowConfidenceThreshold
-            && !companyIntroductionBacked;
-
         String evidenceBackedReply = retrieval.answerable()
             ? evidenceBackedKnowledgeReply(safeText, retrieval) : null;
         String guardedKnowledgeReply = hasText(evidenceBackedReply)
@@ -600,7 +628,7 @@ public class DialogServiceImpl {
                 ? "evidence_consistency_guardrail" : "knowledge_guardrail";
             answerDecision = AnswerDecision.ANSWER;
             directKnowledge = true;
-        } else if (!retrieval.answerable() || lowConfidenceKnowledge) {
+        } else if (!retrieval.answerable()) {
             citations.clear();
             if (outOfScopeQuestion) {
                 replyText = redact(parentCompanyQuestion
@@ -612,9 +640,13 @@ public class DialogServiceImpl {
                     ? "parent_company_out_of_scope" : "out_of_scope";
                 answerDecision = AnswerDecision.NO_KNOWLEDGE;
             } else {
+                long modelStarted = System.nanoTime();
                 NativeFallbackResponse fallback = nativeFallbackResponse(safeText, nlpIntent,
-                    hasText(retrievalHistory), buildChatHistory(recentMessages, redactedTypes),
+                    buildChatHistory(recentMessages, redactedTypes),
                     emotion, preferredModelId);
+                if (fallback.aiResponse() != null) {
+                    modelLatencyMs += elapsedMillis(modelStarted);
+                }
                 replyText = redact(fallback.replyText(), redactedTypes);
                 source = fallback.source();
                 answerStatus = fallback.answerStatus();
@@ -624,6 +656,12 @@ public class DialogServiceImpl {
                 highRiskNoKnowledge = fallback.highRiskNoKnowledge();
                 aiResponse = fallback.aiResponse();
                 modelPrompt = fallback.modelPrompt();
+                PromptTrace fallbackInvocation = addPromptTrace(
+                    promptTraces, fallback.promptTrace());
+                addModelResponse(modelResponses, fallback.aiResponse());
+                addProtocolViolation(modelProtocolViolations,
+                    modelProtocolViolationDetails, fallbackInvocation,
+                    fallback.protocolViolation());
                 if (fallback.recordUnmatchedQuestion()) unmatchedQuestionService.record(safeText);
             }
         } else if (retrieval.directAnswer() && hasText(retrieval.directAnswerText())) {
@@ -641,61 +679,74 @@ public class DialogServiceImpl {
                 buildChatHistory(recentMessages, redactedTypes), safeRetrievalContext,
                 safeText, retrievalQuery, "partial_rag".equals(retrieval.decision()));
             modelPrompt = prompt;
+            SystemPromptResolution systemPrompt = customerServiceSystemPrompt(
+                emotion, safeText, nlpIntent, promptVersion);
+            PromptTrace ragInvocation = addPromptTrace(promptTraces, systemPrompt.trace());
+            long modelStarted = System.nanoTime();
             aiResponse = aiModelService.chatWithModel(
-                prompt, emotionAwareSystemPrompt(emotion, safeText, nlpIntent, promptVersion),
-                preferredModelId);
-            String aiContent = aiResponse.getContent();
+                prompt, systemPrompt.content(), preferredModelId);
+            modelLatencyMs += elapsedMillis(modelStarted);
+            addModelResponse(modelResponses, aiResponse);
+            ModelAnswerSignalParser.ParsedAnswer parsedAnswer =
+                MODEL_ANSWER_SIGNAL_PARSER.parse(aiResponse.getContent());
+            addProtocolViolation(modelProtocolViolations,
+                modelProtocolViolationDetails, ragInvocation, parsedAnswer.violation());
+            boolean compoundAnswerRetry = isCompoundQuestion(safeText)
+                && hasText(safeRetrievalContext);
+            boolean evidenceAnswerRetry = retrieval.answerable()
+                && hasText(safeRetrievalContext);
             boolean retryBackedAnswer = companyIntroductionBacked
-                || (isCompoundQuestion(safeText) && hasText(safeRetrievalContext));
-            if (aiResponse.isSuccess() && isNoAnswerSignal(aiContent)
+                || compoundAnswerRetry || evidenceAnswerRetry;
+            boolean ragRetryAttempted = false;
+            if (aiResponse.isSuccess() && parsedAnswer.isNoAnswer()
                     && retryBackedAnswer) {
-                String retryInstruction = companyIntroductionBacked
-                    ? COMPANY_INTRODUCTION_ANSWER_INSTRUCTION
-                    : COMPOUND_ANSWER_INSTRUCTION;
+                ragRetryAttempted = true;
+                String retryInstruction;
+                String answeredRetryDecision;
+                if (companyIntroductionBacked) {
+                    retryInstruction = COMPANY_INTRODUCTION_ANSWER_INSTRUCTION;
+                    answeredRetryDecision = "company_intro_retry";
+                } else if (compoundAnswerRetry) {
+                    retryInstruction = COMPOUND_ANSWER_INSTRUCTION;
+                    answeredRetryDecision = "compound_answer_retry";
+                } else {
+                    retryInstruction = EVIDENCE_BACKED_ANSWER_RETRY_INSTRUCTION;
+                    answeredRetryDecision = "evidence_answer_retry";
+                }
                 String retryPrompt = prompt + "\n再次确认：" + retryInstruction;
+                PromptTrace retryInvocation = addPromptTrace(
+                    promptTraces, systemPrompt.trace());
+                long retryModelStarted = System.nanoTime();
                 ChatResponse retryResponse = aiModelService.chatWithModel(
-                    retryPrompt,
-                    emotionAwareSystemPrompt(emotion, safeText, nlpIntent, promptVersion),
-                    preferredModelId);
-                if (retryResponse.isSuccess() && hasText(retryResponse.getContent())
-                        && !isNoAnswerSignal(retryResponse.getContent())) {
-                    aiResponse = retryResponse;
-                    aiContent = retryResponse.getContent();
-                    modelPrompt = retryPrompt;
-                    fallbackDecision = companyIntroductionBacked
-                        ? "company_intro_retry" : "compound_answer_retry";
+                    retryPrompt, systemPrompt.content(), preferredModelId);
+                modelLatencyMs += elapsedMillis(retryModelStarted);
+                addModelResponse(modelResponses, retryResponse);
+                ModelAnswerSignalParser.ParsedAnswer retryParsedAnswer =
+                    MODEL_ANSWER_SIGNAL_PARSER.parse(retryResponse.getContent());
+                addProtocolViolation(modelProtocolViolations,
+                    modelProtocolViolationDetails, retryInvocation,
+                    retryParsedAnswer.violation());
+                aiResponse = retryResponse;
+                parsedAnswer = retryParsedAnswer;
+                modelPrompt = retryPrompt;
+                if (retryResponse.isSuccess() && retryParsedAnswer.isAnswer()) {
+                    fallbackDecision = answeredRetryDecision;
                 }
             }
-            if (aiResponse.isSuccess() && isNoAnswerSignal(aiContent)) {
+            if (aiResponse.isSuccess() && parsedAnswer.isNoAnswer()) {
                 citations.clear();
-                if (outOfScopeQuestion) {
-                    replyText = redact(parentCompanyQuestion
-                        ? outOfScopeReply : unrelatedReply, redactedTypes);
-                    source = "out_of_scope";
-                    answerStatus = "out_of_scope";
-                    answerMode = "restricted";
-                    fallbackDecision = parentCompanyQuestion
-                        ? "parent_company_out_of_scope" : "out_of_scope";
-                    answerDecision = AnswerDecision.NO_KNOWLEDGE;
-                } else {
-                    NativeFallbackResponse fallback = nativeFallbackResponse(safeText, nlpIntent,
-                        hasText(retrievalHistory), buildChatHistory(recentMessages, redactedTypes),
-                        emotion, preferredModelId);
-                    replyText = redact(fallback.replyText(), redactedTypes);
-                    source = fallback.source();
-                    answerStatus = fallback.answerStatus();
-                    answerMode = fallback.answerMode();
-                    fallbackDecision = fallback.decision();
-                    answerDecision = fallback.answerDecision();
-                    highRiskNoKnowledge = fallback.highRiskNoKnowledge();
-                    if (fallback.aiResponse() != null) aiResponse = fallback.aiResponse();
-                    if (hasText(fallback.modelPrompt())) modelPrompt = fallback.modelPrompt();
-                    if (fallback.recordUnmatchedQuestion()) unmatchedQuestionService.record(safeText);
-                }
-            } else if (aiResponse.isSuccess() && hasText(aiContent)) {
-                boolean partialAnswer = isPartialAnswerSignal(aiContent)
+                replyText = redact(noAnswerReply, redactedTypes);
+                source = "no_answer";
+                answerStatus = "no_answer";
+                answerMode = "restricted";
+                fallbackDecision = ragRetryAttempted
+                    ? "rag_abstained_after_retry" : "rag_abstained";
+                answerDecision = AnswerDecision.NO_KNOWLEDGE;
+                unmatchedQuestionService.record(safeText);
+            } else if (aiResponse.isSuccess() && parsedAnswer.isAnswer()) {
+                boolean partialAnswer = parsedAnswer.isPartial()
                     || "partial_rag".equals(retrieval.decision());
-                replyText = redact(stripDecisionSignal(aiContent), redactedTypes);
+                replyText = redact(parsedAnswer.content(), redactedTypes);
                 source = "rag_ai";
                 answerStatus = "answered";
                 answerMode = partialAnswer ? "partial" : "knowledge";
@@ -737,16 +788,21 @@ public class DialogServiceImpl {
                 log.warn("Answer blocked by safety post-check: {}", postCheck.getHitRules());
             }
         }
+        String richReply = RichReplyFormatter.format(replyText);
         replyText = PlainTextReplyFormatter.format(replyText);
 
         List<KnowledgeImageService.ImageAttachment> attachments =
             replyAttachmentService.fromCitations(citations, "answered".equals(answerStatus));
+        Map<String, Object> stageLatencies = stageLatencies(
+            retrieval, retrievalLatencyMs, modelLatencyMs,
+            System.currentTimeMillis() - started);
 
         Map<String, Object> response = new LinkedHashMap<>();
         boolean ragBackedResponse = ("faq".equals(source) || "knowledge_qa".equals(source)
             || "rag_ai".equals(source) || "rag_guardrail".equals(source))
             && !outputBlocked;
         response.put("reply", replyText);
+        response.put("richReply", richReply);
         response.put("conversationId", conversation.getId());
         response.put("source", source);
         response.put("answerStatus", answerStatus);
@@ -760,6 +816,8 @@ public class DialogServiceImpl {
         response.put("ragSource", ragBackedResponse);
         response.put("ragContextChars", ragBackedResponse && retrieval.context() != null
             ? retrieval.context().length() : 0);
+        response.put("rerankDiagnostics", retrieval.rerankDiagnostics());
+        response.put("stageLatencies", stageLatencies);
         response.put("retrieval", retrievalDetails(retrieval, redactedTypes));
         response.put("retrievalContextUsed", hasText(retrievalHistory));
         response.put("retrievalHistoryUsed", hasText(semanticRetrievalHistory));
@@ -771,6 +829,11 @@ public class DialogServiceImpl {
         response.put("nlpIntent", nlpIntentDetails(nlpIntent));
         response.put("emotion", emotionDetails(emotion));
         response.put("promptVersion", promptVersion);
+        addPromptTraceDetails(response, promptTraces);
+        response.put("modelProtocolViolations", List.copyOf(modelProtocolViolations));
+        response.put("modelProtocolViolationDetails",
+            protocolViolationDetails(modelProtocolViolationDetails));
+        addModelInvocationDetails(response, modelResponses);
 
         if (aiResponse != null) {
             response.put("model", aiResponse.getModel());
@@ -784,13 +847,15 @@ public class DialogServiceImpl {
             && retrieval.answerable()
             && retrieval.confidence() < lowConfidenceThreshold
             && !companyIntroductionBacked;
+        boolean lowConfidenceNeedsTransfer = lowConfidence
+            && !"rag_guardrail".equals(source);
         boolean needsTransfer = outputBlocked
             || answerDecision == AnswerDecision.HANDOFF
             || ("no_answer".equals(answerStatus) && transferOnNoAnswer)
             || (highRiskNoKnowledge && nativeFallbackHighRiskTransfer)
             || (aiResponse != null && !"answered".equals(answerStatus)
                 && (!aiResponse.isSuccess() || !hasText(aiResponse.getContent())))
-            || ("answered".equals(answerStatus) && lowConfidence)
+            || ("answered".equals(answerStatus) && lowConfidenceNeedsTransfer)
             || emotion.shouldHandoff();
         response.put("needsTransfer", needsTransfer);
         response.put("lowConfidence", lowConfidence);
@@ -804,21 +869,31 @@ public class DialogServiceImpl {
         messageMetadata.put("source", source);
         messageMetadata.put("answerMode", answerMode);
         messageMetadata.put("fallbackDecision", fallbackDecision);
+        messageMetadata.put("rerankDiagnostics", retrieval.rerankDiagnostics());
+        messageMetadata.put("stageLatencies", stageLatencies);
         messageMetadata.put("nlpIntent", nlpIntentDetails(nlpIntent));
         messageMetadata.put("emotion", emotionDetails(emotion));
         messageMetadata.put("promptVersion", promptVersion);
+        addPromptTraceDetails(messageMetadata, promptTraces);
+        messageMetadata.put("modelProtocolViolations",
+            List.copyOf(modelProtocolViolations));
+        messageMetadata.put("modelProtocolViolationDetails",
+            protocolViolationDetails(modelProtocolViolationDetails));
+        addModelInvocationDetails(messageMetadata, modelResponses);
         messageMetadata.put("redactionApplied", !redactedTypes.isEmpty());
         String metadata = toJson(messageMetadata);
         BotMessage aiMessage = saveMessage(conversation.getId(), "ai", replyText, metadata,
             attachments.isEmpty() ? "text" : "mixed");
         saveReplyLog(aiMessage, safeText, retrieval, replyText, directKnowledge, aiResponse,
             source, answerStatus, answerDecision, fallbackDecision, nlpIntent, citations,
-            redactedTypes, modelPrompt, promptVersion, primaryRetrievalQuery, retrievalQuery,
+            redactedTypes, modelPrompt, promptVersion, promptTraces,
+            modelProtocolViolations, modelProtocolViolationDetails, modelResponses,
+            primaryRetrievalQuery, retrievalQuery,
             queryResolution.contextDependent(), retrievalQueryRewritten,
             hasText(retrievalHistory), hasText(semanticRetrievalHistory),
-            System.currentTimeMillis() - started);
+            stageLatencies, System.currentTimeMillis() - started);
         if (needsTransfer) {
-            String reason = transferReason(outputBlocked, answerStatus, lowConfidence,
+            String reason = transferReason(outputBlocked, answerStatus, lowConfidenceNeedsTransfer,
                 highRiskNoKnowledge, emotion);
             HandoffCoordinator.HandoffResult handoff = coordinateHandoff(
                 conversation.getId(), reason,
@@ -830,7 +905,10 @@ public class DialogServiceImpl {
             }
         }
         addRedactionDetails(response, redactedTypes);
-        response.put("latencyMs", System.currentTimeMillis() - started);
+        long totalLatencyMs = System.currentTimeMillis() - started;
+        response.put("stageLatencies", stageLatencies(
+            retrieval, retrievalLatencyMs, modelLatencyMs, totalLatencyMs));
+        response.put("latencyMs", totalLatencyMs);
         return response;
     }
 
@@ -1410,6 +1488,29 @@ public class DialogServiceImpl {
         return details;
     }
 
+    private Map<String, Object> stageLatencies(
+            RagRetrievalService.RetrievalResult retrieval,
+            long retrievalLatencyMs, long modelLatencyMs, long dialogTotalMs) {
+        Map<String, Object> timings = new LinkedHashMap<>();
+        if (retrieval != null && retrieval.stageLatencies() != null) {
+            timings.putAll(retrieval.stageLatencies());
+        }
+        timings.putIfAbsent("embeddingMs", 0L);
+        timings.putIfAbsent("vectorSearchMs", 0L);
+        timings.putIfAbsent("sparseSearchMs", 0L);
+        timings.putIfAbsent("rerankMs", 0L);
+        timings.put("retrievalMs", Math.max(0L, retrievalLatencyMs));
+        timings.put("modelMs", Math.max(0L, modelLatencyMs));
+        timings.put("dialogTotalMs", Math.max(0L, dialogTotalMs));
+        timings.put("otherMs", Math.max(0L,
+            dialogTotalMs - retrievalLatencyMs - modelLatencyMs));
+        return Collections.unmodifiableMap(timings);
+    }
+
+    private long elapsedMillis(long startedNanos) {
+        return Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
+    }
+
     private RagRetrievalService.RetrievalResult providedContextResult(
             String context, List<Map<String, Object>> providedCitations) {
         List<Map<String, Object>> citations = providedCitations == null || providedCitations.isEmpty()
@@ -1451,7 +1552,7 @@ public class DialogServiceImpl {
         return new RagRetrievalService.RetrievalResult(
             retrieval.answerable(), false, null, retrieval.context(), retrieval.confidence(),
             "contextual_rag", retrieval.semanticAvailable(), retrieval.citations(),
-            retrieval.candidates());
+            retrieval.candidates(), retrieval.rerankDiagnostics(), retrieval.stageLatencies());
     }
 
     private boolean isAmbiguousContractUpload(
@@ -1506,7 +1607,8 @@ public class DialogServiceImpl {
         }
         return new RagRetrievalService.RetrievalResult(
             true, false, null, evidenceContext(merged), answerable.get(0).confidence(),
-            "compound_rag", semanticAvailable, merged.citations(), merged.candidates());
+            "compound_rag", semanticAvailable, merged.citations(), merged.candidates(),
+            merged.rerankDiagnostics(), merged.stageLatencies());
     }
 
     private String evidenceContext(RagRetrievalService.RetrievalResult retrieval) {
@@ -1573,7 +1675,8 @@ public class DialogServiceImpl {
         return new RagRetrievalService.RetrievalResult(
             false, false, null, null, retrieval.confidence(),
             "missing_specific_evidence", retrieval.semanticAvailable(),
-            Collections.emptyList(), retrieval.candidates());
+            Collections.emptyList(), retrieval.candidates(), retrieval.rerankDiagnostics(),
+            retrieval.stageLatencies());
     }
 
     private RagRetrievalService.RetrievalResult markPartialEvidence(
@@ -1581,7 +1684,7 @@ public class DialogServiceImpl {
         return new RagRetrievalService.RetrievalResult(
             true, false, null, retrieval.context(), retrieval.confidence(),
             "partial_rag", retrieval.semanticAvailable(), retrieval.citations(),
-            retrieval.candidates());
+            retrieval.candidates(), retrieval.rerankDiagnostics(), retrieval.stageLatencies());
     }
 
     private Map<String, Object> nlpIntentDetails(
@@ -1605,6 +1708,8 @@ public class DialogServiceImpl {
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("decision", retrieval.decision());
         details.put("semanticAvailable", retrieval.semanticAvailable());
+        details.put("rerankDiagnostics", retrieval.rerankDiagnostics());
+        details.put("stageLatencies", retrieval.stageLatencies());
         details.put("candidates", redactMaps(retrieval.candidates(), redactedTypes));
         return details;
     }
@@ -1637,19 +1742,27 @@ public class DialogServiceImpl {
                                Set<String> redactedTypes,
                                String modelPrompt,
                                String promptVersion,
+                               List<PromptTrace> promptTraces,
+                               List<String> modelProtocolViolations,
+                               List<ModelProtocolViolation> modelProtocolViolationDetails,
+                               List<ChatResponse> modelResponses,
                                String primaryRetrievalQuery,
                                String retrievalQuery,
                                boolean contextDependent,
                                boolean queryRewritten,
                                boolean retrievalContextUsed,
                                boolean retrievalHistoryUsed,
+                               Map<String, Object> stageLatencies,
                                long latencyMs) {
         BotAiReplyLog aiLog = new BotAiReplyLog();
         aiLog.setMessageId(aiMessage.getId());
         aiLog.setPrompt(hasText(modelPrompt) ? modelPrompt : question);
         aiLog.setReply(reply);
-        aiLog.setRagUsed("faq".equals(source) || "knowledge_qa".equals(source)
-            || "rag_ai".equals(source));
+        boolean ragPromptInvoked = promptTraces != null && promptTraces.stream()
+            .anyMatch(trace -> trace.applied() && "rag".equals(trace.path()));
+        aiLog.setRagUsed(ragPromptInvoked || "faq".equals(source)
+            || "knowledge_qa".equals(source) || "rag_ai".equals(source)
+            || "rag_guardrail".equals(source));
         aiLog.setPurpose("CHAT");
         aiLog.setLatencyMs((int) Math.min(Integer.MAX_VALUE, latencyMs));
         aiLog.setCitedChunkIds(citations.stream()
@@ -1664,9 +1777,18 @@ public class DialogServiceImpl {
         trace.put("answerDecision", answerDecision.name());
         trace.put("fallbackDecision", fallbackDecision);
         trace.put("promptVersion", promptVersion);
+        addPromptTraceDetails(trace, promptTraces);
+        trace.put("modelProtocolViolations", modelProtocolViolations == null
+            ? Collections.emptyList() : List.copyOf(modelProtocolViolations));
+        trace.put("modelProtocolViolationDetails",
+            protocolViolationDetails(modelProtocolViolationDetails));
+        addModelInvocationDetails(trace, modelResponses);
         trace.put("nlpIntent", nlpIntentDetails(nlpIntent));
         trace.put("confidence", retrieval.confidence());
         trace.put("decision", retrieval.decision());
+        trace.put("rerankDiagnostics", retrieval.rerankDiagnostics());
+        trace.put("stageLatencies", stageLatencies == null
+            ? Collections.emptyMap() : stageLatencies);
         trace.put("originalQuery", question);
         trace.put("primaryRetrievalQuery", primaryRetrievalQuery);
         trace.put("retrievalQuery", retrievalQuery);
@@ -1682,10 +1804,10 @@ public class DialogServiceImpl {
             aiLog.setSuccess(aiResponse.isSuccess() ? 1 : 0);
             aiLog.setModelName(aiResponse.getModel());
             aiLog.setProviderCode(aiResponse.getProviderCode());
-            aiLog.setTokensInput(aiResponse.getInputTokens());
-            aiLog.setTokensOutput(aiResponse.getOutputTokens());
+            aiLog.setTokensInput(totalInputTokens(modelResponses));
+            aiLog.setTokensOutput(totalOutputTokens(modelResponses));
             aiLog.setCallStatus(aiResponse.isSuccess() ? "SUCCESS" : "FAILED");
-            aiLog.setCostCents(estimateCost(aiResponse));
+            aiLog.setCostCents(totalEstimatedCost(modelResponses));
         } else {
             aiLog.setSuccess("error".equals(answerStatus) ? 0 : 1);
             aiLog.setCallStatus(directKnowledge ? "SUCCESS" : "SKIPPED");
@@ -1775,7 +1897,9 @@ public class DialogServiceImpl {
 
     private String buildNativeFallbackPrompt(String chatHistory, String userQuestion) {
         StringBuilder prompt = new StringBuilder("用户问题：").append(userQuestion)
-            .append("\n请判断问题是否可以仅依据稳定的通用知识回答。可以完整回答时直接作答；")
+            .append("\n请先判断问题是否属于电子合同、电子签名、签署合规或合同管理业务范围。")
+            .append("不属于该范围时只输出 ").append(NO_ANSWER_SIGNAL).append("。")
+            .append("属于该范围且可以仅依据稳定通用知识完整回答时直接作答；")
             .append("若只能回答通用部分而企业具体事实仍缺失，第一行输出 ")
             .append(PARTIAL_ANSWER_SIGNAL)
             .append("，随后先回答通用部分，再提出一个针对性问题。")
@@ -1884,16 +2008,15 @@ public class DialogServiceImpl {
     }
 
     private NativeFallbackDecision nativeFallbackDecision(
-            String question, NlpIntentClassifier.IntentAnalysis nlpIntent,
-            boolean hasConversationContext) {
+            String question, NlpIntentClassifier.IntentAnalysis nlpIntent) {
         if (!nativeFallbackEnabled) return NativeFallbackDecision.DISABLED;
+        if (isExplicitlyUnrelatedNativeRequest(question)) {
+            return NativeFallbackDecision.OUT_OF_SCOPE;
+        }
         if (nlpIntent.intentCode() == NlpIntentClassifier.IntentCode.CONTRACT_DRAFTING) {
             return NativeFallbackDecision.CONTRACT_DRAFTING_CLARIFY;
         }
         if (nlpIntent.intentCode() == NlpIntentClassifier.IntentCode.CONTRACT_TYPE_CAPABILITY) {
-            if (nlpIntent.generallySupportedContractType()) {
-                return NativeFallbackDecision.CONTRACT_CAPABILITY_SUPPORTED;
-            }
             return NativeFallbackDecision.CONTRACT_CAPABILITY_NO_EVIDENCE;
         }
         if (nlpIntent.intentCode() == NlpIntentClassifier.IntentCode.CONTRACT_LEGAL_RISK) {
@@ -1902,18 +2025,35 @@ public class DialogServiceImpl {
         if (containsConfiguredKeyword(question, nativeFallbackHighRiskKeywords)) {
             return NativeFallbackDecision.HIGH_RISK;
         }
-        if (!hasConversationContext && isAmbiguousClarification(question)) {
+        if (isAmbiguousClarification(question)) {
             return NativeFallbackDecision.CLARIFY;
+        }
+        if (!isNativeFallbackBusinessQuestion(question, nlpIntent)) {
+            return NativeFallbackDecision.OUT_OF_SCOPE;
         }
         return NativeFallbackDecision.NATIVE;
     }
 
+    private boolean isNativeFallbackBusinessQuestion(
+            String question, NlpIntentClassifier.IntentAnalysis nlpIntent) {
+        if (nlpIntent.intentCode() != NlpIntentClassifier.IntentCode.UNKNOWN
+                || isCompanyIntroductionQuestion(question)) {
+            return true;
+        }
+        String normalized = normalizeQuestionForMatching(question);
+        return NATIVE_FALLBACK_DOMAIN_ANCHORS.stream().anyMatch(normalized::contains);
+    }
+
+    private boolean isExplicitlyUnrelatedNativeRequest(String question) {
+        return hasText(question)
+            && NATIVE_FALLBACK_UNRELATED_REQUEST.matcher(question).matches();
+    }
+
     private NativeFallbackResponse nativeFallbackResponse(
             String question, NlpIntentClassifier.IntentAnalysis nlpIntent,
-            boolean hasConversationContext, String chatHistory,
+            String chatHistory,
             EmotionService.EmotionResult emotion, Long preferredModelId) {
-        NativeFallbackDecision decision = nativeFallbackDecision(
-            question, nlpIntent, hasConversationContext);
+        NativeFallbackDecision decision = nativeFallbackDecision(question, nlpIntent);
         String decisionName = decision.name().toLowerCase(Locale.ROOT);
         if (decision == NativeFallbackDecision.CONTRACT_DRAFTING_CLARIFY) {
             String subject = hasText(nlpIntent.subject()) ? nlpIntent.subject() : "合同";
@@ -1922,19 +2062,13 @@ public class DialogServiceImpl {
                 "clarify", "clarify", "clarify", decisionName,
                 AnswerDecision.CLARIFY, false, true, null, null);
         }
-        if (decision == NativeFallbackDecision.CONTRACT_CAPABILITY_SUPPORTED) {
-            return new NativeFallbackResponse(
-                PROPERTY_SALE_CONTRACT_CAPABILITY_REPLY.formatted(nlpIntent.subject()),
-                "capability", "answered", "knowledge", decisionName,
-                AnswerDecision.ANSWER, false, false, null, null);
-        }
         if (decision == NativeFallbackDecision.CONTRACT_CAPABILITY_NO_EVIDENCE) {
             String subject = hasText(nlpIntent.subject())
                 ? nlpIntent.subject() : "该合同类型";
             return new NativeFallbackResponse(
                 CONTRACT_CAPABILITY_NO_EVIDENCE_REPLY.formatted(subject),
-                "partial_answer", "answered", "partial", decisionName,
-                AnswerDecision.ANSWER_PARTIAL, false, true, null, null);
+                "no_answer", "no_answer", "restricted", decisionName,
+                AnswerDecision.NO_KNOWLEDGE, false, true, null, null);
         }
         if (decision == NativeFallbackDecision.CONTRACT_LEGAL_RISK) {
             return new NativeFallbackResponse(
@@ -1956,6 +2090,12 @@ public class DialogServiceImpl {
                 "no_answer", "no_answer", "restricted", decisionName,
                 AnswerDecision.HANDOFF, true, true, null, null);
         }
+        if (decision == NativeFallbackDecision.OUT_OF_SCOPE) {
+            return new NativeFallbackResponse(
+                configuredReply(unrelatedReply, noAnswerReply),
+                "out_of_scope", "out_of_scope", "restricted", decisionName,
+                AnswerDecision.NO_KNOWLEDGE, false, false, null, null);
+        }
         if (decision == NativeFallbackDecision.DISABLED) {
             return new NativeFallbackResponse(noAnswerReply,
                 "no_answer", "no_answer", "restricted", decisionName,
@@ -1963,21 +2103,24 @@ public class DialogServiceImpl {
         }
 
         String fallbackPrompt = buildNativeFallbackPrompt(chatHistory, question);
+        SystemPromptResolution systemPrompt = nativeFallbackSystemPromptFor(emotion);
         ChatResponse response = aiModelService.chatWithModel(
-            fallbackPrompt,
-            nativeFallbackSystemPromptFor(emotion), preferredModelId);
-        String aiContent = response.getContent();
-        if (response.isSuccess() && hasText(aiContent) && !isNoAnswerSignal(aiContent)) {
-            boolean partialAnswer = isPartialAnswerSignal(aiContent);
-            return new NativeFallbackResponse(stripDecisionSignal(aiContent),
+            fallbackPrompt, systemPrompt.content(), preferredModelId);
+        ModelAnswerSignalParser.ParsedAnswer parsedAnswer =
+            MODEL_ANSWER_SIGNAL_PARSER.parse(response.getContent());
+        if (response.isSuccess() && parsedAnswer.isAnswer()) {
+            boolean partialAnswer = parsedAnswer.isPartial();
+            return new NativeFallbackResponse(parsedAnswer.content(),
                 "native_ai", "answered", partialAnswer ? "partial" : "native", decisionName,
                 partialAnswer ? AnswerDecision.ANSWER_PARTIAL : AnswerDecision.ANSWER,
-                false, true, response, fallbackPrompt);
+                false, true, response, fallbackPrompt, parsedAnswer.violation(),
+                systemPrompt.trace());
         }
         return new NativeFallbackResponse(noAnswerReply,
             response.isSuccess() ? "no_answer" : "error",
             response.isSuccess() ? "no_answer" : "error", "restricted", decisionName,
-            AnswerDecision.NO_KNOWLEDGE, false, true, response, fallbackPrompt);
+            AnswerDecision.NO_KNOWLEDGE, false, true, response, fallbackPrompt,
+            parsedAnswer.violation(), systemPrompt.trace());
     }
 
     private boolean isAmbiguousClarification(String question) {
@@ -1996,23 +2139,6 @@ public class DialogServiceImpl {
             if (!keyword.isEmpty() && normalized.contains(keyword)) return true;
         }
         return false;
-    }
-
-    private boolean isNoAnswerSignal(String value) {
-        return hasText(value) && value.contains(NO_ANSWER_SIGNAL);
-    }
-
-    private boolean isPartialAnswerSignal(String value) {
-        return hasText(value) && value.stripLeading().startsWith(PARTIAL_ANSWER_SIGNAL);
-    }
-
-    private String stripDecisionSignal(String value) {
-        if (!hasText(value)) return value;
-        String stripped = value.stripLeading();
-        if (stripped.startsWith(PARTIAL_ANSWER_SIGNAL)) {
-            stripped = stripped.substring(PARTIAL_ANSWER_SIGNAL.length()).stripLeading();
-        }
-        return stripped;
     }
 
     private int estimateTokens(String text) {
@@ -2211,10 +2337,11 @@ public class DialogServiceImpl {
         return null;
     }
 
-    private String emotionAwareSystemPrompt(EmotionService.EmotionResult emotion, String question,
-                                            NlpIntentClassifier.IntentAnalysis nlpIntent,
-                                            String promptVersion) {
-        String prompt = promptProvider.promptFor(promptVersion);
+    private SystemPromptResolution customerServiceSystemPrompt(
+            EmotionService.EmotionResult emotion, String question,
+            NlpIntentClassifier.IntentAnalysis nlpIntent, String promptVersion) {
+        String basePrompt = promptProvider.promptFor(promptVersion);
+        String prompt = basePrompt;
         if (isCompanyIntroductionQuestion(question)) {
             prompt += "\n" + COMPANY_INTRODUCTION_ANSWER_INSTRUCTION;
         }
@@ -2242,10 +2369,15 @@ public class DialogServiceImpl {
         if (isPolaritySensitiveQuestion(question)) {
             prompt += "\n" + POLARITY_CONSISTENCY_INSTRUCTION;
         }
-        if (emotion == null || emotion.label() == EmotionService.EmotionLabel.NEUTRAL) {
-            return prompt;
+        if (emotion != null && emotion.label() != EmotionService.EmotionLabel.NEUTRAL) {
+            prompt += "\n当前用户情绪服务策略：" + emotion.instruction();
         }
-        return prompt + "\n当前用户情绪服务策略：" + emotion.instruction();
+        prompt += "\n\n强制事实与安全边界：\n" + promptProvider.mandatoryPolicy();
+        PromptTrace trace = new PromptTrace(true, "rag",
+            promptProvider.sourceFor(promptVersion),
+            CustomerServicePromptProvider.fingerprint(basePrompt),
+            CustomerServicePromptProvider.fingerprint(prompt), prompt.length(), 0);
+        return new SystemPromptResolution(prompt, trace);
     }
 
     private boolean isServiceLevelPromiseQuestion(String question) {
@@ -2454,13 +2586,22 @@ public class DialogServiceImpl {
         return contractLaunch && asksMethod;
     }
 
-    private String nativeFallbackSystemPromptFor(EmotionService.EmotionResult emotion) {
+    private SystemPromptResolution nativeFallbackSystemPromptFor(
+            EmotionService.EmotionResult emotion) {
         String basePrompt = hasText(nativeFallbackSystemPrompt)
             ? nativeFallbackSystemPrompt : DEFAULT_NATIVE_FALLBACK_SYSTEM_PROMPT;
-        if (emotion == null || emotion.label() == EmotionService.EmotionLabel.NEUTRAL) {
-            return basePrompt;
+        String prompt = basePrompt;
+        if (emotion != null && emotion.label() != EmotionService.EmotionLabel.NEUTRAL) {
+            prompt += "\n当前用户情绪服务策略：" + emotion.instruction();
         }
-        return basePrompt + "\n当前用户情绪服务策略：" + emotion.instruction();
+        prompt += "\n\n强制事实与安全边界：\n" + promptProvider.mandatoryPolicy();
+        prompt += "\n\n" + NATIVE_FALLBACK_SCOPE_POLICY;
+        String source = hasText(nativeFallbackSystemPrompt)
+            ? "configured_native" : "built_in_native";
+        PromptTrace trace = new PromptTrace(true, "native_fallback", source,
+            CustomerServicePromptProvider.fingerprint(basePrompt),
+            CustomerServicePromptProvider.fingerprint(prompt), prompt.length(), 0);
+        return new SystemPromptResolution(prompt, trace);
     }
 
     private Map<String, Object> emotionDetails(EmotionService.EmotionResult emotion) {
@@ -2509,7 +2650,112 @@ public class DialogServiceImpl {
     private Map<String, Object> withPromptVersion(Map<String, Object> response,
                                                   String promptVersion) {
         response.put("promptVersion", promptVersion);
+        response.putIfAbsent("promptApplied", false);
+        response.putIfAbsent("promptPath", "none");
+        response.putIfAbsent("promptSource", "not_used");
+        response.putIfAbsent("promptInvocations", Collections.emptyList());
+        response.putIfAbsent("modelProtocolViolations", Collections.emptyList());
+        response.putIfAbsent("modelProtocolViolationDetails", Collections.emptyList());
+        response.putIfAbsent("modelInvocationCount", 0);
+        response.putIfAbsent("modelInputTokens", 0);
+        response.putIfAbsent("modelOutputTokens", 0);
         return response;
+    }
+
+    private PromptTrace addPromptTrace(List<PromptTrace> traces, PromptTrace trace) {
+        if (traces == null || trace == null || !trace.applied()) {
+            return PromptTrace.notApplied();
+        }
+        int attempt = (int) traces.stream()
+            .filter(existing -> existing.applied() && existing.path().equals(trace.path()))
+            .count() + 1;
+        PromptTrace invocation = trace.withAttempt(attempt);
+        traces.add(invocation);
+        return invocation;
+    }
+
+    private void addProtocolViolation(List<String> violations,
+                                      List<ModelProtocolViolation> details,
+                                      PromptTrace invocation,
+                                      String violation) {
+        if (!hasText(violation)) return;
+        if (violations != null) violations.add(violation);
+        if (details != null && invocation != null && invocation.applied()) {
+            details.add(new ModelProtocolViolation(invocation.path(), invocation.attempt(), violation));
+        }
+    }
+
+    private void addModelResponse(List<ChatResponse> responses, ChatResponse response) {
+        if (responses != null && response != null) responses.add(response);
+    }
+
+    private void addModelInvocationDetails(Map<String, Object> target,
+                                           List<ChatResponse> responses) {
+        List<ChatResponse> safe = responses == null ? Collections.emptyList() : responses;
+        target.put("modelInvocationCount", safe.size());
+        target.put("modelInputTokens", totalInputTokens(safe));
+        target.put("modelOutputTokens", totalOutputTokens(safe));
+    }
+
+    private int totalInputTokens(List<ChatResponse> responses) {
+        if (responses == null) return 0;
+        long total = responses.stream().mapToLong(ChatResponse::getInputTokens).sum();
+        return (int) Math.min(Integer.MAX_VALUE, total);
+    }
+
+    private int totalOutputTokens(List<ChatResponse> responses) {
+        if (responses == null) return 0;
+        long total = responses.stream().mapToLong(ChatResponse::getOutputTokens).sum();
+        return (int) Math.min(Integer.MAX_VALUE, total);
+    }
+
+    private int totalEstimatedCost(List<ChatResponse> responses) {
+        if (responses == null) return 0;
+        long total = responses.stream().mapToLong(this::estimateCost).sum();
+        return (int) Math.min(Integer.MAX_VALUE, total);
+    }
+
+    private List<Map<String, Object>> protocolViolationDetails(
+            List<ModelProtocolViolation> details) {
+        if (details == null || details.isEmpty()) return Collections.emptyList();
+        return details.stream().map(detail -> {
+            Map<String, Object> value = new LinkedHashMap<>();
+            value.put("path", detail.path());
+            value.put("attempt", detail.attempt());
+            value.put("violation", detail.violation());
+            return value;
+        }).toList();
+    }
+
+    private void addPromptTraceDetails(Map<String, Object> target, List<PromptTrace> traces) {
+        List<PromptTrace> applied = traces == null ? Collections.emptyList()
+            : traces.stream().filter(PromptTrace::applied).toList();
+        target.put("promptApplied", !applied.isEmpty());
+        if (applied.isEmpty()) {
+            target.put("promptPath", "none");
+            target.put("promptSource", "not_used");
+            target.put("promptInvocations", Collections.emptyList());
+            return;
+        }
+        PromptTrace effective = applied.get(applied.size() - 1);
+        target.put("promptPath", effective.path());
+        target.put("promptSource", effective.source());
+        target.put("promptAttempt", effective.attempt());
+        target.put("promptBaseSha256", effective.baseSha256());
+        target.put("promptEffectiveSha256", effective.effectiveSha256());
+        target.put("systemPromptChars", effective.systemPromptChars());
+        target.put("promptInvocations", applied.stream().map(this::promptTraceDetails).toList());
+    }
+
+    private Map<String, Object> promptTraceDetails(PromptTrace trace) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("path", trace.path());
+        details.put("attempt", trace.attempt());
+        details.put("source", trace.source());
+        details.put("baseSha256", trace.baseSha256());
+        details.put("effectiveSha256", trace.effectiveSha256());
+        details.put("systemPromptChars", trace.systemPromptChars());
+        return details;
     }
 
     private String redact(String value, Set<String> redactedTypes) {
@@ -2568,9 +2814,9 @@ public class DialogServiceImpl {
 
     private enum NativeFallbackDecision {
         NATIVE,
+        OUT_OF_SCOPE,
         CLARIFY,
         CONTRACT_DRAFTING_CLARIFY,
-        CONTRACT_CAPABILITY_SUPPORTED,
         CONTRACT_CAPABILITY_NO_EVIDENCE,
         CONTRACT_LEGAL_RISK,
         HIGH_RISK,
@@ -2612,5 +2858,32 @@ public class DialogServiceImpl {
     private record NativeFallbackResponse(
             String replyText, String source, String answerStatus, String answerMode,
             String decision, AnswerDecision answerDecision, boolean highRiskNoKnowledge,
-            boolean recordUnmatchedQuestion, ChatResponse aiResponse, String modelPrompt) {}
+            boolean recordUnmatchedQuestion, ChatResponse aiResponse, String modelPrompt,
+            String protocolViolation, PromptTrace promptTrace) {
+        private NativeFallbackResponse(
+                String replyText, String source, String answerStatus, String answerMode,
+                String decision, AnswerDecision answerDecision, boolean highRiskNoKnowledge,
+                boolean recordUnmatchedQuestion, ChatResponse aiResponse, String modelPrompt) {
+            this(replyText, source, answerStatus, answerMode, decision, answerDecision,
+                highRiskNoKnowledge, recordUnmatchedQuestion, aiResponse, modelPrompt,
+                null, PromptTrace.notApplied());
+        }
+    }
+
+    private record SystemPromptResolution(String content, PromptTrace trace) {}
+
+    private record PromptTrace(
+            boolean applied, String path, String source, String baseSha256,
+            String effectiveSha256, int systemPromptChars, int attempt) {
+        private static PromptTrace notApplied() {
+            return new PromptTrace(false, "none", "not_used", null, null, 0, 0);
+        }
+
+        private PromptTrace withAttempt(int value) {
+            return new PromptTrace(applied, path, source, baseSha256,
+                effectiveSha256, systemPromptChars, value);
+        }
+    }
+
+    private record ModelProtocolViolation(String path, int attempt, String violation) {}
 }

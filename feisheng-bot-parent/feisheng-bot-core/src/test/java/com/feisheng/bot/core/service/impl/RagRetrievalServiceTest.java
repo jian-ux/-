@@ -271,6 +271,19 @@ class RagRetrievalServiceTest {
         assertEquals(0.92, result.candidates().get(0).get("rerankScore"));
         assertEquals("HIGH", result.rerankConfidenceTier());
         assertEquals(0.77, result.candidates().get(0).get("rerankScoreGap"));
+        assertEquals(true, result.rerankDiagnostics().get("configured"));
+        assertEquals(true, result.rerankDiagnostics().get("attempted"));
+        assertEquals(true, result.rerankDiagnostics().get("applied"));
+        assertEquals("rerank", result.rerankDiagnostics().get("scoreSource"));
+        assertTrue(result.stageLatencies().containsKey("retrievalTotalMs"));
+        assertTrue(result.stageLatencies().containsKey("keywordMatchMs"));
+        assertTrue(result.stageLatencies().containsKey("embeddingMs"));
+        assertTrue(result.stageLatencies().containsKey("vectorSearchMs"));
+        assertTrue(result.stageLatencies().containsKey("sparseSearchMs"));
+        assertTrue(result.stageLatencies().containsKey("rerankMs"));
+        assertEquals(0, result.stageLatencies().get("embeddingCacheHits"));
+        assertEquals(1, result.stageLatencies().get("embeddingCacheMisses"));
+        assertEquals(2, result.stageLatencies().get("candidateCount"));
         assertFalse(result.directAnswer());
     }
 
@@ -642,6 +655,56 @@ class RagRetrievalServiceTest {
     }
 
     @Test
+    void structuredQaRerankUsesStandardQuestionAndAcceptsRealisticNarrowGap() {
+        String query = "点签是做什么的？";
+        String competingQuestion = "电子合同是什么？";
+        ReflectionTestUtils.setField(service, "rerankHighMinScore", 0.65);
+        ReflectionTestUtils.setField(service, "rerankHighMinGap", 0.08);
+        ReflectionTestUtils.setField(service, "rerankMediumMinScore", 0.40);
+        ReflectionTestUtils.setField(service, "rerankMediumMinGap", -0.10);
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+
+        Map<String, Object> correct = structuredQa(4589L, 61L, query,
+            "点签是电子合同平台，可在线发起、签署和管理合同。", 0.678,
+            false, false);
+        correct.remove("question");
+        correct.put("sectionPath", query);
+        correct.put("title", "【内部】点签SaaS客户问答库.docx");
+        Map<String, Object> competitor = structuredQa(4590L, 61L, competingQuestion,
+            "电子合同是以电子形式订立的合同。", 0.650, false, false);
+        competitor.remove("question");
+        competitor.put("sectionPath", competingQuestion);
+        competitor.put("title", "【内部】点签SaaS客户问答库.docx");
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(correct, competitor));
+        when(rerankService.isAvailable()).thenReturn(true);
+        when(rerankService.rerank(eq(query), anyList())).thenAnswer(invocation -> {
+            List<String> documents = invocation.getArgument(1);
+            double correctScore = documents.get(0).startsWith(query + "\n")
+                ? 0.765625 : 0.636719;
+            return Map.of(0, correctScore, 1, 0.75390625);
+        });
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        ArgumentCaptor<List<String>> documents = ArgumentCaptor.forClass(List.class);
+        verify(rerankService).rerank(eq(query), documents.capture());
+        assertTrue(documents.getValue().get(0).startsWith(query + "\n"));
+        assertTrue(documents.getValue().get(1).startsWith(competingQuestion + "\n"));
+        assertTrue(result.answerable());
+        assertFalse(result.directAnswer());
+        assertEquals("rag", result.decision());
+        assertEquals("MEDIUM", result.rerankConfidenceTier());
+        assertEquals(0.766, result.confidence());
+        assertEquals(0.753906, result.candidates().get(0).get("rerankSecondScore"));
+        assertEquals(0.011719, result.candidates().get(0).get("rerankScoreGap"));
+        assertEquals(4589L, result.citations().get(0).get("sourceId"));
+        assertTrue(result.context().contains("点签是电子合同平台"));
+    }
+
+    @Test
     void lowRerankAbsoluteScoreDoesNotEnterRag() {
         String query = "企业合同如何归档";
         when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
@@ -699,6 +762,9 @@ class RagRetrievalServiceTest {
         assertEquals("rag", result.decision());
         assertEquals(null, result.rerankConfidenceTier());
         assertEquals("合同归档流程", result.citations().get(0).get("title"));
+        assertEquals(false, result.rerankDiagnostics().get("applied"));
+        assertEquals("partial_response", result.rerankDiagnostics().get("failureReason"));
+        assertEquals("fused", result.rerankDiagnostics().get("scoreSource"));
     }
 
     @Test

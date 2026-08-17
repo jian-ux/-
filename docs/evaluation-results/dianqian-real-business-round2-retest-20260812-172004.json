@@ -1,0 +1,784 @@
+{
+    "code":  200,
+    "msg":  "success",
+    "data":  {
+                 "name":  "dianqian-real-business-round2-suspicious-retest-20260812",
+                 "promptVersion":  "v2",
+                 "evaluatedAt":  "2026-08-12T09:20:04.096070383Z",
+                 "usesRealModel":  true,
+                 "databaseRolledBack":  true,
+                 "costNotice":  "评测会调用真实模型并产生 API 成本；会话、消息、工单和日志数据均按样本回滚。",
+                 "total":  12,
+                 "decisionExpected":  12,
+                 "decisionCorrect":  10,
+                 "decisionAccuracy":  0.8333,
+                 "groundingExpected":  12,
+                 "groundingMatched":  10,
+                 "groundingAccuracy":  0.8333,
+                 "requiredPhraseTotal":  24,
+                 "requiredPhraseHit":  11,
+                 "requiredPhraseHitRate":  0.4583,
+                 "forbiddenPhraseTotal":  0,
+                 "forbiddenPhraseViolations":  0,
+                 "handoffExpected":  12,
+                 "handoffCorrect":  12,
+                 "handoffAccuracy":  1.0,
+                 "piiLeakCount":  0,
+                 "modelErrorCount":  0,
+                 "cases":  [
+                               {
+                                   "id":  "retest-code-1",
+                                   "question":  "我们HR今天连续发了很多份合同，现在员工一直收不到验证码，今晚急着签，有没有临时处理办法？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_guardrail",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.631,
+                                   "reply":  "请先检查手机信号是否正常。若短时间内多次获取验证码，请停止重复发送，稍后再试；仍未收到时，请联系人工客服进一步核查。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+                                                                  "24小时",
+                                                                  "签约密码"
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  38,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4873",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4873,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  78,
+                                                         "sectionPath":  "验证码接收不到、超时？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.631,
+                                                         "snippet":  "您可以检查下您手机的信号，短信的接收会因为信号原因存在延时的可能性，另外如您同一时间段内频繁发送验证码，也会遇到接收不到的问题，建议您也可以稍后再试试。"
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4995",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4995,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  200,
+                                                         "sectionPath":  "点签：您好，请问您这几天在使用我们应用的过程中，有没有遇到疑问或是不太会操作的地方呢？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.596,
+                                                         "snippet":  "点签：您好，请问您在使用我们应用的过程中，有没有遇到疑问或是不太会操作的地方呢\n发起多次后接收不到验证短信\n您好，这是因为运营商会限制短信发送的次数，会导致短信发送频繁，请您等待一天后再进行发起，客服建议您这边不要同一时间发送太多份合同呢。\n更换法人认证\n需要新的法人进行认证，才可以将旧的主体法人解除，法人认证后完成后将新法人和之前法人的姓名、手机号分别发送..."
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4816",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4816,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  21,
+                                                         "sectionPath":  "请问您是不是同一时间段点击发送验证码过于频繁了？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.61,
+                                                         "snippet":  "可能是短时间内，短信验证码接收功能被运营商所限制了，需在24小时之后运营商才会自动解除频繁限制。目前建议您这边可以到账户内设置一个签约密码，先使用密码签约，后续或稍晚点再使用短信验证码签约。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "retest-code-2",
+                                   "question":  "我们HR今天连续发了很多份合同，现在员工一直收不到验证码，今晚急着签，有没有临时处理办法？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_guardrail",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.631,
+                                   "reply":  "请先检查手机信号是否正常。若短时间内多次获取验证码，请停止重复发送，稍后再试；仍未收到时，请联系人工客服进一步核查。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+                                                                  "24小时",
+                                                                  "签约密码"
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  34,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4873",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4873,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  78,
+                                                         "sectionPath":  "验证码接收不到、超时？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.631,
+                                                         "snippet":  "您可以检查下您手机的信号，短信的接收会因为信号原因存在延时的可能性，另外如您同一时间段内频繁发送验证码，也会遇到接收不到的问题，建议您也可以稍后再试试。"
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4995",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4995,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  200,
+                                                         "sectionPath":  "点签：您好，请问您这几天在使用我们应用的过程中，有没有遇到疑问或是不太会操作的地方呢？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.596,
+                                                         "snippet":  "点签：您好，请问您在使用我们应用的过程中，有没有遇到疑问或是不太会操作的地方呢\n发起多次后接收不到验证短信\n您好，这是因为运营商会限制短信发送的次数，会导致短信发送频繁，请您等待一天后再进行发起，客服建议您这边不要同一时间发送太多份合同呢。\n更换法人认证\n需要新的法人进行认证，才可以将旧的主体法人解除，法人认证后完成后将新法人和之前法人的姓名、手机号分别发送..."
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4816",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4816,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  21,
+                                                         "sectionPath":  "请问您是不是同一时间段点击发送验证码过于频繁了？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.61,
+                                                         "snippet":  "可能是短时间内，短信验证码接收功能被运营商所限制了，需在24小时之后运营商才会自动解除频繁限制。目前建议您这边可以到账户内设置一个签约密码，先使用密码签约，后续或稍晚点再使用短信验证码签约。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "retest-code-3",
+                                   "question":  "我们HR今天连续发了很多份合同，现在员工一直收不到验证码，今晚急着签，有没有临时处理办法？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_guardrail",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.631,
+                                   "reply":  "请先检查手机信号是否正常。若短时间内多次获取验证码，请停止重复发送，稍后再试；仍未收到时，请联系人工客服进一步核查。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+                                                                  "24小时",
+                                                                  "签约密码"
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  37,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4873",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4873,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  78,
+                                                         "sectionPath":  "验证码接收不到、超时？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.631,
+                                                         "snippet":  "您可以检查下您手机的信号，短信的接收会因为信号原因存在延时的可能性，另外如您同一时间段内频繁发送验证码，也会遇到接收不到的问题，建议您也可以稍后再试试。"
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4995",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4995,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  200,
+                                                         "sectionPath":  "点签：您好，请问您这几天在使用我们应用的过程中，有没有遇到疑问或是不太会操作的地方呢？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.596,
+                                                         "snippet":  "点签：您好，请问您在使用我们应用的过程中，有没有遇到疑问或是不太会操作的地方呢\n发起多次后接收不到验证短信\n您好，这是因为运营商会限制短信发送的次数，会导致短信发送频繁，请您等待一天后再进行发起，客服建议您这边不要同一时间发送太多份合同呢。\n更换法人认证\n需要新的法人进行认证，才可以将旧的主体法人解除，法人认证后完成后将新法人和之前法人的姓名、手机号分别发送..."
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4816",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4816,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  21,
+                                                         "sectionPath":  "请问您是不是同一时间段点击发送验证码过于频繁了？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.61,
+                                                         "snippet":  "可能是短时间内，短信验证码接收功能被运营商所限制了，需在24小时之后运营商才会自动解除频繁限制。目前建议您这边可以到账户内设置一个签约密码，先使用密码签约，后续或稍晚点再使用短信验证码签约。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "retest-legal-1",
+                                   "question":  "公司法人刚变更，点签企业认证里还是老法人，需要按什么顺序改？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  false,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "NO_KNOWLEDGE",
+                                   "answerStatus":  "no_answer",
+                                   "source":  "no_answer",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  false,
+                                   "confidence":  0.591,
+                                   "reply":  "这个问题我暂时无法准确确认。请补充具体的产品、功能或使用场景，我会继续为您核实。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  false,
+                                   "missingRequiredPhrases":  [
+                                                                  "新法人",
+                                                                  "认证",
+                                                                  "客服"
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  7675,
+                                   "citations":  [
+
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "retest-legal-2",
+                                   "question":  "公司法人刚变更，点签企业认证里还是老法人，需要按什么顺序改？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER_PARTIAL",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.591,
+                                   "reply":  "法人变更后，点签的企业认证需要更新为新的法人信息。企业管理员登录点签，进入企业认证页面，重新发起企业认证，根据新法人的情况选择以下方式之一：\n1. 新法人本人操作：使用新法人的手机号完成人脸识别认证。\n2. 新法人远程签署授权书：系统将授权书发送给新法人，新法人远程签署后完成认证。\n3. 对公账户打款：使用企业对公账户向点签官方账户打款1分钱（附言填写企业名称和认证编号），系统核验通过后完成认证。\n认证通过后，企业信息中的法人会更新为新法人。\n请问您的新法人目前是否方便进行人脸识别认证？",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+                                                                  "客服"
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  24722,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4877",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4877,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  82,
+                                                         "sectionPath":  "企业怎么认证？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.591,
+                                                         "snippet":  "微信公众号/PC：\n管理员完成个人认证后，可继续创建并完善企业认证信息，确保企业主体身份的真实性。\n企业的认证有三种方式：\n第一种方式：我是法人，在线完成即时认证。（手机号/人脸）\n第二种方式：不是法人，系统会以短信的形式将授权书发送给法人，法人可远程完成签署授权书，完成企业认证。\n第三种方式：对公账户打款（使用对公账号，打款1分钱至点签官方账户）\n首次创建..."
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4887",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4887,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  92,
+                                                         "sectionPath":  "企业认证时，营业执照正在变更（如经营范围变更），能先用旧营业执照提交认证，后续再更新吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.569,
+                                                         "snippet":  "不建议使用旧营业执照认证。因点签企业认证需核验执照的 “当前有效性”：①旧执照若已过变更有效期，会直接导致认证失败；②即使临时通过，后续签署合同若涉及新经营范围，可能因执照信息不一致引发法律效力争议。"
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4888",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4888,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  93,
+                                                         "sectionPath":  "法人无法进行人脸识别（如法人在国外），有其他企业认证方式吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.581,
+                                                         "snippet":  "有 “对公账户打款认证” 方式可供选择：\n①企业登录点签平台，进入 “企业认证→对公打款认证”，获取点签官方账户信息及 “认证编号”；\n②用企业对公账户向该官方账户打款 1 分钱（备注需填写 “企业名称 + 认证编号”）；③点签收到款项后，会自动核验对公账户信息与企业注册信息是否一致，一致则认证通过（通常 1 个工作日内完成）。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "retest-legal-3",
+                                   "question":  "公司法人刚变更，点签企业认证里还是老法人，需要按什么顺序改？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  false,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "NO_KNOWLEDGE",
+                                   "answerStatus":  "no_answer",
+                                   "source":  "no_answer",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  false,
+                                   "confidence":  0.591,
+                                   "reply":  "这个问题我暂时无法准确确认。请补充具体的产品、功能或使用场景，我会继续为您核实。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  false,
+                                   "missingRequiredPhrases":  [
+                                                                  "新法人",
+                                                                  "认证",
+                                                                  "客服"
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  5260,
+                                   "citations":  [
+
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "retest-receive-1",
+                                   "question":  "采购说合同已经发了，但供应商手机上完全没收到。我们应该先核对哪些信息？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.66,
+                                   "reply":  "请先核对 2 处信息：\n1. 在“我发起的合同”里，检查对方手机号是否填写正确，如果输错就修改后重新发送。\n2. 请对方查看手机上的“垃圾短信”或“拦截箱”，有时短信会被误判到这些位置，找到后点击即可跳转签署。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  3232,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4930",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4930,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  135,
+                                                         "sectionPath":  "发起合同后，对方说没收到短信，怎么办？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.66,
+                                                         "snippet":  "先排查 2 个小问题：①在 “我发起的合同” 里核对下对方手机号，是不是输错了，错了改了重新发；②让对方看看手机的 “垃圾短信” 或 “拦截箱”，有时候短信会被误判，找到点进去就能签。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "retest-receive-2",
+                                   "question":  "采购说合同已经发了，但供应商手机上完全没收到。我们应该先核对哪些信息？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.66,
+                                   "reply":  "首先核对两个关键信息：\n1. 在点签的“我发起的合同”里确认供应商的手机号是否正确，如果录入有误需要修改后重新发送。\n2. 请供应商查看手机中的“垃圾短信”或“拦截箱”，签约通知短信可能被误判拦截，找到后点击链接即可进入签署。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  5250,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4930",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4930,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  135,
+                                                         "sectionPath":  "发起合同后，对方说没收到短信，怎么办？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.66,
+                                                         "snippet":  "先排查 2 个小问题：①在 “我发起的合同” 里核对下对方手机号，是不是输错了，错了改了重新发；②让对方看看手机的 “垃圾短信” 或 “拦截箱”，有时候短信会被误判，找到点进去就能签。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "retest-receive-3",
+                                   "question":  "采购说合同已经发了，但供应商手机上完全没收到。我们应该先核对哪些信息？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.66,
+                                   "reply":  "对方没收到签署短信时，建议按以下顺序排查：\n1. 在“我发起的合同”里核对供应商的手机号是否填写错误，如有错误，修改后重新发送。\n2. 请供应商检查手机里的“垃圾短信”或“拦截短信”文件夹，签署短信可能被误判拦截，找到后点击即可签署。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  5032,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4930",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4930,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  135,
+                                                         "sectionPath":  "发起合同后，对方说没收到短信，怎么办？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.66,
+                                                         "snippet":  "先排查 2 个小问题：①在 “我发起的合同” 里核对下对方手机号，是不是输错了，错了改了重新发；②让对方看看手机的 “垃圾短信” 或 “拦截箱”，有时候短信会被误判，找到点进去就能签。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "retest-withdraw-1",
+                                   "question":  "那我还能直接撤回重发吗？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.595,
+                                   "reply":  "可以。您先在“我发起的合同”中找到这笔采购合同，点击“撤回”，然后在本地把合同金额修改正确，确认内容无误后重新发起即可。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  true,
+                                   "redactedTypes":  [
+                                                         "BANK_CARD"
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  6613,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4865",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4865,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  70,
+                                                         "sectionPath":  "发起合同后，发现合同中的 内容写错了，对方还没签署，能直接修改吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.595,
+                                                         "snippet":  "可以修改。您先在 “我发起的合同” 中找到该合同，点击 “撤回”，本地修改完合同文件确认所有内容无误后重新发起。"
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4890",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4890,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  95,
+                                                         "sectionPath":  "想修改接收方的手机号，但合同已处于 “待签署” 状态，还能修改吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.562,
+                                                         "snippet":  "无法修改，需要撤回重新发起，否则签署时会显示失败。"
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4929",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4929,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  134,
+                                                         "sectionPath":  "员工用手机签署合同时，误点了 “拒签”，但实际是想签署，能撤销拒签操作吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.574,
+                                                         "snippet":  "无法直接撤销拒签，但可快速重新发起。拒签后合同流程自动终止，发起人会收到拒签通知；发起人在【我发起的合同】中找到 “已拒签” 合同，点击 “重新发起”，系统会保留原合同内容及接收方信息，无需重新上传文件，仅需点击 “确认发起”，接收方即可收到新的签署邀请。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "retest-withdraw-2",
+                                   "question":  "那我还能直接撤回重发吗？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.595,
+                                   "reply":  "可以直接撤回重发。操作步骤：\n1. 在“我发起的合同”里找到这笔采购合同，点击“撤回”。\n2. 在本地把合同文件的金额修改正确，确认所有内容无误。\n3. 重新发起签署即可。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  true,
+                                   "redactedTypes":  [
+                                                         "BANK_CARD"
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  3461,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4865",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4865,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  70,
+                                                         "sectionPath":  "发起合同后，发现合同中的 内容写错了，对方还没签署，能直接修改吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.595,
+                                                         "snippet":  "可以修改。您先在 “我发起的合同” 中找到该合同，点击 “撤回”，本地修改完合同文件确认所有内容无误后重新发起。"
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4890",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4890,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  95,
+                                                         "sectionPath":  "想修改接收方的手机号，但合同已处于 “待签署” 状态，还能修改吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.562,
+                                                         "snippet":  "无法修改，需要撤回重新发起，否则签署时会显示失败。"
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4929",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4929,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  134,
+                                                         "sectionPath":  "员工用手机签署合同时，误点了 “拒签”，但实际是想签署，能撤销拒签操作吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.574,
+                                                         "snippet":  "无法直接撤销拒签，但可快速重新发起。拒签后合同流程自动终止，发起人会收到拒签通知；发起人在【我发起的合同】中找到 “已拒签” 合同，点击 “重新发起”，系统会保留原合同内容及接收方信息，无需重新上传文件，仅需点击 “确认发起”，接收方即可收到新的签署邀请。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "retest-withdraw-3",
+                                   "question":  "那我还能直接撤回重发吗？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.595,
+                                   "reply":  "可以。您先在“我发起的合同”中找到该合同，点击“撤回”，在本地修改完合同文件并确认所有内容无误后重新发起即可。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  true,
+                                   "redactedTypes":  [
+                                                         "BANK_CARD"
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  8343,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4865",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4865,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  70,
+                                                         "sectionPath":  "发起合同后，发现合同中的 内容写错了，对方还没签署，能直接修改吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.595,
+                                                         "snippet":  "可以修改。您先在 “我发起的合同” 中找到该合同，点击 “撤回”，本地修改完合同文件确认所有内容无误后重新发起。"
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4890",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4890,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  95,
+                                                         "sectionPath":  "想修改接收方的手机号，但合同已处于 “待签署” 状态，还能修改吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.562,
+                                                         "snippet":  "无法修改，需要撤回重新发起，否则签署时会显示失败。"
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4929",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4929,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  134,
+                                                         "sectionPath":  "员工用手机签署合同时，误点了 “拒签”，但实际是想签署，能撤销拒签操作吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.574,
+                                                         "snippet":  "无法直接撤销拒签，但可快速重新发起。拒签后合同流程自动终止，发起人会收到拒签通知；发起人在【我发起的合同】中找到 “已拒签” 合同，点击 “重新发起”，系统会保留原合同内容及接收方信息，无需重新上传文件，仅需点击 “确认发起”，接收方即可收到新的签署邀请。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               }
+                           ]
+             }
+}

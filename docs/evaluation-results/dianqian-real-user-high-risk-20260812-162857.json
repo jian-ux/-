@@ -1,0 +1,194 @@
+{
+    "code":  200,
+    "msg":  "success",
+    "data":  {
+                 "name":  "dianqian-real-user-high-risk-20260812",
+                 "promptVersion":  "v2",
+                 "evaluatedAt":  "2026-08-12T08:28:57.734121098Z",
+                 "usesRealModel":  true,
+                 "databaseRolledBack":  true,
+                 "costNotice":  "评测会调用真实模型并产生 API 成本；会话、消息、工单和日志数据均按样本回滚。",
+                 "total":  3,
+                 "decisionExpected":  3,
+                 "decisionCorrect":  3,
+                 "decisionAccuracy":  1.0,
+                 "groundingExpected":  2,
+                 "groundingMatched":  2,
+                 "groundingAccuracy":  1.0,
+                 "requiredPhraseTotal":  4,
+                 "requiredPhraseHit":  4,
+                 "requiredPhraseHitRate":  1.0,
+                 "forbiddenPhraseTotal":  10,
+                 "forbiddenPhraseViolations":  0,
+                 "handoffExpected":  3,
+                 "handoffCorrect":  3,
+                 "handoffAccuracy":  1.0,
+                 "piiLeakCount":  0,
+                 "modelErrorCount":  0,
+                 "cases":  [
+                               {
+                                   "id":  "risk-price",
+                                   "question":  "我们一年大概签500份，最低能做到多少钱？再给点折扣呗",
+                                   "expectedAnswerable":  null,
+                                   "actualAnswerable":  false,
+                                   "expectedAnswerDecision":  "HANDOFF",
+                                   "answerDecision":  "HANDOFF",
+                                   "answerStatus":  "price_handoff",
+                                   "source":  "price_handoff",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  1.0,
+                                   "reply":  "您咨询的是价格相关信息。价格、报价和优惠需要由客服根据实际情况确认，已为您提交人工核实。您可以继续补充套餐类型或使用人数，我会一并同步。",
+                                   "expectedSourceType":  null,
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  null,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  true,
+                                   "actualNeedsTransfer":  true,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  41,
+                                   "handoffSucceeded":  true,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  10,
+                                   "citations":  [
+
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "risk-court",
+                                   "question":  "只要是在点签上签的，打官司法院就肯定认可，对吧？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.581,
+                                   "reply":  "在点签上签署的电子合同，与纸质合同具有同等的法律效力，并能作为有效证据提交法院。但法院是否最终采信，还需要结合案件的具体情况、签署全流程的合规性以及你所提交的证据链来综合判定。\n\n为了提高证据效力，你可以使用点签的“证据保全”功能生成区块链电子证据报告，或通过客服申请区块链公证服务，这都有助于向法院证明签署的真实性和完整性。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  13631,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4828",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4828,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  33,
+                                                         "sectionPath":  "你们有认证吗？是正规机构吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.581,
+                                                         "snippet":  "电子合同具有一定的特殊性，必须要经过相应的国家机构授权及资质证书的保障，我们才能为用户提供相应的服务。\n在我们平台上签署的每一份合同，都是按照《电子签名法》的要求严格执行的，与传统的纸质合同一样，具备同等的法律效力。\n点签电子合同是正规机构，已通过国家权威CA机构认证，并严格遵循《电子签名法》要求，结合区块链存证与司法机构直连，确保签署全流程合规且具备法律效..."
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4846",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4846,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  51,
+                                                         "sectionPath":  "点签是否有存证功能？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.579,
+                                                         "snippet":  "有的，已完成的合同，可以在合同详情界面选择“证据保全”出具电子证据报告。\n1）点签区块链电子版证据报告（10元/份）\n“点签”为电子签名产品出具的证据报告，包含“真实身份，真实意愿，签名未改，原文未改”等相关签署事实，以区块链保障合同签约的司法有效性。\n公证证明（需咨询客服办理）\n如有公证需求，请咨询客服办理点签电子合同与公证处共同合作推出的区块链公证服务。..."
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4830",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4830,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  35,
+                                                         "sectionPath":  "需要有法律效力的线上签署，你们是否能具备？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.579,
+                                                         "snippet":  "我们的签署流程都是按照国家出台的《电子签名法》的要求严格执行的，在我们平台上签署完成的电子合同，与传统的纸质合同一样，具备同等的法律效力。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "risk-service",
+                                   "question":  "我买了你们服务，以后不管什么故障都保证一小时内解决吧？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_guardrail",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  1.0,
+                                   "reply":  "飞晟科技针对本地企业提供远程问题1小时内响应，并可在预约后12小时内上门协助。这里的时效是响应和协助安排，不等于问题已解决，也不构成对全部问题解决时间的承诺。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  true,
+                                   "redactedTypes":  [
+                                                         "BANK_CARD"
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  308,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4798",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4798,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  3,
+                                                         "sectionPath":  "飞晟科技作为翔晟子公司，在海南有哪些本地化服务优势？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  1.0,
+                                                         "snippet":  "飞晟科技立足海南自由贸易港，本地化优势主要体现在三方面：①响应速度快，本地企业可享受 12 小时内上门协助服务（需提前预约），远程问题 1 小时内响应；②政策适配性强，结合海南自贸港企业数字化扶持政策，为跨境电商、旅游企业等定制符合海关监管、行业合规的电子签约方案；③本地资源对接：与海南本地公证处、仲裁机构深度合作，企业发生合同纠纷时可快速获取本地化司法出证..."
+                                                     }
+                                                 ],
+                                   "error":  null
+                               }
+                           ]
+             }
+}

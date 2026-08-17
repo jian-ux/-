@@ -56,6 +56,10 @@ public class NlpIntentClassifier {
         String draftingSignal = firstMatch(normalized, DRAFTING_TERMS);
         String signingSignal = firstMatch(normalized, SIGNING_OPERATION_TERMS);
         String capabilitySignal = firstMatch(normalized, CAPABILITY_TERMS);
+        if (capabilitySignal == null
+                && normalized.matches(".*(?:可以|能|支持).{1,8}(?:签|签署|签约).*")) {
+            capabilitySignal = "跨词签署能力";
+        }
         String legalSignal = firstMatch(normalized, LEGAL_RISK_TERMS);
         String productSignal = firstMatch(normalized, PRODUCT_TERMS);
         String subject = extractContractSubject(normalized);

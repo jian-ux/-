@@ -128,6 +128,48 @@ class ContextualQueryResolverTest {
         assertEquals("合同双方都已经签署完成了。", result.previousQuestion());
     }
 
+    @Test
+    void mergesPreviousContractScenarioIntoAnaphoricFollowUp() {
+        String previousQuestion = "我刚发起一份合同，发现正文写错了，对方还没有签。";
+        String currentQuestion = "这个还能直接改吗？";
+
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", previousQuestion),
+            message("user", currentQuestion)), currentQuestion);
+
+        assertTrue(result.contextDependent());
+        assertTrue(result.rewritten());
+        assertEquals(previousQuestion + " " + currentQuestion, result.query());
+        assertEquals(previousQuestion, result.previousQuestion());
+    }
+
+    @Test
+    void recognizesAndMergesStateContinuationPhoneFollowUp() {
+        String previousQuestion = "合同已经发出，状态是待签署，但接收人的手机号填错了。";
+        String currentQuestion = "现在还能把号码改掉吗？";
+
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", previousQuestion),
+            message("ai", "请问您想确认能否直接修改接收人信息吗？"),
+            message("user", currentQuestion)), currentQuestion);
+
+        assertTrue(result.contextDependent());
+        assertTrue(result.rewritten());
+        assertEquals(previousQuestion + " " + currentQuestion, result.query());
+        assertEquals(previousQuestion, result.previousQuestion());
+    }
+
+    @Test
+    void doesNotInventContextForStateContinuationWithoutPreviousUserTurn() {
+        String question = "现在还能把号码改掉吗？";
+
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(), question);
+
+        assertTrue(result.contextDependent());
+        assertFalse(result.rewritten());
+        assertEquals(question, result.query());
+    }
+
     private BotMessage message(String role, String content) {
         BotMessage message = new BotMessage();
         message.setRole(role);

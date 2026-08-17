@@ -1,6 +1,10 @@
 param(
     [switch]$Background,
     [switch]$ForceInstall,
+    [ValidateRange(1, 10)]
+    [int]$BatchSize = 1,
+    [ValidateRange(0, 10000)]
+    [int]$CacheMaxEntries = 256,
     [int]$StartupTimeoutSeconds = 1200
 )
 
@@ -67,7 +71,8 @@ $env:RERANK_DEVICE = "cuda"
 $env:RERANK_DTYPE = "bfloat16"
 $env:RERANK_MAX_CANDIDATES = "10"
 $env:RERANK_MAX_LENGTH = "2048"
-$env:RERANK_BATCH_SIZE = "1"
+$env:RERANK_BATCH_SIZE = [string]$BatchSize
+$env:RERANK_CACHE_MAX_ENTRIES = [string]$CacheMaxEntries
 
 $uvicornArgs = @(
     "-m", "uvicorn", "app:app",

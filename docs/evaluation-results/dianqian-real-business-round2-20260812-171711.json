@@ -1,0 +1,1390 @@
+{
+    "code":  200,
+    "msg":  "success",
+    "data":  {
+                 "name":  "dianqian-real-business-blackbox-round2-20260812",
+                 "promptVersion":  "v2",
+                 "evaluatedAt":  "2026-08-12T09:17:11.654227519Z",
+                 "usesRealModel":  true,
+                 "databaseRolledBack":  true,
+                 "costNotice":  "评测会调用真实模型并产生 API 成本；会话、消息、工单和日志数据均按样本回滚。",
+                 "total":  20,
+                 "decisionExpected":  20,
+                 "decisionCorrect":  19,
+                 "decisionAccuracy":  0.95,
+                 "groundingExpected":  20,
+                 "groundingMatched":  19,
+                 "groundingAccuracy":  0.95,
+                 "requiredPhraseTotal":  70,
+                 "requiredPhraseHit":  50,
+                 "requiredPhraseHitRate":  0.7143,
+                 "forbiddenPhraseTotal":  81,
+                 "forbiddenPhraseViolations":  0,
+                 "handoffExpected":  20,
+                 "handoffCorrect":  20,
+                 "handoffAccuracy":  1.0,
+                 "piiLeakCount":  0,
+                 "modelErrorCount":  0,
+                 "cases":  [
+                               {
+                                   "id":  "biz2-01-verification-rate-limit",
+                                   "question":  "我们HR今天连续发了很多份合同，现在员工一直收不到验证码，今晚急着签，有没有临时处理办法？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_guardrail",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.631,
+                                   "reply":  "请先检查手机信号是否正常。若短时间内多次获取验证码，请停止重复发送，稍后再试；仍未收到时，请联系人工客服进一步核查。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+                                                                  "24小时",
+                                                                  "签约密码"
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  827,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4873",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4873,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  78,
+                                                         "sectionPath":  "验证码接收不到、超时？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.631,
+                                                         "snippet":  "您可以检查下您手机的信号，短信的接收会因为信号原因存在延时的可能性，另外如您同一时间段内频繁发送验证码，也会遇到接收不到的问题，建议您也可以稍后再试试。"
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4995",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4995,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  200,
+                                                         "sectionPath":  "点签：您好，请问您这几天在使用我们应用的过程中，有没有遇到疑问或是不太会操作的地方呢？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.596,
+                                                         "snippet":  "点签：您好，请问您在使用我们应用的过程中，有没有遇到疑问或是不太会操作的地方呢\n发起多次后接收不到验证短信\n您好，这是因为运营商会限制短信发送的次数，会导致短信发送频繁，请您等待一天后再进行发起，客服建议您这边不要同一时间发送太多份合同呢。\n更换法人认证\n需要新的法人进行认证，才可以将旧的主体法人解除，法人认证后完成后将新法人和之前法人的姓名、手机号分别发送..."
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4816",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4816,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  21,
+                                                         "sectionPath":  "请问您是不是同一时间段点击发送验证码过于频繁了？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.61,
+                                                         "snippet":  "可能是短时间内，短信验证码接收功能被运营商所限制了，需在24小时之后运营商才会自动解除频繁限制。目前建议您这边可以到账户内设置一个签约密码，先使用密码签约，后续或稍晚点再使用短信验证码签约。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-02-former-admin-replacement",
+                                   "question":  "公司原来的点签管理员离职了，新同事要接手管理员，后台应该怎么交接？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.584,
+                                   "reply":  "新管理员需要登录原管理员的账号，在后台将自己设置为管理员，完成后再将原管理员账号禁用即可。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  4248,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4981",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4981,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  186,
+                                                         "sectionPath":  "员工离职后，其发起的合同如何转移？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.584,
+                                                         "snippet":  "管理员可在【员工管理】中禁用离职账号，并重新分配其名下合同至其他员工。已签署企业合同保留原记录在企业账户内，新合同需由接替员工发起。\n管理员能查看 “员工的合同签署操作日志” 吗？比如谁在什么时间签署了哪份合同。\n可以查看。管理员在【控制台】-【操作日志】中输入员工信息，可筛选查看其所有操作（发起、签署、拒签等），日志含操作时间；日志永久留存不可删除，可作为..."
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4980",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4980,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  185,
+                                                         "sectionPath":  "钉钉花名册与点签互通吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.568,
+                                                         "snippet":  "需企业内的员工进入点签应用并实名认证后，花名册才会自动获取生成钉钉中员工的信息。\n管理员权限更换\n如之前的管理员已离职，您可以登录原管理员的账号将自己设置为管理员，再将原管理员禁用。"
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4845",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4845,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  50,
+                                                         "sectionPath":  "企业员工离职后，其名下的企业电子印章，还能使用吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.519,
+                                                         "snippet":  "电子印章与员工账号权限强绑定：管理员禁用离职员工账号后，其印章使用权立即失效，无法发起签署；系统会自动冻结该员工未完成的合同，需管理员重新分配权限；所有用章记录永久留存，可追溯离职前行为，规避风险。\n出证、存证"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-03-departure-contract-transfer",
+                                   "question":  "销售小李离职了，他名下还有没处理完的客户合同，管理员怎么转给接替的人？以前签完的合同会不会一起没了？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.637,
+                                   "reply":  "管理员可以在【员工管理】中禁用小李的账号，然后将其名下未完成的合同重新分配给接替的员工。已签署的合同不会丢失，会一直保留在企业账户内。需要处理的新合同，由接替员工重新发起即可。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  5762,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4981",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4981,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  186,
+                                                         "sectionPath":  "员工离职后，其发起的合同如何转移？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.637,
+                                                         "snippet":  "管理员可在【员工管理】中禁用离职账号，并重新分配其名下合同至其他员工。已签署企业合同保留原记录在企业账户内，新合同需由接替员工发起。\n管理员能查看 “员工的合同签署操作日志” 吗？比如谁在什么时间签署了哪份合同。\n可以查看。管理员在【控制台】-【操作日志】中输入员工信息，可筛选查看其所有操作（发起、签署、拒签等），日志含操作时间；日志永久留存不可删除，可作为..."
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4967",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4967,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  172,
+                                                         "sectionPath":  "后期如果不在续费了，账号还能登录使用吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.569,
+                                                         "snippet":  "如后期不再续费，您的点签账号是依旧可以正常登录使用，之前的数据还会一直保存在您的账户上，可以持续进行查阅、下载，但是不能进行合同的发起，如需签新的合同，可选择续费购买。\n如果和员工签了劳动合同，没有到期员工不干了怎么解约？（解除合同）\n针对您提到的员工在劳动合同未到期时主动离职的情况，点签电子合同支持双方在线高效完成解约流程。您可通过登录点签平台进入“我的合..."
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4819",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4819,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  24,
+                                                         "sectionPath":  "合同发起后还未签署，发现附件漏传了，能补充上传附件吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.565,
+                                                         "snippet":  "分两种情况处理：\n①未签署任何一方：发起人在 “我发起的合同” 中找到对应合同，点击 “撤回”→“编辑附件”，补充上传漏传文件后重新发起，原接收方会收到 “合同更新提醒”；\n②已有一方签署：因合同内容已部分固化，无法直接补充附件，需先发起 “解除合同” 流程（双方确认后合同终止），再重新创建合同并上传完整附件发起签署。建议发起合同前，在 “附件检查” 环节确..."
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-04-operation-log-audit",
+                                   "question":  "审计要查某个员工什么时候发起、签署或者拒签过合同，管理员能查到吗？员工自己能把记录删掉吗？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.606,
+                                   "reply":  "管理员可以在【控制台】-【操作日志】中输入员工信息，筛选查看其发起、签署、拒签等所有操作，日志会包含具体操作时间。\n操作日志永久留存且不可删除，员工自己也无法删除记录。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  12381,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4981",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4981,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  186,
+                                                         "sectionPath":  "员工离职后，其发起的合同如何转移？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.606,
+                                                         "snippet":  "管理员可在【员工管理】中禁用离职账号，并重新分配其名下合同至其他员工。已签署企业合同保留原记录在企业账户内，新合同需由接替员工发起。\n管理员能查看 “员工的合同签署操作日志” 吗？比如谁在什么时间签署了哪份合同。\n可以查看。管理员在【控制台】-【操作日志】中输入员工信息，可筛选查看其所有操作（发起、签署、拒签等），日志含操作时间；日志永久留存不可删除，可作为..."
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4845",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4845,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  50,
+                                                         "sectionPath":  "企业员工离职后，其名下的企业电子印章，还能使用吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.548,
+                                                         "snippet":  "电子印章与员工账号权限强绑定：管理员禁用离职员工账号后，其印章使用权立即失效，无法发起签署；系统会自动冻结该员工未完成的合同，需管理员重新分配权限；所有用章记录永久留存，可追溯离职前行为，规避风险。\n出证、存证"
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4940",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4940,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  145,
+                                                         "sectionPath":  "多人签署的合同中，有一方拒签后，其他已经签署的方会收到拒签通知吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.54,
+                                                         "snippet":  "会。当一方拒签后，系统会立即向三类对象发送通知：①所有已签署方（短信 + 公众号）；②合同发起人（短信 + 公众号 + 站内信）；③企业管理员（仅站内信）。通知内容包含：拒签人、拒签时间、拒签原因（若拒签人填写）。\n同时，合同状态会更新为 “已拒签”，已签署方无需继续履行签署流程；若需重新签署，发起人需修改合同内容（或与拒签方沟通一致）后重新发起。\n将纸质合..."
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-05-dingtalk-app-invisible",
+                                   "question":  "我们已经在钉钉装了点签，但有几个部门的员工在工作台里看不到，谁去哪里开权限？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.683,
+                                   "reply":  "需要企业的钉钉主管理员到钉钉管理后台调整点签应用的可见范围权限，把相应部门员工都设为可见。\n\n操作步骤：\n1. 钉钉主管理员登录钉钉管理后台：https://oa.dingtalk.com/index.htm#/microApp/microAppList\n2. 进入【工作台】，找到点签应用，修改应用的可见范围，将缺少权限的部门或全员勾选上并保存。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  8158,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4982",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4982,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  187,
+                                                         "sectionPath":  "钉钉工作台中，找不到应用？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.683,
+                                                         "snippet":  "您好，可能是因为之前您在钉钉中添加点签应用时，可见范围权限不是针对所有员工开放的，需企业的钉钉主管理员到【钉钉管理后台】-【工作台】中进行应用权限设置。\nhttps://oa.dingtalk.com/index.htm#/microapp/microappList\n钉钉应用开通权限（步骤在文件夹）\n您好，之前贵公司在添加了点签应用的时候，权限没有进行完全地..."
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4985",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4985,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  190,
+                                                         "sectionPath":  "点签：请问您是否有在钉钉工作台中添加点签应用，并完成了企业的认证呢？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.612,
+                                                         "snippet":  "（等待用户回复，如果不回复继续展开↓）\n点签：点签电子合同主要包含的7大功能：\n①对企业印章的管理，印章的授权分配使用。\n②操作人身份真实性的保障，合同发起、签署过程更加安全。\n③可设置企业人员的不同权限，根据企业自身需求发起、签署不同的合同类型。\n④合同的加密储存管理，安全保障，可随时查阅及下载。\n⑤一个账号下可切换管理多家公司，满足企业旗下多家子公司的管..."
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4986",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4986,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  191,
+                                                         "sectionPath":  "点签：请问您是否有在钉钉工作台中添加点签应用，并完成了企业的认证呢？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.612,
+                                                         "snippet":  "（等待用户回复，如果不回复继续展开↓）\n点签：点签电子合同主要包含的7大功能：\n①对企业印章的管理，印章的授权分配使用。\n②操作人身份真实性的保障，合同发起、签署过程更加安全。\n③可设置企业人员的不同权限，根据企业自身需求发起、签署不同的合同类型。\n④合同的加密储存管理，安全保障，可随时查阅及下载。\n⑤一个账号下可切换管理多家公司，满足企业旗下多家子公司的管..."
+                                                     },
+                                                     {
+                                                         "ref":  4,
+                                                         "id":  "chunk:4980",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4980,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  185,
+                                                         "sectionPath":  "钉钉花名册与点签互通吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.605,
+                                                         "snippet":  "需企业内的员工进入点签应用并实名认证后，花名册才会自动获取生成钉钉中员工的信息。\n管理员权限更换\n如之前的管理员已离职，您可以登录原管理员的账号将自己设置为管理员，再将原管理员禁用。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-06-dingtalk-roster-sync",
+                                   "question":  "钉钉通讯录里明明有新员工，为什么点签花名册还没有自动出现？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.651,
+                                   "reply":  "新员工需要自己进入点签应用并完成实名认证，系统才会自动从钉钉获取员工信息并生成花名册记录。员工未主动进入点签应用或未完成实名认证前，花名册不会自动出现。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  true,
+                                   "redactedTypes":  [
+                                                         "BANK_CARD"
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  5274,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4980",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4980,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  185,
+                                                         "sectionPath":  "钉钉花名册与点签互通吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.651,
+                                                         "snippet":  "需企业内的员工进入点签应用并实名认证后，花名册才会自动获取生成钉钉中员工的信息。\n管理员权限更换\n如之前的管理员已离职，您可以登录原管理员的账号将自己设置为管理员，再将原管理员禁用。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-07-dingtalk-approval-autoseal",
+                                   "question":  "法务希望钉钉里发合同后先走审批，审批过了再自动盖章，点签能做吗？什么版本支持？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER_PARTIAL",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.709,
+                                   "reply":  "点签支持在钉钉中实现“发起合同→自动触发审批→审批通过后自动盖章”的闭环流程。需要在钉钉【审批管理】中关联点签应用，发起合同后系统会自动进入审批流，审批通过即自动盖章。该功能需要点签高级版本支持。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  5387,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4903",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4903,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  108,
+                                                         "sectionPath":  "合同中可以实现多处盖章吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.709,
+                                                         "snippet":  "是的，点签电子合同支持在合同中添加多处盖章，可根据需要在指定位置设置多个签章控件。\n发起合同时，印章没显示（需要授权）\n需点签应用中的企业管理员，进入点签-企业设置-签章设置，选择相应签章进行可使用人员的授权分配。\n可以在钉钉审批流程中使用吗？（钉钉）\n可以的，创建钉钉审批流：目前需升级为点签高级版本，点击审批管理—审批设置，创建审批流程，是否创建钉钉流程模..."
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4988",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4988,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  193,
+                                                         "sectionPath":  "钉钉端发起合同能否自动同步至审批流程？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.683,
+                                                         "snippet":  "高级版支持。在钉钉【审批管理】中关联点签应用，发起合同后系统自动触发审批流，审批通过后自动盖章，实现 “申请 - 审批 - 签署” 全流程闭环。"
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:5002",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  5002,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  207,
+                                                         "sectionPath":  "点签能支持 “电子合同的骑缝章” 吗？如何设置？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.668,
+                                                         "snippet":  "支持电子骑缝章，自动生成且合规。发起合同时，在【签署设置】中勾选 “添加骑缝章”，选择需加盖的印章；系统自动将印章拆分并均匀分布在合同各页面边缘，形成完整骑缝章；签署完成后，下载合同可查看骑缝章效果，与纸质骑缝章具备同等法律效力"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-08-dingtalk-cc-sync",
+                                   "question":  "合同审批里填的抄送人能同步到点签吗？审批和签署的消息他都能收到吗？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.693,
+                                   "reply":  "可以同步。前提是您使用的是点签高级版，并且在钉钉【审批管理】-【审批设置】中已关联点签应用。这样发起合同时，审批中填写的抄送人会同步到点签；审批通过后，抄送人可同时收到钉钉审批通知和点签的签署通知。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  true,
+                                   "redactedTypes":  [
+                                                         "PHONE"
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  6691,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4989",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4989,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  194,
+                                                         "sectionPath":  "钉钉端的点签应用能与 “钉钉审批流程” 中的 “抄送人” 同步吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.693,
+                                                         "snippet":  "可以同步。高级版用户在钉钉【审批管理】-【审批设置】中关联点签应用，发起合同的抄送人自动同步至钉钉审批流程；审批通过后，抄送人同时收到钉钉审批通知及点签签署通知，确保信息同步无遗漏。\n其他操作引导话术：\n总部官网用户办理签章业务。\n您好，我们是电子合同平台，用户可全程在线上发起以及签署合同。\n这里不属于该业务板块范畴，建议您通过以下途径解决：\n①　进入翔晟官..."
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4987",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4987,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  192,
+                                                         "sectionPath":  "钉钉端无法接收合同签署通知？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.645,
+                                                         "snippet":  "请检查钉钉 “工作通知” 权限是否开启：进入钉钉【设置】-【新消息通知】，确保 “点签电子合同” 勾选 “接收通知”。若仍未收到，可手动复制签署链接通过钉钉单聊发送。"
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4988",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4988,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  193,
+                                                         "sectionPath":  "钉钉端发起合同能否自动同步至审批流程？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.623,
+                                                         "snippet":  "高级版支持。在钉钉【审批管理】中关联点签应用，发起合同后系统自动触发审批流，审批通过后自动盖章，实现 “申请 - 审批 - 签署” 全流程闭环。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-09-miniprogram-slow",
+                                   "question":  "客户在微信点签小程序里一直转圈，打开合同特别慢，我们现场先让他怎么排查？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.686,
+                                   "reply":  "您可以先按以下顺序帮客户排查：\n\n1. 检查网络：让他关闭 Wi‑Fi，改用 4G/5G 移动数据网络，避免公共网络拥堵。\n2. 清理缓存：在微信里依次点击【我】-【设置】-【通用】-【存储空间】，找到“点签电子合同”小程序并清除缓存。\n3. 更新或重装：把微信更新到最新版本，或者长按小程序图标选择“删除”后重新搜索“点签电子合同”添加。\n\n如果这三步操作完仍然加载缓慢，请客户联系人工客服，并提供手机号、手机型号和一段操作录屏，以便技术进一步排查。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+                                                                  "更新微信"
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  9185,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4999",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4999,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  204,
+                                                         "sectionPath":  "用户反馈点签小程序加载缓慢，可能是什么原因？如何解决？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.686,
+                                                         "snippet":  "常见 3 类原因及解决方法：\n①网络问题：切换至 4G/5G 或稳定 WiFi，避免公共网络拥堵；\n②缓存问题：在微信中清除 “点签电子合同” 小程序缓存（微信【设置】-【通用】-【存储空间】）；\n③版本问题：更新微信至最新版本，或卸载小程序重新搜索添加；以上方法无效可联系客服，提供手机号、手机型号、录屏协助排查技术问题。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-10-identity-mismatch",
+                                   "question":  "员工实名认证提示身份信息不一致，名字和身份证号看着都对，但绑定的手机号不是他本人的，接下来怎么处理？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.739,
+                                   "reply":  "名字和身份证号确认无误，但手机号不是本人时，应使用人脸识别的方式完成认证。如果人脸识别仍然失败，可以申请人工审核。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+                                                                  "有效期"
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  5507,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:5001",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  5001,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  206,
+                                                         "sectionPath":  "用户在点签实名认证时，提示 “身份信息不一致”，如何解决？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.739,
+                                                         "snippet":  "按 3 步解决：\n①核对填写的姓名、身份证号是否与原件一致（注意多音字、生僻字）；\n②确认身份证是否在有效期内，过期需更换新证；\n③若信息无误，手机号不是本人的，需要用人脸识别的方式进行认证，仍失败申请人工审核。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-11-change-legal-representative",
+                                   "question":  "公司法人刚变更，点签企业认证里还是老法人，需要按什么顺序改？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  false,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "NO_KNOWLEDGE",
+                                   "answerStatus":  "no_answer",
+                                   "source":  "no_answer",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  false,
+                                   "confidence":  0.591,
+                                   "reply":  "这个问题我暂时无法准确确认。请补充具体的产品、功能或使用场景，我会继续为您核实。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  false,
+                                   "missingRequiredPhrases":  [
+                                                                  "新法人",
+                                                                  "认证",
+                                                                  "姓名",
+                                                                  "手机号",
+                                                                  "客服"
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  8909,
+                                   "citations":  [
+
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-12-change-mobile",
+                                   "question":  "我的旧手机号停用了，想把点签账号换绑到新号码，是先找客服还是先认证新号码？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.589,
+                                   "reply":  "你需要先完成新手机号的实名认证，再把认证后的号码提供给客服处理换绑。\n\n操作步骤：\n1. 先进行新手机号的实名认证（通常需要点击链接进入，输入新手机号完成认证）。\n2. 认证完后，将认证过的新手机号告知客服，由客服协助完成换绑。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  9522,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4882",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4882,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  87,
+                                                         "sectionPath":  "是否可以解绑注销点签？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.589,
+                                                         "snippet":  "目前我们已完成过合同签署的账号，不支持注销的操作。\n后期如果真的不想再使用点签电子合同了，可以向我们人工提出账号注销，账户数据会全部清空。（注销的前提是：需要提供本人手机号、身份证号，且不能存在履约中合同，不然若是后续合同发生纠纷，我们不能更好的为您的账号提供服务。）\n修改手机号/新增手机号：\n修改/新增手机号只能通过pc端进行操作，登录点签平台个人账户，在..."
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4995",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4995,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  200,
+                                                         "sectionPath":  "点签：您好，请问您这几天在使用我们应用的过程中，有没有遇到疑问或是不太会操作的地方呢？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.574,
+                                                         "snippet":  "点签：您好，请问您在使用我们应用的过程中，有没有遇到疑问或是不太会操作的地方呢\n发起多次后接收不到验证短信\n您好，这是因为运营商会限制短信发送的次数，会导致短信发送频繁，请您等待一天后再进行发起，客服建议您这边不要同一时间发送太多份合同呢。\n更换法人认证\n需要新的法人进行认证，才可以将旧的主体法人解除，法人认证后完成后将新法人和之前法人的姓名、手机号分别发送..."
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4876",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4876,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  81,
+                                                         "sectionPath":  "个人怎么认证？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.566,
+                                                         "snippet":  "微信公众号：\n用户首次进入点签应用，完成手机号的注册及登录后，需进行个人实名认证流程，确保操作人身份的真实性。（需输入姓名、身份证号码、手机验证码/人脸识别）"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-13-contract-not-received",
+                                   "question":  "采购说合同已经发了，但供应商手机上完全没收到。我们应该先核对哪些信息？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.66,
+                                   "reply":  "先核对两个信息：\n1. 在“我发起的合同”中检查供应商的手机号码是否正确，如果输错就修改后重新发送。\n2. 请供应商查看手机中的“垃圾短信”或拦截记录，短信可能被误拦，找到后点击即可签署。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+                                                                  "发起方",
+                                                                  "填写信息",
+                                                                  "注册认证"
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  4166,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4930",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4930,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  135,
+                                                         "sectionPath":  "发起合同后，对方说没收到短信，怎么办？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.66,
+                                                         "snippet":  "先排查 2 个小问题：①在 “我发起的合同” 里核对下对方手机号，是不是输错了，错了改了重新发；②让对方看看手机的 “垃圾短信” 或 “拦截箱”，有时候短信会被误判，找到点进去就能签。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-14-duplicate-signature-name",
+                                   "question":  "我新增个人签名时提示名称重复，是系统坏了吗？能不能保留两个同名签名？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.55,
+                                   "reply":  "系统没有坏，点签目前不支持设置两个同名的个人签名，签名名称不能重复。如果需要新增签名，请修改为不同的签名名称。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+                                                                  "同一个",
+                                                                  "修改签名名称"
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  true,
+                                   "redactedTypes":  [
+                                                         "PHONE"
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  4164,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4866",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4866,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  71,
+                                                         "sectionPath":  "个人签署合同时，想同时使用 “手写签名” 和 “系统生成签名”，可以吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.55,
+                                                         "snippet":  "可以的，发起合同的时候提前设置，勾选手写签名及系统签名，签署的时候即可使用两种签名。"
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4995",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4995,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  200,
+                                                         "sectionPath":  "点签：您好，请问您这几天在使用我们应用的过程中，有没有遇到疑问或是不太会操作的地方呢？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.545,
+                                                         "snippet":  "点签：您好，请问您在使用我们应用的过程中，有没有遇到疑问或是不太会操作的地方呢\n发起多次后接收不到验证短信\n您好，这是因为运营商会限制短信发送的次数，会导致短信发送频繁，请您等待一天后再进行发起，客服建议您这边不要同一时间发送太多份合同呢。\n更换法人认证\n需要新的法人进行认证，才可以将旧的主体法人解除，法人认证后完成后将新法人和之前法人的姓名、手机号分别发送..."
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4882",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4882,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  87,
+                                                         "sectionPath":  "是否可以解绑注销点签？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.525,
+                                                         "snippet":  "目前我们已完成过合同签署的账号，不支持注销的操作。\n后期如果真的不想再使用点签电子合同了，可以向我们人工提出账号注销，账户数据会全部清空。（注销的前提是：需要提供本人手机号、身份证号，且不能存在履约中合同，不然若是后续合同发生纠纷，我们不能更好的为您的账号提供服务。）\n修改手机号/新增手机号：\n修改/新增手机号只能通过pc端进行操作，登录点签平台个人账户，在..."
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-15-api-environment-isolation",
+                                   "question":  "我们在点签SaaS API测试环境已经把企业注册认证好了，切到另一个环境能直接共用这套认证数据吗？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.72,
+                                   "reply":  "不能，点签SaaS API的测试环境与正式环境的注册认证数据不互通。您在测试环境完成的注册认证无法直接在其他环境共用，如切换到正式环境，需重新进行企业注册认证。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+                                                                  "两个环境"
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  true,
+                                   "redactedTypes":  [
+                                                         "BANK_CARD"
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  5216,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4998",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4998,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  203,
+                                                         "sectionPath":  "5、企业是否有测试环境？是直接对接测试环境还是开发环境？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.72,
+                                                         "snippet":  "6、点签SaasApi对接，需要企业先注册认证，2个环境的注册认证是不互通的，需要告知企业。注册认证后，如何获取基础信息，请看接口文档。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-16-mixed-paper-electronic-signing",
+                                   "question":  "我们已经在点签盖了一方电子章，对方嫌麻烦想打印出来盖实体章再寄回来，这样签有没有风险？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.614,
+                                   "reply":  "有风险。根据《电子签名法》和相关司法实践，对方收到已盖电子章的合同后打印出来加盖实体章，会导致合同效力存在风险，因为打印文件无法验证原始电子签名的真实性且容易被篡改。建议双方全程在点签平台内完成电子签署，以确保合同的法律效力。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+                                                                  "效力风险",
+                                                                  "电子签约平台"
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  6532,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:5005",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  5005,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  210,
+                                                         "sectionPath":  "十六、 其他话术： 22 \u003e 3. 钉钉：在钉钉广场搜索“点签电子合同”应用开通使用",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.614,
+                                                         "snippet":  "合规的第三方签约平台，都是按照《电子签名法》的要求严格执行的。\n经过第三方电子签约平台，个人、企业会进行严格的身份认证和意愿认证流程，确保签署人真实身份和真实意愿的表达。\n加密算法等防篡改技术，保障电子合同原文内容和签名不被篡改，确保签署的电子合同符合《电子签名法》的要求，具备法律效力。\n电子合同使用场景、流程：\n签署合同里有份补充协议，这种是算一份合同吗？..."
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:5006",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  5006,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  211,
+                                                         "sectionPath":  "十六、 其他话术： 22 \u003e 3. 钉钉：在钉钉广场搜索“点签电子合同”应用开通使用",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.558,
+                                                         "snippet":  "对方收到已经盖了一方电子章的电子合同后，选择打印出来盖章签字是否会生效？\n您好，根据《电子签名法》和相关司法实践，对方打印后盖章签字可能导致合同效力风险，因为打印件无法验证电子签名的真实性且易被篡改，建议双方全程通过电子签约平台完成签署以确保法律效力\n请问您是否已经完成了个人及企业认证的认证呢？\n还可以优惠吗？\n发起合同时，会需要输入接收方的客户的信息，包含..."
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:5007",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  5007,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  212,
+                                                         "sectionPath":  "十六、 其他话术： 22 \u003e 3. 钉钉：在钉钉广场搜索“点签电子合同”应用开通使用",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.558,
+                                                         "snippet":  "④按实际可用折扣线下充值，赠送适当合同份数（需要先找领导说明情况，领导同意后可作为最后的方案执行）\n请问贵公司系统是内部自主开发的吗？\n贵司主要是经营哪些板块的业务呢？\n主要是想要在哪个模块使用电子合同呢？\n您好，请问咱们近期在使用的过程中，是否有遇到什么问题需要我们协助的呢？\n您好，近期咱们在使用的过程中，是否有遇到什么问题需要我们协助的不？\n点签：您好，..."
+                                                     },
+                                                     {
+                                                         "ref":  4,
+                                                         "id":  "chunk:4842",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4842,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  47,
+                                                         "sectionPath":  "系统会替我们验证对方签章的真实性吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.586,
+                                                         "snippet":  "用户首次进入点签，我们与公安部进行了数据的互通，会对个人以及企业，进行身份验证，确保操作人、归属企业的身份真实性。\n点签电子合同系统会在签署过程中自动验证对方签章的真实性，通过多重身份核验（人脸识别+CA证书）+区块链存证技术实时比对签署主体信息与加密哈希值，确保对方身份真实有效且签章未被篡改，全程符合《电子签名法》要求，有效杜绝冒签风险\n在发起合同前，需要..."
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-17-withdraw-reinitiate",
+                                   "question":  "那我还能直接撤回重发吗？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER_PARTIAL",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.655,
+                                   "reply":  "如果接收方所有人都还没签署，您可以撤回合同，修改金额后重新发起。在PC端点签工作台“我发起的合同”中找到该份合同，点击“撤回”，然后在本地修改合同文件，确认无误后重新发起即可。\n请问目前对方是否已有人签署了？",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+                                                                  "保留"
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  true,
+                                   "redactedTypes":  [
+                                                         "BANK_CARD"
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  22992,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4890",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4890,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  95,
+                                                         "sectionPath":  "想修改接收方的手机号，但合同已处于 “待签署” 状态，还能修改吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.655,
+                                                         "snippet":  "无法修改，需要撤回重新发起，否则签署时会显示失败。"
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4865",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4865,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  70,
+                                                         "sectionPath":  "发起合同后，发现合同中的 内容写错了，对方还没签署，能直接修改吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.648,
+                                                         "snippet":  "可以修改。您先在 “我发起的合同” 中找到该合同，点击 “撤回”，本地修改完合同文件确认所有内容无误后重新发起。"
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4929",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4929,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  134,
+                                                         "sectionPath":  "员工用手机签署合同时，误点了 “拒签”，但实际是想签署，能撤销拒签操作吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.648,
+                                                         "snippet":  "无法直接撤销拒签，但可快速重新发起。拒签后合同流程自动终止，发起人会收到拒签通知；发起人在【我发起的合同】中找到 “已拒签” 合同，点击 “重新发起”，系统会保留原合同内容及接收方信息，无需重新上传文件，仅需点击 “确认发起”，接收方即可收到新的签署邀请。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-18-multi-company-management",
+                                   "question":  "集团财务一个人要管理三家子公司的合同，是不是得注册三个账号来回登录？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.597,
+                                   "reply":  "不需要注册三个账号来回登录。点签支持一个手机号管理多家企业，您可以在“企业切换”中添加入三家子公司，使用时直接切换企业身份即可，无需重复注册账号。每家公司需要独立完成企业认证和印章上传。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+                                                                  "一个账号",
+                                                                  "多家公司"
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  9187,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4973",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4973,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  178,
+                                                         "sectionPath":  "如有几家子公司，能否实现共同管理？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.597,
+                                                         "snippet":  "点签电子合同支持集团型企业通过主账号与子账号的分权管理体系实现子公司协同管理。主账号可查看子公司的合同份数以及共享合同份数给子公司。\n如果一家公司，有几家子公司，能否实现共同管理？（钉钉）\n可以的，但用户可以加入多家组织，在每次使用时，需进行钉钉企业组织的切换后，进入该企业工作台中的点签应用去操作。\n如您想要进行切换企业的使用，建议您在钉钉中，先进行每一家子..."
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4886",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4886,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  91,
+                                                         "sectionPath":  "同一个手机号能否注册多个企业账号？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.572,
+                                                         "snippet":  "可以。手机号作为个人账户标识，可在 “企业切换” 中管理多家认证企业，每家企业需独立完成法人认证及印章上传"
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4883",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4883,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  88,
+                                                         "sectionPath":  "注册账户时，企业用户和个人用户有什么区别？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.563,
+                                                         "snippet":  "企业用户需提交营业执照等资质信息，可管理多个员工账号，支持团队协作；个人用户仅需实名认证，用于个人合同签署。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-19-local-deployment-openapi",
+                                   "question":  "我们是自研采购系统，数据希望留在本地，点签支持本地部署并接到现有审批流程里吗？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.619,
+                                   "reply":  "点签支持本地部署，可通过 OpenApi 将电子签章功能接入您的自研采购系统，并与现有审批流程集成。\n\n需要您提供盖章的使用频率及具体使用场景，以便评估对接方案和适用性。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  false,
+                                   "redactedTypes":  [
+
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  7874,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4990",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4990,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  195,
+                                                         "sectionPath":  "主要是想要合同的签署功能吗？是否还有其他的需求的？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.619,
+                                                         "snippet":  "点签电子签章系统可与OA 、ERP、HRM、采购销售等业务系统无缝集成的API接口，让业务系统快速具备电子签能力。\n如果是公司内部自主开发的系统，可以选择将我们的电子签章能力接入到您的系统中。在系统中的指定流程里，可直接使用电子签章/电子合同的功能。\n本地部署我们是支持的，通过OpenApi的方式为您的系统接入电子签章的功能。\n您可以将盖章的使用频率以及使用..."
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4989",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4989,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  194,
+                                                         "sectionPath":  "钉钉端的点签应用能与 “钉钉审批流程” 中的 “抄送人” 同步吗？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.611,
+                                                         "snippet":  "可以同步。高级版用户在钉钉【审批管理】-【审批设置】中关联点签应用，发起合同的抄送人自动同步至钉钉审批流程；审批通过后，抄送人同时收到钉钉审批通知及点签签署通知，确保信息同步无遗漏。\n其他操作引导话术：\n总部官网用户办理签章业务。\n您好，我们是电子合同平台，用户可全程在线上发起以及签署合同。\n这里不属于该业务板块范畴，建议您通过以下途径解决：\n①　进入翔晟官..."
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4997",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4997,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  202,
+                                                         "sectionPath":  "3、openAip对接的话，是否需要部署到本地服务器？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.616,
+                                                         "snippet":  "4、是否有自己的开发团队？如果有，可以提供接口文档，让开发先查看。若没有，可询问，是否有系统原代码，点签可承接接口对接开发。"
+                                                     }
+                                                 ],
+                                   "error":  null
+                               },
+                               {
+                                   "id":  "biz2-20-electronic-invoice-fields",
+                                   "question":  "套餐买完要开电子发票，最少要把哪些开票资料发给客服？",
+                                   "expectedAnswerable":  true,
+                                   "actualAnswerable":  true,
+                                   "expectedAnswerDecision":  null,
+                                   "answerDecision":  "ANSWER",
+                                   "answerStatus":  "answered",
+                                   "source":  "rag_ai",
+                                   "promptVersion":  "v2",
+                                   "decisionCorrect":  true,
+                                   "confidence":  0.724,
+                                   "reply":  "开具电子发票时需要提供单位名称和纳税人识别号，这是最少且必要的开票信息。",
+                                   "expectedSourceType":  "document",
+                                   "expectedSourceId":  null,
+                                   "groundingMatched":  true,
+                                   "missingRequiredPhrases":  [
+
+                                                              ],
+                                   "forbiddenPhrasesFound":  [
+
+                                                             ],
+                                   "expectedNeedsTransfer":  false,
+                                   "actualNeedsTransfer":  false,
+                                   "handoffCorrect":  true,
+                                   "ticketId":  null,
+                                   "handoffSucceeded":  false,
+                                   "piiLeak":  false,
+                                   "redactionApplied":  true,
+                                   "redactedTypes":  [
+                                                         "BANK_CARD"
+                                                     ],
+                                   "modelError":  false,
+                                   "latencyMs":  5518,
+                                   "citations":  [
+                                                     {
+                                                         "ref":  1,
+                                                         "id":  "chunk:4994",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4994,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  199,
+                                                         "sectionPath":  "点签：您好，请问您这几天在使用我们应用的过程中，有没有遇到不会操作或是有疑问的地方呢？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.724,
+                                                         "snippet":  "点签：您好，请问您购买的套餐需要开具电子发票吗？麻烦提供下开票信息（必要项：单位名称、纳税人识别号）"
+                                                     },
+                                                     {
+                                                         "ref":  2,
+                                                         "id":  "chunk:4958",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4958,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  163,
+                                                         "sectionPath":  "买完之后明年会不会涨价？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.647,
+                                                         "snippet":  "点签始终坚持透明合理的定价策略，目前价格体系保持稳定，长期合作的客户可享受专属续费优惠。\n开具电子发票时，能否将多个套餐的费用合并开具？比如一次性内购买了 2 次套餐，合并开一张发票。\n可以的，需提前咨询客服开具。"
+                                                     },
+                                                     {
+                                                         "ref":  3,
+                                                         "id":  "chunk:4971",
+                                                         "sourceType":  "document",
+                                                         "sourceId":  4971,
+                                                         "documentId":  62,
+                                                         "chunkIndex":  176,
+                                                         "sectionPath":  "免费合同用完了，怎么买新的套餐？",
+                                                         "title":  "【内部】点签SaaS客户问答库_26.5.29.docx",
+                                                         "score":  0.549,
+                                                         "snippet":  "在 “账户中心” 里买很方便：①点 “套餐管理”，能看到不同份数的套餐（比如 100 份、200 份）；\n②选适合自己企业的，直接微信或对公付款；\n③付完款，合同份数马上到账，就能继续发起合同了。\n多家公司共同管理：\n多家企业想共用一个套餐能否实现？套餐是否可以关联企业共用？(确认是否是分公司、发票只开给付款方）\n可以的，高级版目前可以1家主体+4家分子公司..."
+                                                     }
+                                                 ],
+                                   "error":  null
+                               }
+                           ]
+             }
+}

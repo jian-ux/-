@@ -1,0 +1,105 @@
+{
+  "name": "dianqian-real-business-round2-suspicious-retest-20260812",
+  "promptVersion": "v2",
+  "cases": [
+    {
+      "id": "retest-code-1",
+      "question": "我们HR今天连续发了很多份合同，现在员工一直收不到验证码，今晚急着签，有没有临时处理办法？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["24小时", "签约密码"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "retest-code-2",
+      "question": "我们HR今天连续发了很多份合同，现在员工一直收不到验证码，今晚急着签，有没有临时处理办法？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["24小时", "签约密码"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "retest-code-3",
+      "question": "我们HR今天连续发了很多份合同，现在员工一直收不到验证码，今晚急着签，有没有临时处理办法？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["24小时", "签约密码"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "retest-legal-1",
+      "question": "公司法人刚变更，点签企业认证里还是老法人，需要按什么顺序改？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["新法人", "认证", "客服"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "retest-legal-2",
+      "question": "公司法人刚变更，点签企业认证里还是老法人，需要按什么顺序改？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["新法人", "认证", "客服"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "retest-legal-3",
+      "question": "公司法人刚变更，点签企业认证里还是老法人，需要按什么顺序改？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["新法人", "认证", "客服"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "retest-receive-1",
+      "question": "采购说合同已经发了，但供应商手机上完全没收到。我们应该先核对哪些信息？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["手机号"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "retest-receive-2",
+      "question": "采购说合同已经发了，但供应商手机上完全没收到。我们应该先核对哪些信息？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["手机号"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "retest-receive-3",
+      "question": "采购说合同已经发了，但供应商手机上完全没收到。我们应该先核对哪些信息？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "mustContain": ["手机号"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "retest-withdraw-1",
+      "question": "那我还能直接撤回重发吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "history": [{"role":"user","content":"刚发现发出去的采购合同金额写错了，对方还没有全部签完。"}],
+      "mustContain": ["撤回", "重新发起"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "retest-withdraw-2",
+      "question": "那我还能直接撤回重发吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "history": [{"role":"user","content":"刚发现发出去的采购合同金额写错了，对方还没有全部签完。"}],
+      "mustContain": ["撤回", "重新发起"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "retest-withdraw-3",
+      "question": "那我还能直接撤回重发吗？",
+      "answerable": true,
+      "expectedSourceType": "document",
+      "history": [{"role":"user","content":"刚发现发出去的采购合同金额写错了，对方还没有全部签完。"}],
+      "mustContain": ["撤回", "重新发起"],
+      "expectedNeedsTransfer": false
+    }
+  ]
+}

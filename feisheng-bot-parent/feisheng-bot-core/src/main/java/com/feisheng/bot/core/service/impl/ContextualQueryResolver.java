@@ -17,6 +17,11 @@ public class ContextualQueryResolver {
         "包邮吗", "包不包邮", "有货吗", "现货吗", "多少钱", "多久", "几天能到",
         "怎么弄", "怎么办", "可以吗", "行吗", "能退吗", "支持吗", "还有吗", "然后呢");
     private static final List<String> FOLLOW_UP_PREFIXES = List.of("那", "那么", "然后");
+    private static final Pattern STATE_CONTINUATION_FOLLOW_UP = Pattern.compile(
+        "^(?:(?:现在|目前)?(?:还|也)?(?:能|可以)(?:把)?|"
+            + "(?:号码|手机号|接收人号码|接收方号码)(?:还)?(?:能|可以))"
+            + ".{0,16}(?:改掉|修改|更换|换掉|撤回|重发|重新发起|补充|添加|删除|取消|继续使用|改|换)"
+            + "(?:吗|么|呢|不)?$");
     private static final List<String> BUSINESS_SUBJECTS = List.of(
         "管理员", "企业", "公司", "单位", "机构", "组织", "个人", "员工", "用户", "法人");
     private static final List<String> ACCESS_CHANNELS = List.of(
@@ -41,6 +46,16 @@ public class ContextualQueryResolver {
         "合同", "签名", "签章", "印章", "文件", "数据", "套餐", "会员");
     private static final List<String> ACTIVE_PRODUCT_MARKERS = List.of(
         "点签电子合同", "点签平台", "点签");
+    private static final List<String> CONTEXTUAL_BUSINESS_MARKERS = List.of(
+        "点签", "电子合同", "合同", "签署", "签约", "签名", "签章", "印章", "用印",
+        "认证", "实名", "账号", "账户", "模板", "附件", "发起", "撤回", "审批",
+        "归档", "存证", "证书", "发票", "套餐", "验证码", "管理员", "接收方",
+        "发起方", "签署方", "手机号");
+    private static final List<String> CONTEXT_CARRY_TERMS = List.of(
+        "改", "修改", "更换", "换", "撤回", "重发", "重新发起", "补充", "添加",
+        "删除", "取消", "发起", "上传", "下载", "查看", "查询", "签", "签署",
+        "使用", "操作", "登录", "认证", "续费", "到期", "过期", "附件", "合同",
+        "号码", "手机号", "账号", "账户", "印章", "套餐", "怎么办", "可以吗", "支持吗");
     private static final List<String> OTHER_PRODUCT_MARKERS = List.of(
         "CA锁", "实体锁", "UKey", "U-Key", "安全控件", "守信签", "翔晟电子签章");
     private static final List<String> TOPIC_RESET_MARKERS = List.of(
@@ -54,19 +69,26 @@ public class ContextualQueryResolver {
         String activeProduct = activeProduct(messages, question);
         boolean inheritProduct = activeProduct != null && shouldInheritProduct(question);
         if (!contextDependent && !inheritProduct) {
-            return new Resolution(question, false, null, null, null);
+            return new Resolution(question, false, null, null, null, false);
         }
 
         String previousQuestion = previousUserQuestion(messages, question);
         String switchEntity = switchEntity(question);
-        String resolved = switchEntity == null || previousQuestion == null
-            ? question
-            : rewriteSubject(previousQuestion, switchEntity);
+        boolean previousQuestionMerged = false;
+        String resolved;
+        if (switchEntity != null && previousQuestion != null) {
+            resolved = rewriteSubject(previousQuestion, switchEntity);
+        } else if (contextDependent && shouldMergePreviousQuestion(previousQuestion, question)) {
+            resolved = previousQuestion + " " + question;
+            previousQuestionMerged = true;
+        } else {
+            resolved = question;
+        }
         if (inheritProduct && !containsAny(resolved, ACTIVE_PRODUCT_MARKERS)) {
             resolved = activeProduct + " " + resolved;
         }
         return new Resolution(resolved, true, previousQuestion, switchEntity,
-            inheritProduct ? activeProduct : null);
+            inheritProduct ? activeProduct : null, previousQuestionMerged);
     }
 
     boolean isContextDependent(String question) {
@@ -82,8 +104,20 @@ public class ContextualQueryResolver {
                 && FOLLOW_UP_PREFIXES.stream().anyMatch(normalized::startsWith)) {
             return true;
         }
+        if (normalized.length() <= 32
+                && STATE_CONTINUATION_FOLLOW_UP.matcher(normalized).matches()) {
+            return true;
+        }
         if (switchEntity(normalized) != null) return true;
         return normalized.length() <= 12 && normalized.endsWith("呢");
+    }
+
+    private boolean shouldMergePreviousQuestion(String previousQuestion, String question) {
+        if (previousQuestion == null || previousQuestion.isBlank()) return false;
+        String normalizedQuestion = normalize(question);
+        return normalizedQuestion.length() <= 32
+            && containsAny(previousQuestion, CONTEXTUAL_BUSINESS_MARKERS)
+            && containsAny(normalizedQuestion, CONTEXT_CARRY_TERMS);
     }
 
     private String previousUserQuestion(List<BotMessage> messages, String currentQuestion) {
@@ -198,10 +232,11 @@ public class ContextualQueryResolver {
 
     public record Resolution(String query, boolean contextDependent,
                              String previousQuestion, String switchedEntity,
-                             String inheritedProduct) {
+                             String inheritedProduct, boolean previousQuestionMerged) {
         public boolean rewritten() {
             return (previousQuestion != null && switchedEntity != null)
-                || inheritedProduct != null;
+                || inheritedProduct != null
+                || previousQuestionMerged;
         }
     }
 }

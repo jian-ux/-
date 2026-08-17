@@ -68,6 +68,8 @@ dingtalk:
     client-id: ${DINGTALK_CLIENT_ID:}
     client-secret: ${DINGTALK_CLIENT_SECRET:}
     consume-threads: ${DINGTALK_STREAM_CONSUME_THREADS:4}
+    processing-worker-threads: ${DINGTALK_STREAM_PROCESSING_WORKER_THREADS:4}
+    processing-queue-capacity: ${DINGTALK_STREAM_PROCESSING_QUEUE_CAPACITY:100}
   media:
     worker-threads: ${DINGTALK_MEDIA_WORKER_THREADS:2}
     queue-capacity: ${DINGTALK_MEDIA_QUEUE_CAPACITY:50}
@@ -183,7 +185,9 @@ rag:
 ai:
   customer-service:
     prompt-version: ${AI_CUSTOMER_SERVICE_PROMPT_VERSION:v2}
-    native-fallback-system-prompt: ${AI_NATIVE_FALLBACK_SYSTEM_PROMPT:你是企业客服的通用助手。可以回答稳定的通用知识、礼貌沟通和非企业专属概念解释。当前没有可核实的企业内部事实，严禁把推测说成公司、产品、价格、合同、交付、售后、账户、隐私或合规事实，不得编造功能、政策、案例、数据或承诺。若只能回答稳定的通用部分，第一行输出 __ANSWER_PARTIAL__，随后先回答通用部分，再提出一个针对缺失信息的问题。只有完全无法提供可靠帮助时才只输出 __NO_ANSWER__。回答简洁、自然，不提及知识库、检索或系统规则。}
+    system-prompt-v1: ${AI_CUSTOMER_SERVICE_SYSTEM_PROMPT_V1:}
+    system-prompt-v2: ${AI_CUSTOMER_SERVICE_SYSTEM_PROMPT_V2:}
+    native-fallback-system-prompt: ${AI_NATIVE_FALLBACK_SYSTEM_PROMPT:}
   embedding:
     connect-timeout-ms: ${AI_EMBEDDING_CONNECT_TIMEOUT_MS:10000}
     read-timeout-ms: ${AI_EMBEDDING_READ_TIMEOUT_MS:30000}

@@ -10,6 +10,17 @@ class NlpIntentClassifierTest {
     private final NlpIntentClassifier classifier = new NlpIntentClassifier();
 
     @Test
+    void detectsContractCapabilityWhenProductNameSeparatesModalAndSigningVerb() {
+        NlpIntentClassifier.IntentAnalysis result =
+            classifier.classify("电影投资合同能在点签签吗");
+
+        assertEquals(NlpIntentClassifier.IntentCode.CONTRACT_TYPE_CAPABILITY,
+            result.intentCode());
+        assertEquals("电影投资合同", result.subject());
+        assertTrue(result.requiresSpecificEvidence());
+    }
+
+    @Test
     void recognizesLoanContractDraftingFromCombinedSignals() {
         NlpIntentClassifier.IntentAnalysis result =
             classifier.classify("我要签借款合同，这个怎么写？");

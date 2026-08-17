@@ -41,6 +41,8 @@ dingtalk:
     client-id: ${DINGTALK_CLIENT_ID:}
     client-secret: ${DINGTALK_CLIENT_SECRET:}
     consume-threads: ${DINGTALK_STREAM_CONSUME_THREADS:4}
+    processing-worker-threads: ${DINGTALK_STREAM_PROCESSING_WORKER_THREADS:4}
+    processing-queue-capacity: ${DINGTALK_STREAM_PROCESSING_QUEUE_CAPACITY:100}
   media:
     worker-threads: ${DINGTALK_MEDIA_WORKER_THREADS:2}
     queue-capacity: ${DINGTALK_MEDIA_QUEUE_CAPACITY:50}

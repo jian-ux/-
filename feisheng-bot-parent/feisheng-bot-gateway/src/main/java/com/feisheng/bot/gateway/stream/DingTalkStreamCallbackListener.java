@@ -25,6 +25,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 @Component
@@ -32,8 +33,8 @@ public class DingTalkStreamCallbackListener
         implements OpenDingTalkCallbackListener<ChatbotMessage, Map<String, Object>> {
     private static final Logger log = LoggerFactory.getLogger(DingTalkStreamCallbackListener.class);
     private static final String EMPTY_TEXT_REPLY = "请发送文本内容，我会尽力帮您解答。";
-    private static final String DUPLICATE_REPLY = "消息已处理，无需重复发送。";
     private static final String ERROR_REPLY = "服务暂时不可用，请稍后再试。";
+    private static final String PROCESSING_BUSY_REPLY = "当前咨询较多，请稍后重试。";
     private static final String MEDIA_UNAVAILABLE_REPLY =
         "当前未启用图片或语音识别，请改用文字发送。";
     private static final String MEDIA_BUSY_REPLY =
@@ -42,41 +43,60 @@ public class DingTalkStreamCallbackListener
     private final ChannelServiceImpl channelService;
     private final DingTalkStreamReplySender replySender;
     private final Supplier<DingTalkMediaProcessor> mediaProcessorSupplier;
+    private final Executor processingExecutor;
     private final Executor mediaExecutor;
-    private final ThreadPoolExecutor managedExecutor;
+    private final ThreadPoolExecutor managedProcessingExecutor;
+    private final ThreadPoolExecutor managedMediaExecutor;
 
     @Autowired
     public DingTalkStreamCallbackListener(ChannelServiceImpl channelService,
                                           DingTalkStreamReplySender replySender,
                                           ObjectProvider<DingTalkMediaProcessor> mediaProcessor,
-                                          @Value("${dingtalk.media.worker-threads:2}") int workerThreads,
-                                          @Value("${dingtalk.media.queue-capacity:50}") int queueCapacity) {
+                                          @Value("${dingtalk.stream.processing-worker-threads:4}")
+                                          int processingWorkerThreads,
+                                          @Value("${dingtalk.stream.processing-queue-capacity:100}")
+                                          int processingQueueCapacity,
+                                          @Value("${dingtalk.media.worker-threads:2}")
+                                          int mediaWorkerThreads,
+                                          @Value("${dingtalk.media.queue-capacity:50}")
+                                          int mediaQueueCapacity) {
         this(channelService, replySender,
             (Supplier<DingTalkMediaProcessor>) mediaProcessor::getIfAvailable,
-            createExecutor(workerThreads, queueCapacity));
+            createExecutor(processingWorkerThreads, processingQueueCapacity,
+                "dingtalk-processing"),
+            createExecutor(mediaWorkerThreads, mediaQueueCapacity, "dingtalk-media"));
     }
 
     DingTalkStreamCallbackListener(ChannelServiceImpl channelService,
                                    DingTalkStreamReplySender replySender) {
-        this(channelService, replySender, () -> null, Runnable::run);
+        this(channelService, replySender, () -> null, Runnable::run, Runnable::run);
+    }
+
+    DingTalkStreamCallbackListener(ChannelServiceImpl channelService,
+                                   DingTalkStreamReplySender replySender,
+                                   Executor processingExecutor) {
+        this(channelService, replySender, () -> null, processingExecutor, Runnable::run);
     }
 
     DingTalkStreamCallbackListener(ChannelServiceImpl channelService,
                                    DingTalkStreamReplySender replySender,
                                    DingTalkMediaProcessor mediaProcessor,
                                    Executor mediaExecutor) {
-        this(channelService, replySender, () -> mediaProcessor, mediaExecutor);
+        this(channelService, replySender, () -> mediaProcessor, Runnable::run, mediaExecutor);
     }
 
     private DingTalkStreamCallbackListener(ChannelServiceImpl channelService,
                                            DingTalkStreamReplySender replySender,
                                            Supplier<DingTalkMediaProcessor> mediaProcessorSupplier,
+                                           Executor processingExecutor,
                                            Executor mediaExecutor) {
         this.channelService = channelService;
         this.replySender = replySender;
         this.mediaProcessorSupplier = mediaProcessorSupplier;
+        this.processingExecutor = processingExecutor;
         this.mediaExecutor = mediaExecutor;
-        this.managedExecutor = mediaExecutor instanceof ThreadPoolExecutor pool ? pool : null;
+        this.managedProcessingExecutor = managedExecutor(processingExecutor);
+        this.managedMediaExecutor = managedExecutor(mediaExecutor);
     }
 
     @Override
@@ -121,8 +141,19 @@ public class DingTalkStreamCallbackListener
             return Collections.emptyMap();
         }
 
-        processAndReply(dto, sessionWebhook, null);
+        dispatchText(dto, sessionWebhook);
         return Collections.emptyMap();
+    }
+
+    public boolean dispatchText(ChannelMessageDTO dto, String sessionWebhook) {
+        try {
+            processingExecutor.execute(() -> processAndReply(dto, sessionWebhook, null));
+            return true;
+        } catch (RuntimeException e) {
+            log.warn("DingTalk processing queue rejected text message, msgId={}", dto.getMsgId());
+            replySafely(sessionWebhook, PROCESSING_BUSY_REPLY, dto.getMsgId());
+            return false;
+        }
     }
 
     public boolean dispatchMedia(ChannelMessageDTO dto, DingTalkMediaRequest media,
@@ -152,6 +183,10 @@ public class DingTalkStreamCallbackListener
             Map<String, Object> result = contentSupplier == null
                 ? channelService.processMessage(dto)
                 : channelService.processMessage(dto, contentSupplier);
+            if (isDuplicate(result)) {
+                log.info("DingTalk Stream duplicate delivery ignored, msgId={}", dto.getMsgId());
+                return;
+            }
             sendResult(sessionWebhook, result);
             log.info("DingTalk Stream message processed, msgId={}", dto.getMsgId());
         } catch (DingTalkMediaProcessingException e) {
@@ -166,13 +201,15 @@ public class DingTalkStreamCallbackListener
 
     private void sendResult(String sessionWebhook, Map<String, Object> result) throws Exception {
         String reply = replyFrom(result);
+        String richReply = ReplyAttachmentUtils.richReply(result);
         List<ReplyAttachmentUtils.ImageAttachment> images =
             ReplyAttachmentUtils.publicImages(result);
-        if (images.isEmpty()) {
+        if (images.isEmpty() && richReply.isBlank()) {
             replySender.replyText(sessionWebhook, reply);
         } else {
             replySender.replyMarkdown(sessionWebhook, "智能客服回复",
-                ReplyAttachmentUtils.markdown(reply, images));
+                ReplyAttachmentUtils.markdown(
+                    richReply.isBlank() ? reply : richReply, images));
         }
     }
 
@@ -264,7 +301,11 @@ public class DingTalkStreamCallbackListener
         if (result == null) return ERROR_REPLY;
         Object reply = result.get("reply");
         if (reply != null && !reply.toString().isBlank()) return reply.toString();
-        return Boolean.TRUE.equals(result.get("duplicate")) ? DUPLICATE_REPLY : ERROR_REPLY;
+        return ERROR_REPLY;
+    }
+
+    private static boolean isDuplicate(Map<String, Object> result) {
+        return result != null && Boolean.TRUE.equals(result.get("duplicate"));
     }
 
     private static String value(Object value) {
@@ -282,31 +323,43 @@ public class DingTalkStreamCallbackListener
         return "";
     }
 
-    private static Executor createExecutor(int workerThreads, int queueCapacity) {
+    private static Executor createExecutor(int workerThreads, int queueCapacity,
+                                           String threadNamePrefix) {
         int threads = Math.max(1, workerThreads);
         int capacity = Math.max(1, queueCapacity);
+        AtomicInteger sequence = new AtomicInteger();
         return new ThreadPoolExecutor(
             threads, threads, 0L, TimeUnit.MILLISECONDS,
             new ArrayBlockingQueue<>(capacity),
             runnable -> {
-                Thread thread = new Thread(runnable, "dingtalk-media");
+                Thread thread = new Thread(runnable,
+                    threadNamePrefix + "-" + sequence.incrementAndGet());
                 thread.setDaemon(true);
                 return thread;
             },
             new ThreadPoolExecutor.AbortPolicy());
     }
 
+    private static ThreadPoolExecutor managedExecutor(Executor executor) {
+        return executor instanceof ThreadPoolExecutor pool ? pool : null;
+    }
+
     @PreDestroy
     public void shutdown() {
-        if (managedExecutor == null) return;
-        managedExecutor.shutdown();
+        shutdown(managedProcessingExecutor);
+        shutdown(managedMediaExecutor);
+    }
+
+    private void shutdown(ThreadPoolExecutor executor) {
+        if (executor == null) return;
+        executor.shutdown();
         try {
-            if (!managedExecutor.awaitTermination(15, TimeUnit.SECONDS)) {
-                managedExecutor.shutdownNow();
+            if (!executor.awaitTermination(15, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            managedExecutor.shutdownNow();
+            executor.shutdownNow();
         }
     }
 }

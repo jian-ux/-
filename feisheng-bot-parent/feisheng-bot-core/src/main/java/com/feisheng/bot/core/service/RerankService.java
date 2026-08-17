@@ -11,6 +11,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.HttpStatusCodeException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -53,6 +55,8 @@ public class RerankService {
     @Value("${rag.rerank.max-document-chars:2000}")
     private int maxDocumentChars = 2000;
 
+    private final ThreadLocal<RerankDiagnostics> requestDiagnostics = new ThreadLocal<>();
+
     @Autowired
     public RerankService(AdminClient adminClient) {
         this.adminClient = adminClient;
@@ -78,14 +82,34 @@ public class RerankService {
     }
 
     public boolean isAvailable() {
-        return enabled && resolveConfig() != null;
+        if (!enabled) {
+            requestDiagnostics.set(RerankDiagnostics.notConfigured("disabled"));
+            return false;
+        }
+        RerankConfig config = resolveConfig();
+        if (config == null) {
+            requestDiagnostics.set(RerankDiagnostics.notConfigured("missing_config"));
+            return false;
+        }
+        requestDiagnostics.set(RerankDiagnostics.configured(config.configSource()));
+        return true;
     }
 
     public Map<Integer, Double> rerank(String query, List<String> documents) {
-        if (!enabled || query == null || query.isBlank()
-                || documents == null || documents.isEmpty()) return Collections.emptyMap();
+        long started = System.nanoTime();
+        if (!enabled) {
+            setDiagnostics(RerankDiagnostics.notConfigured("disabled"), started);
+            return Collections.emptyMap();
+        }
+        if (query == null || query.isBlank() || documents == null || documents.isEmpty()) {
+            setDiagnostics(RerankDiagnostics.notConfigured("invalid_input"), started);
+            return Collections.emptyMap();
+        }
         RerankConfig config = resolveConfig();
-        if (config == null) return Collections.emptyMap();
+        if (config == null) {
+            setDiagnostics(RerankDiagnostics.notConfigured("missing_config"), started);
+            return Collections.emptyMap();
+        }
 
         List<String> limited = documents.stream()
             .limit(Math.max(1, maxCandidates))
@@ -105,11 +129,41 @@ public class RerankService {
         try {
             ResponseEntity<Map> response = rest.exchange(config.url(), HttpMethod.POST,
                 new HttpEntity<>(body, headers), Map.class);
-            return parseResults(response.getBody(), limited.size());
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                setDiagnostics(RerankDiagnostics.failed(config.configSource(), true,
+                    "http_" + response.getStatusCode().value(), "fused"), started);
+                return Collections.emptyMap();
+            }
+            Map<Integer, Double> scores = parseResults(response.getBody(), limited.size());
+            if (scores.size() != limited.size()) {
+                setDiagnostics(RerankDiagnostics.failed(config.configSource(), true,
+                    scores.isEmpty() ? "invalid_response" : "partial_response", "fused"),
+                    started);
+                return scores;
+            }
+            setDiagnostics(RerankDiagnostics.applied(config.configSource(), true,
+                "rerank"), started);
+            return scores;
+        } catch (HttpStatusCodeException e) {
+            setDiagnostics(RerankDiagnostics.failed(config.configSource(), true,
+                "http_" + e.getStatusCode().value(), "fused"), started);
+            log.warn("Rerank request failed with HTTP status {}", e.getStatusCode().value());
+            return Collections.emptyMap();
+        } catch (ResourceAccessException e) {
+            setDiagnostics(RerankDiagnostics.failed(config.configSource(), true,
+                "connection_or_timeout", "fused"), started);
+            log.warn("Rerank request was unreachable or timed out");
+            return Collections.emptyMap();
         } catch (Exception e) {
-            log.warn("Rerank request failed; keeping fused retrieval order: {}", e.getMessage());
+            setDiagnostics(RerankDiagnostics.failed(config.configSource(), true,
+                "request_failed", "fused"), started);
+            log.warn("Rerank request failed; keeping fused retrieval order");
             return Collections.emptyMap();
         }
+    }
+
+    public RerankDiagnostics diagnostics() {
+        return requestDiagnostics.get();
     }
 
     private RerankConfig resolveConfig() {
@@ -120,7 +174,8 @@ public class RerankService {
                 String url = resolveRerankUrl(string(model.get("apiUrl")));
                 String name = string(model.get("modelName"));
                 if (!url.isBlank() && !name.isBlank()) {
-                    return new RerankConfig(url, string(model.get("apiKey")), name);
+                    return new RerankConfig(url, string(model.get("apiKey")), name,
+                        "database");
                 }
             }
         } catch (Exception e) {
@@ -128,7 +183,7 @@ public class RerankService {
         }
         String url = resolveRerankUrl(fallbackUrl);
         if (url.isBlank() || fallbackModel == null || fallbackModel.isBlank()) return null;
-        return new RerankConfig(url, fallbackApiKey, fallbackModel);
+        return new RerankConfig(url, fallbackApiKey, fallbackModel, "environment");
     }
 
     @SuppressWarnings("unchecked")
@@ -172,5 +227,63 @@ public class RerankService {
         return value == null ? "" : value.toString();
     }
 
-    private record RerankConfig(String url, String apiKey, String model) {}
+    private void setDiagnostics(RerankDiagnostics diagnostics, long started) {
+        requestDiagnostics.set(diagnostics.withLatencyMs(elapsedMillis(started)));
+    }
+
+    private long elapsedMillis(long started) {
+        return Math.max(0L, (System.nanoTime() - started) / 1_000_000L);
+    }
+
+    private record RerankConfig(String url, String apiKey, String model,
+                                String configSource) {}
+
+    public record RerankDiagnostics(
+            boolean configured, boolean attempted, boolean applied,
+            String failureReason, long latencyMs, String scoreSource,
+            String configSource) {
+        private static RerankDiagnostics notConfigured(String reason) {
+            return new RerankDiagnostics(false, false, false, reason, 0,
+                "none", null);
+        }
+
+        private static RerankDiagnostics configured(String source) {
+            return new RerankDiagnostics(true, false, false, "not_attempted", 0,
+                "fused", source);
+        }
+
+        private static RerankDiagnostics failed(String source, boolean attempted,
+                                                String reason, String scoreSource) {
+            return new RerankDiagnostics(true, attempted, false, reason, 0,
+                scoreSource, source);
+        }
+
+        private static RerankDiagnostics applied(String source, boolean attempted,
+                                                 String scoreSource) {
+            return new RerankDiagnostics(true, attempted, true, null, 0,
+                scoreSource, source);
+        }
+
+        private RerankDiagnostics withLatencyMs(long latency) {
+            return new RerankDiagnostics(configured, attempted, applied, failureReason,
+                latency, scoreSource, configSource);
+        }
+
+        public RerankDiagnostics withFailure(String reason, String source) {
+            return new RerankDiagnostics(configured, attempted, false, reason,
+                latencyMs, source, configSource);
+        }
+
+        public Map<String, Object> asMap() {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("configured", configured);
+            result.put("attempted", attempted);
+            result.put("applied", applied);
+            result.put("failureReason", failureReason);
+            result.put("latencyMs", latencyMs);
+            result.put("scoreSource", scoreSource);
+            result.put("configSource", configSource);
+            return Collections.unmodifiableMap(result);
+        }
+    }
 }

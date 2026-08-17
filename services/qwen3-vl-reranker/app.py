@@ -3,6 +3,7 @@ import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
@@ -25,6 +26,7 @@ INSTRUCTION = os.getenv(
 MAX_CANDIDATES = int(os.getenv("RERANK_MAX_CANDIDATES", "10"))
 MAX_LENGTH = int(os.getenv("RERANK_MAX_LENGTH", "2048"))
 BATCH_SIZE = int(os.getenv("RERANK_BATCH_SIZE", "1"))
+CACHE_MAX_ENTRIES = max(0, int(os.getenv("RERANK_CACHE_MAX_ENTRIES", "256")))
 API_KEY = os.getenv("RERANK_API_KEY", "").strip()
 
 _model: Any = None
@@ -81,6 +83,7 @@ def _load_model() -> None:
         },
     )
     _torch = torch
+    _predict_cached.cache_clear()
     log.info("Reranker ready")
 
 
@@ -98,7 +101,8 @@ def _authorize(authorization: str | None) -> None:
         raise HTTPException(status_code=401, detail="Invalid bearer token")
 
 
-def _predict(query: str, documents: list[str]) -> list[float]:
+@lru_cache(maxsize=CACHE_MAX_ENTRIES)
+def _predict_cached(query: str, documents: tuple[str, ...]) -> tuple[float, ...]:
     pairs = [(query, document) for document in documents]
     scores = _model.predict(
         pairs,
@@ -108,7 +112,14 @@ def _predict(query: str, documents: list[str]) -> list[float]:
         show_progress_bar=False,
         convert_to_numpy=True,
     )
-    return [float(score) for score in scores]
+    return tuple(float(score) for score in scores)
+
+
+def _predict(query: str, documents: list[str]) -> tuple[list[float], bool]:
+    hits_before = _predict_cached.cache_info().hits
+    scores = _predict_cached(query, tuple(documents))
+    cache_hit = _predict_cached.cache_info().hits > hits_before
+    return list(scores), cache_hit
 
 
 @app.get("/health")
@@ -116,11 +127,18 @@ def health() -> dict[str, Any]:
     gpu = None
     if _torch is not None and _torch.cuda.is_available():
         gpu = _torch.cuda.get_device_name(0)
+    cache_info = _predict_cached.cache_info()
     return {
         "status": "ok" if _model is not None else "loading",
         "model": MODEL_ID,
         "device": DEVICE,
         "gpu": gpu,
+        "cache": {
+            "max_entries": CACHE_MAX_ENTRIES,
+            "entries": cache_info.currsize,
+            "hits": cache_info.hits,
+            "misses": cache_info.misses,
+        },
     }
 
 
@@ -139,12 +157,14 @@ async def rerank(
         )
 
     async with _inference_lock:
-        scores = await asyncio.to_thread(_predict, request.query, request.documents)
+        scores, cache_hit = await asyncio.to_thread(
+            _predict, request.query, request.documents)
 
     top_n = min(request.top_n or len(scores), len(scores))
     ranked = sorted(enumerate(scores), key=lambda item: item[1], reverse=True)[:top_n]
     return {
         "model": MODEL_ID,
+        "cache_hit": cache_hit,
         "results": [
             {"index": index, "relevance_score": score}
             for index, score in ranked

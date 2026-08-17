@@ -1,16 +1,35 @@
 package com.feisheng.bot.core.service;
 
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Set;
 
 @Component
 public class CustomerServicePromptProvider {
+    private static final Logger log = LoggerFactory.getLogger(CustomerServicePromptProvider.class);
     public static final String VERSION_V1 = "v1";
     public static final String VERSION_V2 = "v2";
     private static final Set<String> SUPPORTED_VERSIONS = Set.of(VERSION_V1, VERSION_V2);
+
+    private static final String MANDATORY_POLICY = """
+        以下事实与安全边界始终优先于其他回答要求：
+        1. 点签产品能力、功能、入口、价格、套餐、服务承诺、账户状态和操作结果，只能依据本轮明确提供的已审核产品事实或成功的业务工具结果回答。通用法律知识不得用于推导点签产品支持某项能力。
+        2. 通用法律信息必须说明适用条件，不得承诺具体合同当然有效、法院必然采信或争议结果。涉及具体条款、责任、争议或个案判断时，应按既定策略转人工处理。
+        3. 未获得业务工具成功结果时，不得声称已经撤回、发送、修改、签署、盖章、删除、转交或完成其他操作。
+        4. 不得索取或复述密码、短信验证码、私钥、完整证件号码等高敏感凭证；不得协助冒签、盗用印章、伪造身份、篡改或倒签合同。
+        5. 事实互相冲突、已过期、适用范围不明或完全缺失时，不得猜测；应回答可确认部分、提出一个必要澄清问题或按既定策略转人工。
+        6. 只能提供本轮已审核事实或系统配置中明确给出的官方链接和下一步操作，不得自行编造网址、入口或联系方式。
+        """.strip();
 
     private static final String DEFAULT_V1_PROMPT = "你是企业官方客服。请直接、准确、自然地回答客户，只输出结论和必要条件，不展示分析过程。"
         + "必须先锁定客户明确询问的产品、业务或对象，只回答该主体；不得用公司整体介绍替代具体产品或功能问题。"
@@ -49,13 +68,47 @@ public class CustomerServicePromptProvider {
 
     private final String defaultVersion;
     private final String v1Prompt;
+    private final String v2Prompt;
+    private final boolean v1Configured;
+    private final boolean v2Configured;
 
+    @Autowired
     public CustomerServicePromptProvider(
             @Value("${ai.customer-service.prompt-version:v2}") String defaultVersion,
-            @Value("${ai.customer-service.system-prompt-full:}") String configuredV1Prompt) {
+            @Value("${ai.customer-service.system-prompt-v1:}")
+            String configuredV1Prompt,
+            @Value("${ai.customer-service.system-prompt-full:}")
+            String legacyConfiguredV1Prompt,
+            @Value("${ai.customer-service.system-prompt-v2:}") String configuredV2Prompt) {
         this.defaultVersion = normalizeRequiredVersion(defaultVersion);
-        this.v1Prompt = hasText(configuredV1Prompt)
-            ? configuredV1Prompt.trim() : DEFAULT_V1_PROMPT;
+        String resolvedV1Prompt = hasText(configuredV1Prompt)
+            ? configuredV1Prompt : legacyConfiguredV1Prompt;
+        this.v1Configured = hasText(resolvedV1Prompt);
+        this.v2Configured = hasText(configuredV2Prompt);
+        this.v1Prompt = hasText(resolvedV1Prompt)
+            ? resolvedV1Prompt.trim() : DEFAULT_V1_PROMPT;
+        this.v2Prompt = v2Configured
+            ? configuredV2Prompt.trim() : V2_PROMPT;
+    }
+
+    public CustomerServicePromptProvider(String defaultVersion, String configuredV1Prompt) {
+        this(defaultVersion, configuredV1Prompt, null, null);
+    }
+
+    public CustomerServicePromptProvider(
+            String defaultVersion, String configuredV1Prompt, String configuredV2Prompt) {
+        this(defaultVersion, configuredV1Prompt, null, configuredV2Prompt);
+    }
+
+    @PostConstruct
+    void logConfiguration() {
+        log.info("Customer-service prompt configured: defaultVersion={}, "
+                + "v1Source={}, v1Sha256={}, v1Chars={}, "
+                + "v2Source={}, v2Sha256={}, v2Chars={}, policySha256={}",
+            defaultVersion,
+            sourceFor(VERSION_V1), fingerprint(v1Prompt), v1Prompt.length(),
+            sourceFor(VERSION_V2), fingerprint(v2Prompt), v2Prompt.length(),
+            fingerprint(MANDATORY_POLICY));
     }
 
     public String resolveVersion(String requestedVersion) {
@@ -66,9 +119,32 @@ public class CustomerServicePromptProvider {
     public String promptFor(String resolvedVersion) {
         return switch (normalizeRequiredVersion(resolvedVersion)) {
             case VERSION_V1 -> v1Prompt;
-            case VERSION_V2 -> V2_PROMPT;
+            case VERSION_V2 -> v2Prompt;
             default -> throw new IllegalStateException("未处理的 Prompt 版本");
         };
+    }
+
+    public String sourceFor(String resolvedVersion) {
+        String version = normalizeRequiredVersion(resolvedVersion);
+        if (VERSION_V1.equals(version)) {
+            return v1Configured ? "configured_v1" : "built_in_v1";
+        }
+        return v2Configured ? "configured_v2" : "built_in_v2";
+    }
+
+    public String mandatoryPolicy() {
+        return MANDATORY_POLICY;
+    }
+
+    public static String fingerprint(String prompt) {
+        if (!hasText(prompt)) return null;
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                .digest(prompt.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available", e);
+        }
     }
 
     public static boolean isSupported(String version) {

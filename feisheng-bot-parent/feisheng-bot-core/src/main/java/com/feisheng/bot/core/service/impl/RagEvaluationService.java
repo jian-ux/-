@@ -1,16 +1,23 @@
 package com.feisheng.bot.core.service.impl;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 
 @Service
 public class RagEvaluationService {
     private final RagRetrievalService retrievalService;
+
+    @Value("${rag.retrieval.pipeline-version:rag-v1}")
+    private String pipelineVersion = "rag-v1";
 
     public RagEvaluationService(RagRetrievalService retrievalService) {
         this.retrievalService = retrievalService;
@@ -20,6 +27,7 @@ public class RagEvaluationService {
         if (request == null || request.cases() == null || request.cases().isEmpty()) {
             throw new IllegalArgumentException("评测样本不能为空");
         }
+        validateQualityGate(request.qualityGate());
 
         int decisionCorrect = 0;
         int answerableTotal = 0;
@@ -35,6 +43,7 @@ public class RagEvaluationService {
         int sourceHitAtOne = 0;
         double reciprocalRankTotal = 0;
         List<CaseResult> results = new ArrayList<>();
+        Map<String, Object> pipelineConfiguration = new LinkedHashMap<>();
 
         for (int i = 0; i < request.cases().size(); i++) {
             EvaluationCase sample = request.cases().get(i);
@@ -44,7 +53,8 @@ public class RagEvaluationService {
                 ? retrievalService.retrieve(sample.question(), conversationContext, null, false)
                 : retrievalService.retrieve(sample.question(), false);
             boolean expectedAnswerable = Boolean.TRUE.equals(sample.answerable());
-            boolean correct = retrieval.answerable() == expectedAnswerable;
+            boolean correct = retrieval.answerable() == expectedAnswerable
+                && decisionMatches(sample.expectedDecision(), retrieval);
             if (correct) decisionCorrect++;
             if (retrieval.answerable()) {
                 actualAnswered++;
@@ -77,10 +87,17 @@ public class RagEvaluationService {
                 }
             }
 
+            capturePipelineConfiguration(pipelineConfiguration,
+                retrieval.decisionDiagnostics());
+
             results.add(new CaseResult(
                 firstNonBlank(sample.id(), "case-" + (i + 1)),
                 sample.question(), expectedAnswerable, retrieval.answerable(),
                 correct, retrieval.decision(), retrieval.confidence(),
+                Objects.toString(
+                    retrieval.decisionDiagnostics().get("reasonCode"), ""),
+                retrieval.decisionDiagnostics(),
+                rejectionSummary(retrieval.candidates()),
                 sample.expectedSourceType(), sample.expectedSourceId(),
                 expectsCitation ? citationMatched : null, sourceRank,
                 retrieval.citations(), retrieval.candidates(),
@@ -88,17 +105,37 @@ public class RagEvaluationService {
         }
 
         int total = request.cases().size();
+        double decisionAccuracy = ratio(decisionCorrect, total);
+        double answerRecall = ratio(answered, answerableTotal);
+        double noAnswerRecall = ratio(abstained, unanswerableTotal);
+        double citationHitRate = ratio(citationHit, citationExpected);
+        double answerPrecision = ratio(correctAnswered, actualAnswered);
+        double noAnswerPrecision = ratio(correctAbstained, actualAbstained);
+        double sourceHitAtOneRate = ratio(sourceHitAtOne, citationExpected);
+        double meanReciprocalRank = citationExpected == 0
+            ? 0 : round(reciprocalRankTotal / citationExpected);
+        QualityGateResult qualityGate = evaluateQualityGate(request.qualityGate(), Map.of(
+            "decisionAccuracy", decisionAccuracy,
+            "answerRecall", answerRecall,
+            "noAnswerRecall", noAnswerRecall,
+            "citationHitRate", citationHitRate,
+            "answerPrecision", answerPrecision,
+            "noAnswerPrecision", noAnswerPrecision,
+            "sourceHitAtOneRate", sourceHitAtOneRate,
+            "meanReciprocalRank", meanReciprocalRank));
         return new EvaluationReport(
             firstNonBlank(request.name(), "rag-evaluation"),
-            Instant.now().toString(), total, decisionCorrect,
-            ratio(decisionCorrect, total), answerableTotal, answered,
-            ratio(answered, answerableTotal), unanswerableTotal, abstained,
-            ratio(abstained, unanswerableTotal), citationExpected, citationHit,
-            ratio(citationHit, citationExpected), actualAnswered, correctAnswered,
-            ratio(correctAnswered, actualAnswered), actualAbstained, correctAbstained,
-            ratio(correctAbstained, actualAbstained), sourceHitAtOne,
-            ratio(sourceHitAtOne, citationExpected),
-            citationExpected == 0 ? 0 : round(reciprocalRankTotal / citationExpected),
+            UUID.randomUUID().toString(),
+            firstNonBlank(request.datasetVersion(), "unversioned"),
+            firstNonBlank(pipelineVersion, "rag-v1"), Instant.now().toString(),
+            Collections.unmodifiableMap(new LinkedHashMap<>(pipelineConfiguration)),
+            total, decisionCorrect, decisionAccuracy, answerableTotal, answered,
+            answerRecall, unanswerableTotal, abstained, noAnswerRecall,
+            citationExpected, citationHit, citationHitRate,
+            actualAnswered, correctAnswered, answerPrecision,
+            actualAbstained, correctAbstained, noAnswerPrecision, sourceHitAtOne,
+            sourceHitAtOneRate, meanReciprocalRank,
+            qualityGate.passed(), qualityGate,
             List.copyOf(results));
     }
 
@@ -111,6 +148,94 @@ public class RagEvaluationService {
                 if (turn == null || !hasText(turn.content())) {
                     throw new IllegalArgumentException("第 " + (index + 1) + " 条样本包含空历史消息");
                 }
+            }
+        }
+    }
+
+    private boolean decisionMatches(String expectedDecision,
+                                    RagRetrievalService.RetrievalResult retrieval) {
+        if (!hasText(expectedDecision)) return true;
+        if ("ANSWER".equalsIgnoreCase(expectedDecision)) return retrieval.answerable();
+        if ("NO_ANSWER".equalsIgnoreCase(expectedDecision)
+                || "NO_KNOWLEDGE".equalsIgnoreCase(expectedDecision)) {
+            return !retrieval.answerable();
+        }
+        return expectedDecision.equalsIgnoreCase(retrieval.decision());
+    }
+
+    private void capturePipelineConfiguration(Map<String, Object> configuration,
+                                              Map<String, Object> diagnostics) {
+        if (diagnostics == null) return;
+        Object thresholds = diagnostics.get("thresholds");
+        if (!(thresholds instanceof Map<?, ?> values)) return;
+        Map<String, Object> merged = new LinkedHashMap<>();
+        Object current = configuration.get("thresholds");
+        if (current instanceof Map<?, ?> existing) {
+            existing.forEach((key, value) -> merged.put(Objects.toString(key), value));
+        }
+        values.forEach((key, value) -> merged.put(Objects.toString(key), value));
+        configuration.put("thresholds", Collections.unmodifiableMap(merged));
+    }
+
+    private Map<String, Integer> rejectionSummary(List<Map<String, Object>> candidates) {
+        Map<String, Integer> summary = new LinkedHashMap<>();
+        if (candidates == null) return summary;
+        for (Map<String, Object> candidate : candidates) {
+            Object rawReasons = candidate.get("rejectionReasons");
+            if (!(rawReasons instanceof List<?> reasons)) continue;
+            for (Object reason : reasons) {
+                String value = Objects.toString(reason, "");
+                if (!value.isBlank()) summary.merge(value, 1, Integer::sum);
+            }
+        }
+        return Collections.unmodifiableMap(summary);
+    }
+
+    private QualityGateResult evaluateQualityGate(QualityGate gate,
+                                                   Map<String, Double> metrics) {
+        if (gate == null) {
+            return new QualityGateResult(false, true, Collections.emptyList());
+        }
+        validateQualityGate(gate);
+        List<QualityGateCheck> checks = new ArrayList<>();
+        addMinimum(checks, "decisionAccuracy", metrics, gate.minDecisionAccuracy());
+        addMinimum(checks, "answerRecall", metrics, gate.minAnswerRecall());
+        addMinimum(checks, "noAnswerRecall", metrics, gate.minNoAnswerRecall());
+        addMinimum(checks, "citationHitRate", metrics, gate.minCitationHitRate());
+        addMinimum(checks, "answerPrecision", metrics, gate.minAnswerPrecision());
+        addMinimum(checks, "noAnswerPrecision", metrics, gate.minNoAnswerPrecision());
+        addMinimum(checks, "sourceHitAtOneRate", metrics,
+            gate.minSourceHitAtOneRate());
+        addMinimum(checks, "meanReciprocalRank", metrics,
+            gate.minMeanReciprocalRank());
+        boolean passed = checks.stream().allMatch(QualityGateCheck::passed);
+        return new QualityGateResult(!checks.isEmpty(), passed, List.copyOf(checks));
+    }
+
+    private void addMinimum(List<QualityGateCheck> checks, String metric,
+                            Map<String, Double> metrics, Double minimum) {
+        if (minimum == null) return;
+        double actual = metrics.getOrDefault(metric, 0.0);
+        checks.add(new QualityGateCheck(metric, actual, ">=", minimum,
+            actual + 0.0000001 >= minimum));
+    }
+
+    private void validateQualityGate(QualityGate gate) {
+        if (gate == null) return;
+        Map<String, Double> values = new LinkedHashMap<>();
+        values.put("minDecisionAccuracy", gate.minDecisionAccuracy());
+        values.put("minAnswerRecall", gate.minAnswerRecall());
+        values.put("minNoAnswerRecall", gate.minNoAnswerRecall());
+        values.put("minCitationHitRate", gate.minCitationHitRate());
+        values.put("minAnswerPrecision", gate.minAnswerPrecision());
+        values.put("minNoAnswerPrecision", gate.minNoAnswerPrecision());
+        values.put("minSourceHitAtOneRate", gate.minSourceHitAtOneRate());
+        values.put("minMeanReciprocalRank", gate.minMeanReciprocalRank());
+        for (Map.Entry<String, Double> value : values.entrySet()) {
+            if (value.getValue() != null
+                    && (value.getValue() < 0 || value.getValue() > 1)) {
+                throw new IllegalArgumentException(
+                    value.getKey() + " 必须在 0 到 1 之间");
             }
         }
     }
@@ -178,15 +303,29 @@ public class RagEvaluationService {
         return "";
     }
 
-    public record EvaluationRequest(String name, List<EvaluationCase> cases) {}
+    public record EvaluationRequest(String name, String datasetVersion,
+                                    QualityGate qualityGate,
+                                    List<EvaluationCase> cases) {
+        public EvaluationRequest(String name, List<EvaluationCase> cases) {
+            this(name, null, null, cases);
+        }
+    }
 
     public record EvaluationCase(String id, String question, Boolean answerable,
                                  String expectedSourceType, Long expectedSourceId,
-                                 List<EvaluationTurn> history) {
+                                 List<EvaluationTurn> history,
+                                 String expectedDecision) {
         public EvaluationCase(String id, String question, Boolean answerable,
                               String expectedSourceType, Long expectedSourceId) {
             this(id, question, answerable, expectedSourceType, expectedSourceId,
-                java.util.Collections.emptyList());
+                java.util.Collections.emptyList(), null);
+        }
+
+        public EvaluationCase(String id, String question, Boolean answerable,
+                              String expectedSourceType, Long expectedSourceId,
+                              List<EvaluationTurn> history) {
+            this(id, question, answerable, expectedSourceType, expectedSourceId,
+                history, null);
         }
     }
 
@@ -195,13 +334,36 @@ public class RagEvaluationService {
     public record CaseResult(String id, String question,
                              boolean expectedAnswerable, boolean actualAnswerable,
                              boolean decisionCorrect, String decision, double confidence,
+                              String decisionReasonCode,
+                              Map<String, Object> decisionDiagnostics,
+                              Map<String, Integer> rejectionSummary,
                               String expectedSourceType, Long expectedSourceId,
                               Boolean citationMatched, Integer sourceRank,
                               List<Map<String, Object>> citations,
                               List<Map<String, Object>> candidates,
                               List<Map<String, Object>> structuredUnitDiagnostics) {}
 
-    public record EvaluationReport(String name, String evaluatedAt,
+    public record QualityGate(
+        Double minDecisionAccuracy,
+        Double minAnswerRecall,
+        Double minNoAnswerRecall,
+        Double minCitationHitRate,
+        Double minAnswerPrecision,
+        Double minNoAnswerPrecision,
+        Double minSourceHitAtOneRate,
+        Double minMeanReciprocalRank) {}
+
+    public record QualityGateCheck(String metric, double actual,
+                                   String operator, double required,
+                                   boolean passed) {}
+
+    public record QualityGateResult(boolean configured, boolean passed,
+                                    List<QualityGateCheck> checks) {}
+
+    public record EvaluationReport(String name, String runId,
+                                   String datasetVersion, String pipelineVersion,
+                                   String evaluatedAt,
+                                   Map<String, Object> pipelineConfiguration,
                                    int total, int decisionCorrect, double decisionAccuracy,
                                    int answerableTotal, int answered, double answerRecall,
                                    int unanswerableTotal, int abstained, double noAnswerRecall,
@@ -210,5 +372,7 @@ public class RagEvaluationService {
                                    int actualAbstained, int correctAbstained, double noAnswerPrecision,
                                    int sourceHitAtOne, double sourceHitAtOneRate,
                                    double meanReciprocalRank,
+                                   boolean releaseGatePassed,
+                                   QualityGateResult qualityGate,
                                    List<CaseResult> cases) {}
 }

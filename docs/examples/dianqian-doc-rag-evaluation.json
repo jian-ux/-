@@ -1,5 +1,16 @@
 {
   "name": "dianqian-document-retrieval-20260807",
+  "datasetVersion": "dianqian-document-retrieval-v1",
+  "qualityGate": {
+    "minDecisionAccuracy": 0.95,
+    "minAnswerRecall": 0.90,
+    "minNoAnswerRecall": 0.90,
+    "minCitationHitRate": 0.95,
+    "minAnswerPrecision": 0.95,
+    "minNoAnswerPrecision": 0.90,
+    "minSourceHitAtOneRate": 0.85,
+    "minMeanReciprocalRank": 0.90
+  },
   "cases": [
     {"id":"normal-01-product","question":"点签是做什么的？","answerable":true,"expectedSourceType":"document"},
     {"id":"normal-02-platforms","question":"点签可以在哪里使用？","answerable":true,"expectedSourceType":"document"},

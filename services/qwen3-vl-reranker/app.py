@@ -21,7 +21,9 @@ DEVICE = os.getenv("RERANK_DEVICE", "cuda")
 DTYPE = os.getenv("RERANK_DTYPE", "bfloat16")
 INSTRUCTION = os.getenv(
     "RERANK_INSTRUCTION",
-    "Given a customer service question, retrieve passages that contain accurate information needed to answer it.",
+    "Given a customer service question, retrieve passages containing facts needed to answer it. "
+    "Treat passages that correct, limit, or contradict an assumption in the question as relevant "
+    "evidence, even when they do not affirm the assumption.",
 )
 MAX_CANDIDATES = int(os.getenv("RERANK_MAX_CANDIDATES", "10"))
 MAX_LENGTH = int(os.getenv("RERANK_MAX_LENGTH", "2048"))

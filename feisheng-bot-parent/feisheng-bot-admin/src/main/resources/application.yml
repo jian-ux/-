@@ -99,6 +99,7 @@ rag:
     max-retrieval-history-chars: ${RAG_CONTEXT_MAX_RETRIEVAL_HISTORY_CHARS:1200}
     max-prompt-tokens: ${RAG_CONTEXT_MAX_PROMPT_TOKENS:4000}
   retrieval:
+    pipeline-version: ${RAG_PIPELINE_VERSION:rag-corrective-evidence-v2}
     top-k: ${RAG_TOP_K:3}
     candidate-k: ${RAG_CANDIDATE_K:10}
     direct-threshold: ${RAG_DIRECT_THRESHOLD:0.82}
@@ -142,6 +143,10 @@ rag:
     exact-min-score: ${RAG_STRUCTURED_QA_EXACT_MIN_SCORE:0.82}
     rerank-min-score: ${RAG_STRUCTURED_QA_RERANK_MIN_SCORE:0.65}
     rerank-min-gap: ${RAG_STRUCTURED_QA_RERANK_MIN_GAP:0.08}
+    answer-fallback:
+      enabled: ${RAG_STRUCTURED_QA_ANSWER_FALLBACK_ENABLED:true}
+      lexical-min-score: ${RAG_STRUCTURED_QA_ANSWER_FALLBACK_LEXICAL_MIN_SCORE:0.98}
+      confidence: ${RAG_STRUCTURED_QA_ANSWER_FALLBACK_CONFIDENCE:0.65}
   no-answer:
     reply: ${RAG_NO_ANSWER_REPLY:这个问题我暂时无法准确确认。请补充具体的产品、功能或使用场景，我会继续为您核实。}
     transfer: ${RAG_NO_ANSWER_TRANSFER:false}

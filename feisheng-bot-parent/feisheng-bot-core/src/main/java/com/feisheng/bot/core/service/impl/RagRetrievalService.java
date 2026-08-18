@@ -133,6 +133,15 @@ public class RagRetrievalService {
     @Value("${rag.structured-qa.rerank-min-gap:0.08}")
     private double structuredQaRerankMinGap = 0.08;
 
+    @Value("${rag.structured-qa.answer-fallback.enabled:true}")
+    private boolean structuredQaAnswerFallbackEnabled = true;
+
+    @Value("${rag.structured-qa.answer-fallback.lexical-min-score:0.98}")
+    private double structuredQaAnswerFallbackLexicalMinScore = 0.98;
+
+    @Value("${rag.structured-qa.answer-fallback.confidence:0.65}")
+    private double structuredQaAnswerFallbackConfidence = 0.65;
+
     @Value("${rag.rerank.confidence.high-min-score:0.90}")
     private double rerankHighMinScore = 0.90;
 
@@ -393,14 +402,20 @@ public class RagRetrievalService {
             ? Collections.emptyList()
             : selectAcceptedCandidates(candidates, query, rerankConfidence.applied());
         selected = ensureRequestedFactCoverage(query, candidates, selected);
+        if (selected.isEmpty()) {
+            selected = selectReviewedStructuredAnswerFallback(
+                query, candidates, rerankConfidence);
+        }
         selected = promoteFocusedStructuredQa(query, candidates, selected);
         selected = isolateFocusedStructuredQa(query, selected);
         double topCombinedScore = selected.isEmpty()
             ? candidates.stream().mapToDouble(candidate -> number(candidate.get("combinedScore")))
                 .max().orElse(0)
             : acceptedConfidence(selected.get(0));
-        double confidence = rerankConfidence.applied()
-            ? rerankConfidence.topScore() : topCombinedScore;
+        boolean structuredAnswerFallback = hasStructuredAnswerFallback(selected);
+        double confidence = structuredAnswerFallback
+            ? acceptedConfidence(selected.get(0))
+            : rerankConfidence.applied() ? rerankConfidence.topScore() : topCombinedScore;
 
         boolean answerable = !selected.isEmpty();
         boolean contextFree = isBlank(conversationContext) && isBlank(modalityContext);
@@ -426,6 +441,8 @@ public class RagRetrievalService {
         }
         List<Map<String, Object>> accepted = direct
             ? List.of(selected.get(0)) : expandAdjacentChunks(selected);
+        annotateCandidateDecisions(candidates, selected, accepted, rerankConfidence,
+            direct);
         List<Map<String, Object>> citations = buildCitations(accepted);
         String context = answerable ? buildContext(accepted, citations) : null;
         String directAnswer = directFaq ? firstNonBlank(
@@ -436,13 +453,17 @@ public class RagRetrievalService {
             : qaDirect.direct() ? "structured_qa_direct"
             : tableDirect != null ? "structured_table_direct"
             : answerable ? "rag" : "no_answer";
+        Map<String, Object> decisionDiagnostics = buildDecisionDiagnostics(
+            decision, direct, confidence, candidates, selected, accepted,
+            rerankConfidence);
 
         return new RetrievalResult(answerable, direct, directAnswer, context,
             round(confidence), decision, semanticAvailable,
             List.copyOf(citations), candidatesWithDiagnostics(
                 candidates, structuredUnitRecall.diagnostics()),
             rerankDiagnostics.asMap(), timings.snapshot(
-                rerankDiagnostics.latencyMs(), candidates.size()));
+                rerankDiagnostics.latencyMs(), candidates.size()),
+            decisionDiagnostics);
     }
 
     /**
@@ -833,6 +854,69 @@ public class RagRetrievalService {
     }
 
     /**
+     * A contradiction-style question can make a reranker reject the very passage
+     * needed to correct it. Recover only one approved structured answer whose
+     * exact lexical hit covers every concrete value stated by the customer.
+     */
+    private List<Map<String, Object>> selectReviewedStructuredAnswerFallback(
+            String query, List<Map<String, Object>> candidates,
+            RerankConfidenceDecision rerankConfidence) {
+        if (!structuredQaAnswerFallbackEnabled || isCompositeQuestion(query)
+                || candidates == null || candidates.isEmpty()
+                || !rerankConfidence.applied()
+                || rerankConfidence.tier() != RerankConfidenceTier.LOW) {
+            return Collections.emptyList();
+        }
+        List<EvidenceAnswerTypeMatcher.Requirement> requirements =
+            EvidenceAnswerTypeMatcher.requirements(query);
+        if (requirements.isEmpty()) return Collections.emptyList();
+
+        Map<String, Map<String, Object>> eligibleByGroup = new LinkedHashMap<>();
+        for (Map<String, Object> candidate : candidates) {
+            if (!eligibleReviewedStructuredAnswerFallback(candidate, query, requirements)) {
+                continue;
+            }
+            String group = firstNonBlank(string(candidate.get("qaGroupKey")),
+                string(candidate.get("qaKey")));
+            eligibleByGroup.putIfAbsent(group, candidate);
+        }
+        if (eligibleByGroup.size() != 1) return Collections.emptyList();
+
+        Map<String, Object> accepted = eligibleByGroup.values().iterator().next();
+        accepted.put("structuredAnswerFallbackAccepted", true);
+        accepted.put("structuredAnswerFallbackReason",
+            "exact_requested_fact_in_reviewed_answer");
+        accepted.put("structuredAnswerFallbackConfidence",
+            round(structuredQaAnswerFallbackConfidence));
+        accepted.put("structuredAnswerFallbackRequirements", requirements.stream()
+            .map(requirement -> requirement.name().toLowerCase(Locale.ROOT)).toList());
+        return List.of(accepted);
+    }
+
+    private boolean eligibleReviewedStructuredAnswerFallback(
+            Map<String, Object> candidate, String query,
+            List<EvidenceAnswerTypeMatcher.Requirement> requirements) {
+        if (!isStructuredQaCandidate(candidate) || !hasCompleteStructuredAnswer(candidate)
+                || Boolean.TRUE.equals(candidate.get("topicMismatch"))
+                || Boolean.TRUE.equals(candidate.get("qaConflict"))
+                || !Boolean.TRUE.equals(candidate.get("reranked"))
+                || number(candidate.get("lexicalScore"))
+                    < structuredQaAnswerFallbackLexicalMinScore
+                || string(candidate.get("qaKey")).isBlank()
+                || number(candidate.get("qaVersion")) < 1) {
+            return false;
+        }
+        String evidence = candidateEvidenceText(candidate);
+        return requirements.stream().allMatch(requirement ->
+            EvidenceAnswerTypeMatcher.coversConcreteFacts(requirement, query, evidence));
+    }
+
+    private boolean hasStructuredAnswerFallback(List<Map<String, Object>> selected) {
+        return selected != null && selected.stream().anyMatch(candidate ->
+            Boolean.TRUE.equals(candidate.get("structuredAnswerFallbackAccepted")));
+    }
+
+    /**
      * Ranking must not let generic snippets crowd an already recalled concrete price,
      * quantity, or duration fact out of the model context. The candidate still has to
      * pass the normal topic, conflict, and retrieval-confidence checks.
@@ -1010,6 +1094,9 @@ public class RagRetrievalService {
     }
 
     private double acceptedConfidence(Map<String, Object> candidate) {
+        if (Boolean.TRUE.equals(candidate.get("structuredAnswerFallbackAccepted"))) {
+            return number(candidate.get("structuredAnswerFallbackConfidence"));
+        }
         if (Boolean.TRUE.equals(candidate.get("sparseFallbackAccepted"))) {
             return number(candidate.get("sparseFallbackConfidence"));
         }
@@ -1317,6 +1404,14 @@ public class RagRetrievalService {
             copy.put("sparseFallbackQuestionSimilarity",
                 candidate.get("sparseFallbackQuestionSimilarity"));
             copy.put("sparseFallbackConfidence", candidate.get("sparseFallbackConfidence"));
+            copy.put("structuredAnswerFallbackAccepted",
+                candidate.get("structuredAnswerFallbackAccepted"));
+            copy.put("structuredAnswerFallbackReason",
+                candidate.get("structuredAnswerFallbackReason"));
+            copy.put("structuredAnswerFallbackConfidence",
+                candidate.get("structuredAnswerFallbackConfidence"));
+            copy.put("structuredAnswerFallbackRequirements",
+                candidate.get("structuredAnswerFallbackRequirements"));
             copy.put("matchMode", candidate.get("matchMode"));
             copy.put("exactMatch", candidate.get("exactMatch"));
             copy.put("topicMismatch", candidate.get("topicMismatch"));
@@ -1361,9 +1456,160 @@ public class RagRetrievalService {
             copy.put("focusedStructuredQaRerankGap",
                 candidate.get("focusedStructuredQaRerankGap"));
             copy.put("score", candidate.get("combinedScore"));
+            copy.put("finalRank", candidate.get("finalRank"));
+            copy.put("selectedForAnswer", candidate.get("selectedForAnswer"));
+            copy.put("includedInContext", candidate.get("includedInContext"));
+            copy.put("selectionStatus", candidate.get("selectionStatus"));
+            copy.put("selectionReason", candidate.get("selectionReason"));
+            copy.put("rejectionReasons", candidate.get("rejectionReasons"));
             result.add(copy);
         }
         return List.copyOf(result);
+    }
+
+    private void annotateCandidateDecisions(
+            List<Map<String, Object>> candidates,
+            List<Map<String, Object>> selected,
+            List<Map<String, Object>> accepted,
+            RerankConfidenceDecision rerankConfidence,
+            boolean direct) {
+        Set<String> selectedIdentities = candidateIdentities(selected);
+        Set<String> contextIdentities = candidateIdentities(accepted);
+        Set<String> selectedStructuredGroups = new HashSet<>();
+        for (Map<String, Object> candidate : selected) {
+            String group = firstNonBlank(string(candidate.get("qaGroupKey")),
+                string(candidate.get("qaKey")));
+            if (!group.isBlank()) selectedStructuredGroups.add(group);
+        }
+
+        for (int index = 0; index < candidates.size(); index++) {
+            Map<String, Object> candidate = candidates.get(index);
+            String identity = candidateIdentity(candidate);
+            boolean selectedForAnswer = selectedIdentities.contains(identity);
+            boolean includedInContext = contextIdentities.contains(identity);
+            candidate.put("finalRank", index + 1);
+            candidate.put("selectedForAnswer", selectedForAnswer);
+            candidate.put("includedInContext", includedInContext);
+
+            if (selectedForAnswer) {
+                String reason = Boolean.TRUE.equals(candidate.get("sparseFallbackAccepted"))
+                    ? "sparse_fallback"
+                    : Boolean.TRUE.equals(candidate.get("structuredAnswerFallbackAccepted"))
+                    ? "reviewed_structured_answer_fallback"
+                    : Boolean.TRUE.equals(candidate.get("answerTypeCoveragePromoted"))
+                    ? "requested_fact_coverage"
+                    : Boolean.TRUE.equals(candidate.get("focusedStructuredQaPromoted"))
+                    ? "focused_question_alignment"
+                    : direct && index == 0 ? "direct_answer"
+                    : "top_k_evidence";
+                candidate.put("selectionStatus", "selected");
+                candidate.put("selectionReason", reason);
+                candidate.put("rejectionReasons", Collections.emptyList());
+                continue;
+            }
+
+            List<String> reasons = rejectionReasons(candidate, rerankConfidence,
+                selectedStructuredGroups);
+            candidate.put("selectionStatus", includedInContext
+                ? "context_only" : "rejected");
+            candidate.put("selectionReason", includedInContext
+                ? "adjacent_context" : null);
+            candidate.put("rejectionReasons", List.copyOf(reasons));
+        }
+    }
+
+    private Set<String> candidateIdentities(List<Map<String, Object>> candidates) {
+        Set<String> identities = new HashSet<>();
+        if (candidates == null) return identities;
+        for (Map<String, Object> candidate : candidates) {
+            identities.add(candidateIdentity(candidate));
+        }
+        return identities;
+    }
+
+    private List<String> rejectionReasons(
+            Map<String, Object> candidate,
+            RerankConfidenceDecision rerankConfidence,
+            Set<String> selectedStructuredGroups) {
+        List<String> reasons = new ArrayList<>();
+        if (rerankConfidence.applied()
+                && rerankConfidence.tier() == RerankConfidenceTier.LOW) {
+            reasons.add("rerank_low_confidence");
+        } else if (rerankConfidence.applied()) {
+            if (!Boolean.TRUE.equals(candidate.get("reranked"))) {
+                reasons.add("rerank_not_scored");
+            } else if (number(candidate.get("rerankScore")) < rerankMediumMinScore) {
+                reasons.add("rerank_score_below_threshold");
+            }
+        } else if (!isReviewedExactStructuredQa(candidate)
+                && !Boolean.TRUE.equals(candidate.get("sparseFallbackAccepted"))
+                && number(candidate.get("combinedScore")) < contextThreshold) {
+            reasons.add("retrieval_score_below_threshold");
+        }
+
+        if (Boolean.TRUE.equals(candidate.get("topicMismatch"))) {
+            reasons.add("topic_mismatch");
+        }
+        String group = firstNonBlank(string(candidate.get("qaGroupKey")),
+            string(candidate.get("qaKey")));
+        if (!group.isBlank() && selectedStructuredGroups.contains(group)) {
+            reasons.add("duplicate_structured_qa_group");
+        }
+        if (reasons.isEmpty()) reasons.add("outside_context_limit");
+        return reasons;
+    }
+
+    private Map<String, Object> buildDecisionDiagnostics(
+            String decision, boolean direct, double confidence,
+            List<Map<String, Object>> candidates,
+            List<Map<String, Object>> selected,
+            List<Map<String, Object>> accepted,
+            RerankConfidenceDecision rerankConfidence) {
+        Map<String, Object> thresholds = new LinkedHashMap<>();
+        thresholds.put("direct", round(directThreshold));
+        thresholds.put("context", round(contextThreshold));
+        thresholds.put("rerankHighScore", round(rerankHighMinScore));
+        thresholds.put("rerankHighGap", round(rerankHighMinGap));
+        thresholds.put("rerankMediumScore", round(rerankMediumMinScore));
+        thresholds.put("rerankMediumGap", round(rerankMediumMinGap));
+        thresholds.put("structuredAnswerFallbackLexical",
+            round(structuredQaAnswerFallbackLexicalMinScore));
+
+        Map<String, Object> diagnostics = new LinkedHashMap<>();
+        diagnostics.put("reasonCode", decisionReasonCode(
+            decision, direct, candidates, selected, rerankConfidence));
+        diagnostics.put("confidence", round(confidence));
+        diagnostics.put("confidenceSource", hasStructuredAnswerFallback(selected)
+            ? "reviewed_structured_answer_fallback"
+            : rerankConfidence.applied() ? "rerank" : "fused_retrieval");
+        diagnostics.put("rerankConfidenceTier", rerankConfidence.tier() == null
+            ? null : rerankConfidence.tier().name());
+        diagnostics.put("rerankTopScore", round6(rerankConfidence.topScore()));
+        diagnostics.put("candidateCount", candidates.size());
+        diagnostics.put("selectedCount", selected.size());
+        diagnostics.put("contextCandidateCount", accepted.size());
+        diagnostics.put("thresholds", Collections.unmodifiableMap(thresholds));
+        return Collections.unmodifiableMap(diagnostics);
+    }
+
+    private String decisionReasonCode(String decision, boolean direct,
+                                      List<Map<String, Object>> candidates,
+                                      List<Map<String, Object>> selected,
+                                      RerankConfidenceDecision rerankConfidence) {
+        if (direct) return "DIRECT_EVIDENCE";
+        if (hasStructuredAnswerFallback(selected)) {
+            return "STRUCTURED_ANSWER_FACT_FALLBACK";
+        }
+        if (!"no_answer".equals(decision)) {
+            return rerankConfidence.applied()
+                ? "RERANK_EVIDENCE_ACCEPTED" : "FUSED_EVIDENCE_ACCEPTED";
+        }
+        if (candidates.isEmpty()) return "NO_CANDIDATES";
+        if (rerankConfidence.applied()
+                && rerankConfidence.tier() == RerankConfidenceTier.LOW) {
+            return "RERANK_LOW_CONFIDENCE";
+        }
+        return "NO_CANDIDATE_ABOVE_THRESHOLD";
     }
 
     private List<Map<String, Object>> candidatesWithDiagnostics(
@@ -1388,12 +1634,27 @@ public class RagRetrievalService {
         candidate.put("keywordScore", round(keywordScore));
         candidate.put("combinedScore", round(keywordScore));
         candidate.put("matchMode", "keyword");
+        candidate.put("finalRank", 1);
+        candidate.put("selectedForAnswer", true);
+        candidate.put("includedInContext", true);
+        candidate.put("selectionStatus", "selected");
+        candidate.put("selectionReason", "direct_answer");
+        candidate.put("rejectionReasons", Collections.emptyList());
 
         List<Map<String, Object>> accepted = List.of(candidate);
         List<Map<String, Object>> citations = buildCitations(accepted);
+        Map<String, Object> diagnostics = new LinkedHashMap<>();
+        diagnostics.put("reasonCode", "DIRECT_KEYWORD_MATCH");
+        diagnostics.put("confidence", round(keywordScore));
+        diagnostics.put("confidenceSource", "keyword");
+        diagnostics.put("candidateCount", 1);
+        diagnostics.put("selectedCount", 1);
+        diagnostics.put("contextCandidateCount", 1);
+        diagnostics.put("thresholds", Map.of("direct", round(directThreshold)));
         return new RetrievalResult(true, true, string(keywordMatch.get("answer")),
             buildContext(accepted, citations), round(keywordScore), "direct", false,
-            List.copyOf(citations), copyCandidates(accepted));
+            List.copyOf(citations), copyCandidates(accepted),
+            defaultRerankDiagnostics(), defaultStageLatencies(), diagnostics);
     }
 
     private void mergeRankedMatches(List<Map<String, Object>> candidates,
@@ -1864,7 +2125,8 @@ public class RagRetrievalService {
                                   List<Map<String, Object>> citations,
                                   List<Map<String, Object>> candidates,
                                   Map<String, Object> rerankDiagnostics,
-                                  Map<String, Object> stageLatencies) {
+                                  Map<String, Object> stageLatencies,
+                                  Map<String, Object> decisionDiagnostics) {
         public RetrievalResult {
             rerankDiagnostics = rerankDiagnostics == null
                 ? defaultRerankDiagnostics()
@@ -1872,6 +2134,9 @@ public class RagRetrievalService {
             stageLatencies = stageLatencies == null
                 ? defaultStageLatencies()
                 : Collections.unmodifiableMap(new LinkedHashMap<>(stageLatencies));
+            decisionDiagnostics = decisionDiagnostics == null
+                ? basicDecisionDiagnostics(answerable, directAnswer, confidence, decision)
+                : Collections.unmodifiableMap(new LinkedHashMap<>(decisionDiagnostics));
         }
 
         public RetrievalResult(boolean answerable, boolean directAnswer,
@@ -1882,7 +2147,7 @@ public class RagRetrievalService {
                                List<Map<String, Object>> candidates) {
             this(answerable, directAnswer, directAnswerText, context, confidence, decision,
                 semanticAvailable, citations, candidates, defaultRerankDiagnostics(),
-                defaultStageLatencies());
+                defaultStageLatencies(), null);
         }
 
         public RetrievalResult(boolean answerable, boolean directAnswer,
@@ -1894,13 +2159,26 @@ public class RagRetrievalService {
                                Map<String, Object> rerankDiagnostics) {
             this(answerable, directAnswer, directAnswerText, context, confidence, decision,
                 semanticAvailable, citations, candidates, rerankDiagnostics,
-                defaultStageLatencies());
+                defaultStageLatencies(), null);
+        }
+
+        public RetrievalResult(boolean answerable, boolean directAnswer,
+                               String directAnswerText, String context,
+                               double confidence, String decision,
+                               boolean semanticAvailable,
+                               List<Map<String, Object>> citations,
+                               List<Map<String, Object>> candidates,
+                               Map<String, Object> rerankDiagnostics,
+                               Map<String, Object> stageLatencies) {
+            this(answerable, directAnswer, directAnswerText, context, confidence, decision,
+                semanticAvailable, citations, candidates, rerankDiagnostics,
+                stageLatencies, null);
         }
 
         public RetrievalResult withStageLatencies(Map<String, Object> timings) {
             return new RetrievalResult(answerable, directAnswer, directAnswerText, context,
                 confidence, decision, semanticAvailable, citations, candidates,
-                rerankDiagnostics, timings);
+                rerankDiagnostics, timings, decisionDiagnostics);
         }
 
         public String rerankConfidenceTier() {
@@ -1945,6 +2223,17 @@ public class RagRetrievalService {
         timings.put("embeddingCacheMisses", 0);
         timings.put("candidateCount", 0);
         return Collections.unmodifiableMap(timings);
+    }
+
+    private static Map<String, Object> basicDecisionDiagnostics(
+            boolean answerable, boolean directAnswer, double confidence,
+            String decision) {
+        Map<String, Object> diagnostics = new LinkedHashMap<>();
+        diagnostics.put("reasonCode", directAnswer ? "DIRECT_EVIDENCE"
+            : answerable ? "EVIDENCE_ACCEPTED" : "NO_EVIDENCE");
+        diagnostics.put("confidence", round(confidence));
+        diagnostics.put("decision", decision);
+        return Collections.unmodifiableMap(diagnostics);
     }
 
     private record StructuredUnitRecall(List<Map<String, Object>> evidenceCandidates,

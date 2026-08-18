@@ -17,6 +17,8 @@ class EvidenceAnswerTypeMatcherTest {
             EvidenceAnswerTypeMatcher.requirements("套餐有效期多久？"));
         assertEquals(List.of(EvidenceAnswerTypeMatcher.Requirement.QUANTITY),
             EvidenceAnswerTypeMatcher.requirements("一次最多能签多少份？"));
+        assertEquals(List.of(EvidenceAnswerTypeMatcher.Requirement.DURATION),
+            EvidenceAnswerTypeMatcher.requirements("是不是保证所有问题一小时内解决？"));
 
         assertTrue(EvidenceAnswerTypeMatcher.matches(
             EvidenceAnswerTypeMatcher.Requirement.PRICE, "专业版1999元"));
@@ -33,6 +35,15 @@ class EvidenceAnswerTypeMatcherTest {
             > EvidenceAnswerTypeMatcher.specificity(
                 EvidenceAnswerTypeMatcher.Requirement.PRICE,
                 "新用户可免费试用，单份低至5元"));
+        assertTrue(EvidenceAnswerTypeMatcher.coversConcreteFacts(
+            EvidenceAnswerTypeMatcher.Requirement.DURATION,
+            "是不是保证所有问题一小时内解决？", "远程问题1小时内响应"));
+        assertTrue(EvidenceAnswerTypeMatcher.coversConcreteFacts(
+            EvidenceAnswerTypeMatcher.Requirement.DURATION,
+            "十二小时内能上门吗？", "预约后可在12小时内上门协助"));
+        assertFalse(EvidenceAnswerTypeMatcher.coversConcreteFacts(
+            EvidenceAnswerTypeMatcher.Requirement.DURATION,
+            "是不是三小时内解决？", "远程问题1小时内响应"));
     }
 
     @Test

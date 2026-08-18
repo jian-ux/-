@@ -1222,6 +1222,88 @@ class RagRetrievalServiceTest {
     }
 
     @Test
+    void recoversUniqueReviewedAnswerFactWhenRerankRejectsContradictionEvidence() {
+        String query = "你们是不是保证所有问题一小时内解决？";
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(false);
+        Map<String, Object> evidence = structuredQa(91L, 50L,
+            "飞晟科技作为翔晟子公司，在海南有哪些本地化服务优势？",
+            "远程问题1小时内响应，不等于1小时内解决。", 1.0, false, false);
+        evidence.put("lexicalScore", 1.0);
+        evidence.put("matchMode", "lexical");
+        when(knowledgeClient.lexicalMatch(anyString(), eq(10), eq(0.72)))
+            .thenAnswer(invocation -> "1小时内响应".equals(invocation.getArgument(0))
+                ? List.of(evidence) : Collections.emptyList());
+        when(rerankService.isAvailable()).thenReturn(true);
+        when(rerankService.rerank(eq(query), anyList())).thenReturn(Map.of(0, 0.04));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertTrue(result.answerable());
+        assertFalse(result.directAnswer());
+        assertEquals("rag", result.decision());
+        assertEquals(0.65, result.confidence());
+        assertEquals("STRUCTURED_ANSWER_FACT_FALLBACK",
+            result.decisionDiagnostics().get("reasonCode"));
+        assertEquals("reviewed_structured_answer_fallback",
+            result.decisionDiagnostics().get("confidenceSource"));
+        assertEquals(true, result.candidates().get(0)
+            .get("structuredAnswerFallbackAccepted"));
+        assertEquals("reviewed_structured_answer_fallback",
+            result.candidates().get(0).get("selectionReason"));
+        assertTrue(result.context().contains("远程问题1小时内响应"));
+    }
+
+    @Test
+    void keepsNoAnswerWhenReviewedAnswerFactFallbackIsAmbiguous() {
+        String query = "你们是不是保证所有问题一小时内解决？";
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(false);
+        Map<String, Object> first = structuredQa(91L, 50L, "本地化服务优势",
+            "远程问题1小时内响应。", 1.0, false, false);
+        Map<String, Object> second = structuredQa(92L, 51L, "技术支持承诺",
+            "所有问题1小时内解决。", 1.0, false, false);
+        for (Map<String, Object> candidate : List.of(first, second)) {
+            candidate.put("lexicalScore", 1.0);
+            candidate.put("matchMode", "lexical");
+        }
+        when(knowledgeClient.lexicalMatch(anyString(), eq(10), eq(0.72)))
+            .thenAnswer(invocation -> "1小时内响应".equals(invocation.getArgument(0))
+                ? List.of(first, second) : Collections.emptyList());
+        when(rerankService.isAvailable()).thenReturn(true);
+        when(rerankService.rerank(eq(query), anyList()))
+            .thenReturn(Map.of(0, 0.04, 1, 0.03));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertFalse(result.answerable());
+        assertEquals("RERANK_LOW_CONFIDENCE",
+            result.decisionDiagnostics().get("reasonCode"));
+    }
+
+    @Test
+    void keepsNoAnswerWhenReviewedAnswerDoesNotCoverRequestedConcreteFact() {
+        String query = "你们是不是保证所有问题三小时内解决？";
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(false);
+        Map<String, Object> evidence = structuredQa(91L, 50L, "本地化服务优势",
+            "远程问题1小时内响应。", 1.0, false, false);
+        evidence.put("lexicalScore", 1.0);
+        evidence.put("matchMode", "lexical");
+        when(knowledgeClient.lexicalMatch(anyString(), eq(10), eq(0.72)))
+            .thenAnswer(invocation -> "响应".equals(invocation.getArgument(0))
+                ? List.of(evidence) : Collections.emptyList());
+        when(rerankService.isAvailable()).thenReturn(true);
+        when(rerankService.rerank(eq(query), anyList())).thenReturn(Map.of(0, 0.04));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertFalse(result.answerable());
+        assertEquals("RERANK_LOW_CONFIDENCE",
+            result.decisionDiagnostics().get("reasonCode"));
+    }
+
+    @Test
     void exactLexicalAliasBeatsGenericMultiChannelMatches() {
         String query = "远程问题多久响应？";
         ReflectionTestUtils.setField(service, "bm25Enabled", true);
@@ -1734,6 +1816,56 @@ class RagRetrievalServiceTest {
         assertTrue(result.context().contains("[2] 支付故障手册"));
         assertTrue(result.context().contains("批次编号 [2024]"));
         assertTrue(result.context().contains("请依据 [1] 回答"));
+    }
+
+    @Test
+    void explainsWhyCandidatesWereSelectedOrRejected() {
+        String query = "年假有几天";
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(
+                chunk(201L, 31L, "年假制度", 0.82),
+                chunk(202L, 32L, "办公制度", 0.40)));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertTrue(result.answerable());
+        assertEquals("FUSED_EVIDENCE_ACCEPTED",
+            result.decisionDiagnostics().get("reasonCode"));
+        assertEquals(1, result.candidates().get(0).get("finalRank"));
+        assertEquals(true, result.candidates().get(0).get("selectedForAnswer"));
+        assertEquals("requested_fact_coverage",
+            result.candidates().get(0).get("selectionReason"));
+        assertEquals(false, result.candidates().get(1).get("selectedForAnswer"));
+        assertTrue(((List<?>) result.candidates().get(1).get("rejectionReasons"))
+            .contains("retrieval_score_below_threshold"));
+    }
+
+    @Test
+    void explainsNoAnswerCausedByAmbiguousRerankScores() {
+        String query = "怎么使用企业认证";
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(
+                chunk(211L, 41L, "企业认证", 0.86),
+                chunk(212L, 42L, "企业账号", 0.82)));
+        when(rerankService.isAvailable()).thenReturn(true);
+        when(rerankService.rerank(eq(query), anyList()))
+            .thenReturn(Map.of(0, 0.70, 1, 0.69));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertFalse(result.answerable());
+        assertEquals("RERANK_LOW_CONFIDENCE",
+            result.decisionDiagnostics().get("reasonCode"));
+        assertEquals("LOW",
+            result.decisionDiagnostics().get("rerankConfidenceTier"));
+        assertTrue(((List<?>) result.candidates().get(0).get("rejectionReasons"))
+            .contains("rerank_low_confidence"));
     }
 
     private Map<String, Object> chunk(Long chunkId, Long documentId, String title, double score) {

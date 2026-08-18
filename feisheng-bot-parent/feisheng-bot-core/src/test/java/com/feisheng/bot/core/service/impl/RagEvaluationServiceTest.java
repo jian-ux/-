@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -117,5 +119,46 @@ class RagEvaluationServiceTest {
         assertEquals(List.of(diagnostic),
             report.cases().get(0).structuredUnitDiagnostics());
         assertEquals(1.0, report.sourceHitAtOneRate());
+    }
+
+    @Test
+    void versionsEvaluationAndFailsConfiguredQualityGate() {
+        RagRetrievalService retrieval = mock(RagRetrievalService.class);
+        when(retrieval.retrieve("企业认证怎么办", false)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                false, false, null, null, 0.4, "no_answer", true,
+                Collections.emptyList(), List.of(Map.of(
+                    "rejectionReasons", List.of("retrieval_score_below_threshold")))));
+        RagEvaluationService service = new RagEvaluationService(retrieval);
+        RagEvaluationService.QualityGate gate = new RagEvaluationService.QualityGate(
+            0.95, 0.90, null, null, null, null, null, null);
+
+        RagEvaluationService.EvaluationReport report = service.evaluate(
+            new RagEvaluationService.EvaluationRequest(
+                "release", "customer-service-v3", gate,
+                List.of(new RagEvaluationService.EvaluationCase(
+                    "known", "企业认证怎么办", true, null, null,
+                    Collections.emptyList(), "ANSWER"))));
+
+        assertEquals("customer-service-v3", report.datasetVersion());
+        assertEquals("rag-v1", report.pipelineVersion());
+        assertFalse(report.releaseGatePassed());
+        assertEquals(2, report.qualityGate().checks().size());
+        assertEquals(Map.of("retrieval_score_below_threshold", 1),
+            report.cases().get(0).rejectionSummary());
+    }
+
+    @Test
+    void rejectsQualityGateThresholdOutsideRatioRange() {
+        RagEvaluationService service = new RagEvaluationService(
+            mock(RagRetrievalService.class));
+        RagEvaluationService.QualityGate invalid = new RagEvaluationService.QualityGate(
+            1.01, null, null, null, null, null, null, null);
+
+        assertThrows(IllegalArgumentException.class, () -> service.evaluate(
+            new RagEvaluationService.EvaluationRequest(
+                "invalid", "v1", invalid,
+                List.of(new RagEvaluationService.EvaluationCase(
+                    "case", "问题", true, null, null)))));
     }
 }

@@ -1963,6 +1963,7 @@ public class DialogServiceImpl {
         details.put("decision", retrieval.decision());
         details.put("semanticAvailable", retrieval.semanticAvailable());
         details.put("rerankDiagnostics", retrieval.rerankDiagnostics());
+        details.put("decisionDiagnostics", retrieval.decisionDiagnostics());
         details.put("stageLatencies", retrieval.stageLatencies());
         details.put("candidates", redactMaps(retrieval.candidates(), redactedTypes));
         return details;

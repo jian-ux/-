@@ -98,7 +98,7 @@ class DialogServiceImplTest {
             new NlpIntentClassifier(),
             new SensitiveDataService("18689633999"),
             handoffCoordinator, new EmotionService(), replyAttachmentService,
-            new ContextualQueryResolver(), new ObjectMapper());
+            new ContextualQueryResolver(new ObjectMapper()), new ObjectMapper());
         ReflectionTestUtils.setField(dialogService, "noAnswerReply", SCOPE_FALLBACK_REPLY);
         ReflectionTestUtils.setField(dialogService, "outOfScopeReply", PARENT_COMPANY_REPLY);
         ReflectionTestUtils.setField(dialogService, "unrelatedReply", SCOPE_FALLBACK_REPLY);
@@ -1147,6 +1147,42 @@ class DialogServiceImplTest {
         verify(retrievalService, never()).retrieve(anyString());
         verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
         verify(handoffCoordinator, never()).handoff(any(), anyString(), anyString());
+    }
+
+    @Test
+    void doesNotUseAnnualVolumeQualificationForSpecificMembershipPriceQuestion() {
+        String question = "点签的会员价是多少钱？";
+        when(retrievalService.retrieve(question)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                false, false, null, null, 0.3, "no_answer", true,
+                Collections.emptyList(), Collections.emptyList()));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "user-membership-price", question, "咨询");
+
+        verify(retrievalService).retrieve(question);
+        assertFalse("price_qualification".equals(result.get("source")));
+        assertFalse("请问贵公司一年的签署量大约在多少呢？".equals(result.get("reply")));
+    }
+
+    @Test
+    void leavesAnnualVolumeQualificationWhenUserChangesTopic() {
+        String question = "因信息问题产生的损失，由谁承担？";
+        when(messageService.getByConversation(10L)).thenReturn(List.of(
+            message("user", "点签电子合同怎么收费？"),
+            message("ai", "请问贵公司一年的签署量大约在多少呢？"),
+            message("user", question)));
+        when(retrievalService.retrieve(question)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                false, false, null, null, 0.3, "no_answer", true,
+                Collections.emptyList(), Collections.emptyList()));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "user-new-topic-after-price", question, "咨询");
+
+        verify(retrievalService).retrieve(question);
+        assertFalse("price_qualification".equals(result.get("source")));
+        assertFalse("请问贵公司一年的签署量大约在多少呢？".equals(result.get("reply")));
     }
 
     @Test
@@ -2203,6 +2239,43 @@ class DialogServiceImplTest {
     }
 
     @Test
+    void resolvesLegacyContractTypeAnswerBeforeIntentClassification() {
+        String question = "二手房买卖合同";
+        String canonicalQuery = "点签 是否支持签署 二手房买卖合同";
+        when(messageService.getByConversation(10L)).thenReturn(List.of(
+            message("user", "您们平台可以签房屋买卖合同吗？"),
+            message("ai", "点签平台支持电子合同签署。"
+                + "请问您要签署的是商品房买卖合同还是二手房买卖合同？"),
+            message("user", question)));
+        when(retrievalService.retrieve(
+                eq(canonicalQuery), isNull(), isNull(),
+                eq(KNOWLEDGE_RETRIEVAL_FILTERS), anyList(), eq(true)))
+            .thenReturn(new RagRetrievalService.RetrievalResult(
+                true, true, "可以使用点签签署二手房买卖合同。",
+                "点签支持二手房买卖合同电子签署。", 0.91,
+                "structured_qa_direct", true,
+                Collections.emptyList(), Collections.emptyList()));
+        when(aiModelService.chatWithModel(anyString(), anyString(), isNull()))
+            .thenReturn(new ChatResponse(
+                "可以使用点签签署二手房买卖合同。", true,
+                "test-model", "test", 30, 12));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "property-contract-follow-up", question, "合同咨询");
+
+        assertEquals(canonicalQuery, result.get("contextResolvedQuery"));
+        assertEquals(canonicalQuery, result.get("retrievalQuery"));
+        assertEquals(true, result.get("queryContextDependent"));
+        assertEquals(true, result.get("contextResolutionApplied"));
+        assertEquals(true, result.get("clarificationStateConsumed"));
+        assertEquals("legacy", result.get("clarificationResolutionSource"));
+        assertEquals("CONTRACT_TYPE_CAPABILITY",
+            ((Map<?, ?>) result.get("nlpIntent")).get("intentCode"));
+        assertEquals(List.of(canonicalQuery, question), result.get("retrievalVariants"));
+        assertEquals("rag_ai", result.get("source"));
+    }
+
+    @Test
     void rewritesEnterpriseFollowUpBeforeRetrievalAndKeepsContractTopic() {
         when(messageService.getByConversation(10L)).thenReturn(List.of(
             message("user", "我要怎么签合同"),
@@ -2388,6 +2461,62 @@ class DialogServiceImplTest {
         assertEquals("退款", ((Map<?, ?>) result.get("intent")).get("matchedKeyword"));
         verify(retrievalService, never()).retrieve(anyString());
         verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
+    void recordsContractTypeClarificationAndPreventsRedundantPrompting() throws Exception {
+        String question = "你们平台可以签房屋买卖合同吗？";
+        when(retrievalService.retrieve(
+                eq(question), isNull(), isNull(), eq(KNOWLEDGE_RETRIEVAL_FILTERS),
+                anyList(), eq(true)))
+            .thenReturn(new RagRetrievalService.RetrievalResult(
+                true, false, null,
+                "点签电子合同签署流程符合电子签名法要求。", 0.8,
+                "partial_rag", true, Collections.emptyList(), Collections.emptyList()));
+        when(aiModelService.chatWithModel(anyString(), anyString(), isNull()))
+            .thenReturn(new ChatResponse(
+                "__ANSWER_PARTIAL__\n点签支持电子合同签署。"
+                    + "请问您要签署的是商品房买卖合同还是二手房买卖合同？",
+                true, "test-model", "test", 30, 20));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "property-contract-clarification", question, "合同咨询");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> pending = (Map<String, Object>) result.get("pendingClarification");
+        assertEquals("CONTRACT_TYPE_CAPABILITY", pending.get("intentCode"));
+        assertEquals("contractType", pending.get("missingSlot"));
+        assertEquals(1, pending.get("expiresAfterTurns"));
+
+        ArgumentCaptor<String> systemPrompt = ArgumentCaptor.forClass(String.class);
+        verify(aiModelService).chatWithModel(anyString(), systemPrompt.capture(), isNull());
+        assertTrue(systemPrompt.getValue().contains("当前不缺合同类型"));
+        assertTrue(systemPrompt.getValue().contains("不得再追问商品房、二手房"));
+
+        ArgumentCaptor<BotMessage> savedMessages = ArgumentCaptor.forClass(BotMessage.class);
+        verify(messageService, times(2)).save(savedMessages.capture());
+        BotMessage savedAi = savedMessages.getAllValues().stream()
+            .filter(message -> "ai".equals(message.getRole()))
+            .findFirst().orElseThrow();
+        assertEquals("contractType", new ObjectMapper().readTree(savedAi.getMetadata())
+            .path("pendingClarification").path("missingSlot").asText());
+    }
+
+    @Test
+    void doesNotLetBroadIntentOverrideContextualFollowUp() {
+        String question = "怎么登录？";
+        when(messageService.getByConversation(10L)).thenReturn(List.of(
+            message("user", "我想了解点签电子合同的企业认证流程"),
+            message("ai", "企业需要先完成认证。"),
+            message("user", question)));
+        lenient().when(intentService.match(question)).thenReturn(Optional.of(
+            new IntentService.IntentMatch(8L, "登录咨询", "登录", "固定登录回复")));
+        Map<String, Object> result = dialogService.send(
+            "web", "contextual-login", question, "咨询");
+
+        assertEquals("no_answer", result.get("source"));
+        verify(intentService, never()).match(question);
+        assertEquals("点签电子合同 " + question, result.get("retrievalQuery"));
     }
 
     @Test

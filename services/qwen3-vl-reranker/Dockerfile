@@ -5,13 +5,14 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/models/huggingface \
     SENTENCE_TRANSFORMERS_HOME=/models/huggingface \
     HF_HUB_DISABLE_SYMLINKS_WARNING=1 \
+    HF_HUB_DISABLE_XET=1 \
     TORCH_HOME=/models/torch
 
 WORKDIR /app
 
 COPY requirements.txt ./
-RUN python -m pip install --upgrade pip \
-    && python -m pip install -r requirements.txt
+RUN python -m pip install --break-system-packages --upgrade pip \
+    && python -m pip install --break-system-packages -r requirements.txt
 
 COPY app.py ./
 

@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -49,6 +50,36 @@ class IntentServiceTest {
             intent(3L, "API咨询", "OpenAPI", "请查看接口文档", 1)));
 
         assertEquals("OpenAPI", service.match("openapi 怎么接入").orElseThrow().keyword());
+    }
+
+    @Test
+    void doesNotLetShortBroadKeywordInterceptSubstantiveQuestion() {
+        BotIntentMapper mapper = mock(BotIntentMapper.class);
+        IntentService service = new IntentService(mapper);
+        when(mapper.selectList(any(Wrapper.class))).thenReturn(List.of(
+            intent(4L, "合同咨询", "合同", "合同固定回复", 1)));
+
+        assertTrue(service.match("合同怎么修改？").isEmpty());
+    }
+
+    @Test
+    void keepsShortKeywordForExplicitCommand() {
+        BotIntentMapper mapper = mock(BotIntentMapper.class);
+        IntentService service = new IntentService(mapper);
+        when(mapper.selectList(any(Wrapper.class))).thenReturn(List.of(
+            intent(5L, "退款咨询", "退款", "请提供订单号", 1)));
+
+        assertFalse(service.match("我要申请退款").isEmpty());
+    }
+
+    @Test
+    void doesNotTreatQuestionEndingWithBroadKeywordAsACommand() {
+        BotIntentMapper mapper = mock(BotIntentMapper.class);
+        IntentService service = new IntentService(mapper);
+        when(mapper.selectList(any(Wrapper.class))).thenReturn(List.of(
+            intent(6L, "登录咨询", "登录", "固定登录回复", 1)));
+
+        assertTrue(service.match("怎么登录").isEmpty());
     }
 
     private BotIntent intent(Long id, String name, String keywords, String reply, int status) {

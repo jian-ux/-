@@ -1,6 +1,7 @@
 package com.feisheng.bot.core.service.impl;
 
 import com.feisheng.bot.core.entity.BotMessage;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -12,7 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ContextualQueryResolverTest {
-    private final ContextualQueryResolver resolver = new ContextualQueryResolver();
+    private final ContextualQueryResolver resolver =
+        new ContextualQueryResolver(new ObjectMapper());
 
     @Test
     void carriesContractTopicWhenSubjectChangesToEnterprise() {
@@ -97,6 +99,28 @@ class ContextualQueryResolverTest {
     }
 
     @Test
+    void recognizesSubjectlessLoginAsAContextualOperationalQuestion() {
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", "点签电子合同怎么使用？"),
+            message("ai", "可以通过网页端使用。"),
+            message("user", "怎么登录？")), "怎么登录？");
+
+        assertTrue(result.contextDependent());
+        assertTrue(result.rewritten());
+        assertEquals("点签电子合同 怎么登录？", result.query());
+    }
+
+    @Test
+    void doesNotInventContextForSubjectlessOperationWithoutActiveProduct() {
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", "之前的问题已经结束了")), "怎么登录？");
+
+        assertFalse(result.contextDependent());
+        assertFalse(result.rewritten());
+        assertEquals("怎么登录？", result.query());
+    }
+
+    @Test
     void inheritsPointSignWhenIntroductionReplyUsesOnlyTheProductCategory() {
         ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
             message("user", "你们是做什么的？"),
@@ -141,6 +165,20 @@ class ContextualQueryResolverTest {
 
         assertTrue(result.contextDependent());
         assertEquals("合同双方都已经签署完成了。", result.previousQuestion());
+    }
+
+    @Test
+    void skipsShortFollowUpsAndRetainsTheLatestSubjectSwitch() {
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", "我要怎么签合同"),
+            message("ai", "可以手写签名或使用电子签名。"),
+            message("user", "企业的呢？"),
+            message("ai", "企业可以完成认证后签署。"),
+            message("user", "具体先做哪一步？")), "具体先做哪一步？");
+
+        assertTrue(result.contextDependent());
+        assertTrue(result.previousQuestionMerged());
+        assertEquals("企业怎么签合同 具体先做哪一步？", result.query());
     }
 
     @Test
@@ -276,6 +314,57 @@ class ContextualQueryResolverTest {
         assertFalse(result.contextDependent());
         assertFalse(result.rewritten());
         assertEquals(currentQuestion, result.query());
+    }
+
+    @Test
+    void consumesStructuredContractTypeClarification() {
+        String question = "二手房买卖合同";
+        BotMessage clarification = message("ai",
+            "请问您要签署的是商品房买卖合同还是二手房买卖合同？");
+        clarification.setMetadata("""
+            {"pendingClarification":{"intentCode":"CONTRACT_TYPE_CAPABILITY",
+            "missingSlot":"contractType","queryTemplate":"点签 是否支持签署 {contractType}",
+            "expiresAfterTurns":1}}
+            """);
+
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", "你们平台可以签房屋买卖合同吗？"),
+            clarification,
+            message("user", question)), question);
+
+        assertTrue(result.contextDependent());
+        assertTrue(result.rewritten());
+        assertTrue(result.clarificationResolved());
+        assertEquals("metadata", result.clarificationSource());
+        assertEquals("点签 是否支持签署 二手房买卖合同", result.query());
+    }
+
+    @Test
+    void recoversLegacyContractTypeClarificationWithoutMetadata() {
+        String question = "二手房买卖合同";
+
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", "您们平台可以签房屋买卖合同吗？"),
+            message("ai", "请问您要签署的是商品房买卖合同还是二手房买卖合同？"),
+            message("user", question)), question);
+
+        assertTrue(result.clarificationResolved());
+        assertEquals("legacy", result.clarificationSource());
+        assertEquals("点签 是否支持签署 二手房买卖合同", result.query());
+    }
+
+    @Test
+    void doesNotTreatContractNameAsClarificationAfterAnUnrelatedQuestion() {
+        String question = "劳动合同";
+
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", "合同怎么下载？"),
+            message("ai", "请问您要处理哪种合同？"),
+            message("user", question)), question);
+
+        assertFalse(result.contextDependent());
+        assertFalse(result.rewritten());
+        assertEquals(question, result.query());
     }
 
     private BotMessage message(String role, String content) {

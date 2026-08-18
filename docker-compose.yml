@@ -78,7 +78,6 @@
       start_period: 10s
 
   reranker:
-    profiles: ["reranker"]
     build:
       context: ./services/qwen3-vl-reranker
     container_name: feisheng-reranker
@@ -90,16 +89,18 @@
       HF_HOME: /models/huggingface
       SENTENCE_TRANSFORMERS_HOME: /models/huggingface
       HF_HUB_DISABLE_SYMLINKS_WARNING: "1"
+      HF_HUB_DISABLE_XET: "1"
       HF_TOKEN: ${HF_TOKEN:-}
       TORCH_HOME: /models/torch
-      RERANK_API_KEY: ${RERANK_API_KEY:?RERANK_API_KEY is required when the reranker profile is enabled}
-      RERANK_MODEL: ${RERANK_MODEL:-Qwen/Qwen3-VL-Reranker-2B}
+      RERANK_API_KEY: ${RERANK_API_KEY:?RERANK_API_KEY is required}
+      RERANK_MODEL: ${RERANK_MODEL:-Qwen/Qwen3-Reranker-0.6B}
       RERANK_DEVICE: cuda
       RERANK_DTYPE: bfloat16
       RERANK_MAX_CANDIDATES: ${RAG_RERANK_MAX_CANDIDATES:-10}
       RERANK_MAX_LENGTH: ${RERANK_MAX_LENGTH:-2048}
       RERANK_BATCH_SIZE: ${RERANK_BATCH_SIZE:-1}
       RERANK_CACHE_MAX_ENTRIES: ${RERANK_CACHE_MAX_ENTRIES:-256}
+      RERANK_SCORE_TEMPERATURE: ${RERANK_SCORE_TEMPERATURE:-1.0}
     volumes:
       - reranker_model_cache:/models
     restart: unless-stopped
@@ -126,6 +127,8 @@
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      reranker:
+        condition: service_started
     environment:
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
@@ -234,9 +237,9 @@
       KNOWLEDGE_STRUCTURED_EXTRACTION_MODEL_READ_TIMEOUT_MS: ${KNOWLEDGE_STRUCTURED_EXTRACTION_MODEL_READ_TIMEOUT_MS:-240000}
       KNOWLEDGE_STRUCTURED_EXTRACTION_MODEL_MAX_RETRIES: ${KNOWLEDGE_STRUCTURED_EXTRACTION_MODEL_MAX_RETRIES:-0}
       RAG_RERANK_ENABLED: ${RAG_RERANK_ENABLED:-false}
-      RAG_RERANK_URL: ${RAG_RERANK_URL:-http://reranker:8091/rerank}
+      RAG_RERANK_URL: http://reranker:8091/rerank
       RAG_RERANK_API_KEY: ${RAG_RERANK_API_KEY:-}
-      RAG_RERANK_MODEL: ${RAG_RERANK_MODEL:-Qwen/Qwen3-VL-Reranker-2B}
+      RAG_RERANK_MODEL: ${RAG_RERANK_MODEL:-Qwen/Qwen3-Reranker-0.6B}
       RAG_RERANK_CONNECT_TIMEOUT_MS: ${RAG_RERANK_CONNECT_TIMEOUT_MS:-1000}
       RAG_RERANK_READ_TIMEOUT_MS: ${RAG_RERANK_READ_TIMEOUT_MS:-15000}
       RAG_RERANK_MAX_CANDIDATES: ${RAG_RERANK_MAX_CANDIDATES:-10}

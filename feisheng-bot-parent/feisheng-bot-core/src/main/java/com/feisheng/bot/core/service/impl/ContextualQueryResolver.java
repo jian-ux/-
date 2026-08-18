@@ -1,6 +1,8 @@
 package com.feisheng.bot.core.service.impl;
 
 import com.feisheng.bot.core.entity.BotMessage;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -10,6 +12,8 @@ import java.util.regex.Pattern;
 /** Resolves short follow-up messages into standalone retrieval queries. */
 @Component
 public class ContextualQueryResolver {
+    private static final String CONTRACT_CAPABILITY_INTENT = "CONTRACT_TYPE_CAPABILITY";
+    private static final String CONTRACT_TYPE_SLOT = "contractType";
     private static final int MAX_ACTIVE_PRODUCT_MESSAGES = 6;
     private static final List<String> REFERENCE_MARKERS = List.of(
         "这个", "那个", "这款", "那款", "它", "该产品", "上述", "前面", "刚才", "这种", "那种");
@@ -89,17 +93,44 @@ public class ContextualQueryResolver {
         "^(?:另外(?:问|咨询|[，,])|顺便问(?:一下)?|再问一个|还有个问题).*$");
     private static final Pattern LEADING_FIRST_PERSON = Pattern.compile(
         "^(?:请问|麻烦问一下|想问一下|咨询一下)?(?:我们|我)?(?:想要|需要|想|要)?");
+    private static final Pattern CONTRACT_TYPE_ANSWER = Pattern.compile(
+        "^[\\p{IsHan}A-Za-z0-9]{2,18}合同$");
+    private static final List<String> CONTRACT_TYPE_QUESTION_MARKERS = List.of(
+        "什么合同", "哪种合同", "哪类合同", "哪一类合同", "什么类型的合同",
+        "商品房买卖合同", "二手房买卖合同");
+    private static final List<String> CONTRACT_CAPABILITY_MARKERS = List.of(
+        "可以签", "能签", "支持签", "是否可以签", "是否能签", "能不能签",
+        "可不可以签", "能否签");
+    private static final List<String> CONTRACT_TYPE_STANDALONE_QUESTION_MARKERS = List.of(
+        "怎么", "如何", "为什么", "是否", "能否", "可以", "支持", "多少钱",
+        "效力", "有效", "合法", "流程", "模板", "起草", "上传", "下载");
+
+    private final ObjectMapper objectMapper;
+
+    public ContextualQueryResolver(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
 
     public Resolution resolve(List<BotMessage> messages, String currentQuestion) {
         String question = currentQuestion == null ? "" : currentQuestion.trim();
         if (isExplicitTopicReset(question)) {
-            return new Resolution(question, false, null, null, null, false);
+            return new Resolution(question, false, null, null, null, false, null);
+        }
+        ClarificationResolution clarification = resolveClarification(messages, question);
+        if (clarification != null) {
+            return new Resolution(clarification.query(), true,
+                clarification.previousQuestion(), null, null, false,
+                clarification.source());
         }
         boolean contextDependent = isContextDependent(question);
         String activeProduct = activeProduct(messages, question);
+        if (activeProduct != null
+                && isSubjectlessOperationalFollowUp(normalize(question))) {
+            contextDependent = true;
+        }
         boolean inheritProduct = activeProduct != null && shouldInheritProduct(question);
         if (!contextDependent && !inheritProduct) {
-            return new Resolution(question, false, null, null, null, false);
+            return new Resolution(question, false, null, null, null, false, null);
         }
 
         String previousQuestion = previousUserQuestion(messages, question);
@@ -118,7 +149,98 @@ public class ContextualQueryResolver {
             resolved = activeProduct + " " + resolved;
         }
         return new Resolution(resolved, true, previousQuestion, switchEntity,
-            inheritProduct ? activeProduct : null, previousQuestionMerged);
+            inheritProduct ? activeProduct : null, previousQuestionMerged, null);
+    }
+
+    private ClarificationResolution resolveClarification(
+            List<BotMessage> messages, String currentQuestion) {
+        String contractType = contractTypeAnswer(currentQuestion);
+        if (contractType == null || messages == null || messages.isEmpty()) return null;
+
+        int previousAiIndex = immediatelyPreviousAiIndex(messages, currentQuestion);
+        if (previousAiIndex < 0) return null;
+        BotMessage previousAi = messages.get(previousAiIndex);
+        String previousQuestion = previousUserQuestionBefore(messages, previousAiIndex);
+        if (hasPendingContractTypeClarification(previousAi)) {
+            return new ClarificationResolution(
+                contractCapabilityQuery(contractType), previousQuestion, "metadata");
+        }
+        if (isContractTypeClarification(previousAi.getContent())
+                && isContractCapabilityQuestion(previousQuestion)) {
+            return new ClarificationResolution(
+                contractCapabilityQuery(contractType), previousQuestion, "legacy");
+        }
+        return null;
+    }
+
+    private int immediatelyPreviousAiIndex(
+            List<BotMessage> messages, String currentQuestion) {
+        int start = messages.size() - 1;
+        if (start >= 0) {
+            BotMessage last = messages.get(start);
+            if (last != null && "user".equals(last.getRole())
+                    && normalize(last.getContent()).equals(normalize(currentQuestion))) {
+                start--;
+            }
+        }
+        for (int i = start; i >= 0; i--) {
+            BotMessage message = messages.get(i);
+            if (message == null || message.getRole() == null) continue;
+            if ("ai".equals(message.getRole())) return i;
+            if ("user".equals(message.getRole())) return -1;
+        }
+        return -1;
+    }
+
+    private String previousUserQuestionBefore(List<BotMessage> messages, int beforeIndex) {
+        for (int i = beforeIndex - 1; i >= 0; i--) {
+            BotMessage message = messages.get(i);
+            if (message != null && "user".equals(message.getRole())
+                    && message.getContent() != null && !message.getContent().isBlank()) {
+                return message.getContent().trim();
+            }
+        }
+        return null;
+    }
+
+    private boolean hasPendingContractTypeClarification(BotMessage message) {
+        if (message == null || message.getMetadata() == null
+                || message.getMetadata().isBlank()) {
+            return false;
+        }
+        try {
+            JsonNode state = objectMapper.readTree(message.getMetadata())
+                .path("pendingClarification");
+            return state.isObject()
+                && CONTRACT_CAPABILITY_INTENT.equals(state.path("intentCode").asText())
+                && CONTRACT_TYPE_SLOT.equals(state.path("missingSlot").asText())
+                && state.path("expiresAfterTurns").asInt(1) >= 1;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private String contractTypeAnswer(String question) {
+        String normalized = normalize(question);
+        if (!CONTRACT_TYPE_ANSWER.matcher(normalized).matches()
+                || containsAny(normalized, CONTRACT_TYPE_STANDALONE_QUESTION_MARKERS)) {
+            return null;
+        }
+        return normalized;
+    }
+
+    private boolean isContractTypeClarification(String reply) {
+        return reply != null && reply.contains("合同")
+            && CONTRACT_TYPE_QUESTION_MARKERS.stream().anyMatch(reply::contains);
+    }
+
+    private boolean isContractCapabilityQuestion(String question) {
+        return question != null && question.contains("合同")
+            && CONTRACT_CAPABILITY_MARKERS.stream().anyMatch(question::contains);
+    }
+
+    private String contractCapabilityQuery(String contractType) {
+        return "点签 是否支持签署 " + contractType;
     }
 
     boolean isContextDependent(String question) {
@@ -147,6 +269,14 @@ public class ContextualQueryResolver {
     private boolean shouldMergePreviousQuestion(String previousQuestion, String question) {
         if (previousQuestion == null || previousQuestion.isBlank()) return false;
         String normalizedQuestion = normalize(question);
+        // Once a product is known, a new subjectless operation (for example
+        // "怎么登录？" after "怎么使用？") is a new intent under the same
+        // product. Merging both operations would make retrieval answer the
+        // previous action instead of the current one.
+        if (isSubjectlessOperationalFollowUp(normalizedQuestion)
+                && containsAny(previousQuestion, ACTIVE_PRODUCT_MARKERS)) {
+            return false;
+        }
         return normalizedQuestion.length() <= 48
             && containsAny(previousQuestion, CONTEXTUAL_BUSINESS_MARKERS)
             && (containsAny(normalizedQuestion, CONTEXT_CARRY_TERMS)
@@ -165,6 +295,17 @@ public class ContextualQueryResolver {
             || CORRECTION_FOLLOW_UP.matcher(normalizedQuestion).matches();
     }
 
+    private boolean isSubjectlessOperationalFollowUp(String normalizedQuestion) {
+        if (normalizedQuestion == null || normalizedQuestion.isBlank()
+                || normalizedQuestion.length() > 24) {
+            return false;
+        }
+        boolean operation = containsAny(normalizedQuestion, OPERATION_TERMS);
+        boolean businessObject = containsAny(normalizedQuestion, BUSINESS_OBJECTS);
+        return operation && !businessObject
+            && normalizedQuestion.matches("^(?:怎么|如何|怎样|从哪|在哪里|去哪).+");
+    }
+
     private boolean isExplicitTopicReset(String question) {
         if (question == null || question.isBlank()) return false;
         String trimmed = question.trim();
@@ -175,6 +316,8 @@ public class ContextualQueryResolver {
     private String previousUserQuestion(List<BotMessage> messages, String currentQuestion) {
         if (messages == null || messages.isEmpty()) return null;
         boolean skippedCurrent = false;
+        String pendingSwitchedEntity = null;
+        String latestContextualQuestion = null;
         for (int i = messages.size() - 1; i >= 0; i--) {
             BotMessage message = messages.get(i);
             if (message == null || !"user".equals(message.getRole())
@@ -186,9 +329,23 @@ public class ContextualQueryResolver {
                 skippedCurrent = true;
                 continue;
             }
+            // A conversation may contain several short follow-ups in a row.
+            // Walk past those ellipses until we reach the last substantive
+            // question, while preserving an explicit subject switch such as
+            // "企业的呢？" for the next follow-up.
+            String switchedEntity = switchEntity(content);
+            if (isContextDependent(content)
+                    || isSubjectlessOperationalFollowUp(normalize(content))) {
+                if (latestContextualQuestion == null) latestContextualQuestion = content;
+                if (switchedEntity != null) pendingSwitchedEntity = switchedEntity;
+                continue;
+            }
+            if (pendingSwitchedEntity != null) {
+                return rewriteSubject(content, pendingSwitchedEntity);
+            }
             return content;
         }
-        return null;
+        return latestContextualQuestion;
     }
 
     private String switchEntity(String question) {
@@ -287,11 +444,20 @@ public class ContextualQueryResolver {
 
     public record Resolution(String query, boolean contextDependent,
                              String previousQuestion, String switchedEntity,
-                             String inheritedProduct, boolean previousQuestionMerged) {
+                             String inheritedProduct, boolean previousQuestionMerged,
+                             String clarificationSource) {
+        public boolean clarificationResolved() {
+            return clarificationSource != null;
+        }
+
         public boolean rewritten() {
             return (previousQuestion != null && switchedEntity != null)
                 || inheritedProduct != null
-                || previousQuestionMerged;
+                || previousQuestionMerged
+                || clarificationResolved();
         }
     }
+
+    private record ClarificationResolution(
+        String query, String previousQuestion, String source) {}
 }

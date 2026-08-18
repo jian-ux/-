@@ -54,19 +54,17 @@ feisheng-bot/
 docker compose up -d
 ```
 
-在支持 NVIDIA GPU 的 Docker Desktop 环境中启用仓库自带的 Reranker：
+Compose 默认同时启动后端、前端、MySQL、Redis、Qdrant、MinIO 和 GPU Reranker：
 
 ```powershell
-.env 中设置 COMPOSE_PROFILES=reranker
-.env 中设置 RAG_RERANK_ENABLED=true
 docker compose up -d
 .\scripts\verify-reranker.ps1
 ```
 
 Compose 会并行启动机器人和重排器，模型缓存保存在 Docker 命名卷中，
-重排器异常退出后会自动重启。首次启动需要构建 CUDA/PyTorch 镜像并下载模型；
-后续启动会复用缓存。宿主机计划任务方案仅作为开发备用，说明见
-`services/qwen3-vl-reranker/README.md`。
+重排器异常退出后会自动重启。机器人不会等待模型下载完成，首次启动需要构建
+CUDA/PyTorch 镜像并下载模型；后续启动会复用缓存。Reranker 需要支持 NVIDIA
+Container Toolkit 的 Docker Desktop 环境。
 
 访问管理面板：`http://localhost`；后端宿主机端口为 `http://localhost:8082`，MySQL 调试端口为 `127.0.0.1:3307`。
 

@@ -58,6 +58,19 @@ class NlpIntentClassifierTest {
     }
 
     @Test
+    void keepsCanonicalContractCapabilityQueryIdempotent() {
+        String canonicalQuery = "点签 是否支持签署 二手房买卖合同";
+
+        NlpIntentClassifier.IntentAnalysis result = classifier.classify(canonicalQuery);
+
+        assertEquals(NlpIntentClassifier.IntentCode.CONTRACT_TYPE_CAPABILITY,
+            result.intentCode());
+        assertEquals("二手房买卖合同", result.subject());
+        assertEquals(canonicalQuery, result.retrievalQuery());
+        assertTrue(result.generallySupportedContractType());
+    }
+
+    @Test
     void quantityQuestionDemonstratesWhyTheRawQueryMustBeRetained() {
         NlpIntentClassifier.IntentAnalysis result =
             classifier.classify("批量发起合同支持多少份同时操作？");

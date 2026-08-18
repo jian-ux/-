@@ -1,0 +1,88 @@
+{
+  "generatedAt": "2026-08-17T22:56:14.8301598+08:00",
+  "dataset": "D:\\workspace\\feisheng-bot\\docs\\examples\\dianqian-knowledge-governance-dialog-evaluation-20260817.json",
+  "evaluatedCases": 30,
+  "excludedCaseIds": [
+    "risk-02-other-account"
+  ],
+  "finalModel": "Qwen/Qwen3-Reranker-0.6B",
+  "finalScoreTemperature": 1.0,
+  "resultFiles": [
+    "D:\\workspace\\feisheng-bot\\docs\\evaluation-results\\reranker-evaluation-Qwen-Qwen3-VL-Reranker-2B-t1-20260817-225614.json",
+    "D:\\workspace\\feisheng-bot\\docs\\evaluation-results\\reranker-evaluation-Qwen-Qwen3-Reranker-0.6B-t8-20260817-225614.json"
+  ],
+  "models": [
+    {
+      "model": "Qwen/Qwen3-VL-Reranker-2B",
+      "scoreTemperature": 1.0,
+      "startupMs": 81206.305,
+      "evaluationMs": 43511.816,
+      "gpuMemoryUsedMiB": 4393,
+      "total": 30,
+      "decisionAccuracy": 1.0,
+      "answerRecall": 1.0,
+      "noAnswerRecall": 1.0,
+      "citationHitRate": 0.9643,
+      "sourceHitAtOneRate": 0.8571,
+      "meanReciprocalRank": 0.9179,
+      "exactSource": {
+        "expected": 25,
+        "citationHits": 24,
+        "citationHitRate": 0.96,
+        "topOne": 21,
+        "topOneRate": 0.84,
+        "meanReciprocalRank": 0.908
+      }
+    },
+    {
+      "model": "Qwen/Qwen3-Reranker-0.6B",
+      "scoreTemperature": 8.0,
+      "startupMs": 59882.406,
+      "evaluationMs": 32044.771,
+      "gpuMemoryUsedMiB": 1707,
+      "total": 30,
+      "decisionAccuracy": 1.0,
+      "answerRecall": 1.0,
+      "noAnswerRecall": 1.0,
+      "citationHitRate": 0.9643,
+      "sourceHitAtOneRate": 0.8214,
+      "meanReciprocalRank": 0.9018,
+      "exactSource": {
+        "expected": 25,
+        "citationHits": 24,
+        "citationHitRate": 0.96,
+        "topOne": 20,
+        "topOneRate": 0.8,
+        "meanReciprocalRank": 0.89
+      }
+    }
+  ],
+  "changedCases": [
+    {
+      "id": "policy-05-package-renewal",
+      "question": "套餐365天到期后，剩余份数怎么延期？",
+      "expectedSourceId": 5677,
+      "leftDecisionCorrect": true,
+      "rightDecisionCorrect": true,
+      "leftAnswerable": true,
+      "rightAnswerable": true,
+      "leftSourceRank": 1,
+      "rightSourceRank": 2,
+      "leftConfidence": 0.827,
+      "rightConfidence": 0.758
+    },
+    {
+      "id": "price-01-enterprise-edition",
+      "question": "点签企业版多少钱？",
+      "expectedSourceId": 5674,
+      "leftDecisionCorrect": true,
+      "rightDecisionCorrect": true,
+      "leftAnswerable": true,
+      "rightAnswerable": true,
+      "leftSourceRank": 5,
+      "rightSourceRank": 4,
+      "leftConfidence": 0.798,
+      "rightConfidence": 0.677
+    }
+  ]
+}

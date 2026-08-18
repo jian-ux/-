@@ -9,12 +9,20 @@ $apiKeyLine = Get-Content $envFile | Where-Object { $_ -match '^RERANK_API_KEY='
     Select-Object -Last 1
 if ($null -eq $apiKeyLine) { throw "RERANK_API_KEY is missing from .env" }
 $apiKey = ($apiKeyLine -split '=', 2)[1].Trim()
+$modelLine = Get-Content $envFile | Where-Object { $_ -match '^RERANK_MODEL=' } |
+    Select-Object -Last 1
+if ($null -eq $modelLine) { throw "RERANK_MODEL is missing from .env" }
+$expectedModel = ($modelLine -split '=', 2)[1].Trim()
+if ([string]::IsNullOrWhiteSpace($expectedModel)) { throw "RERANK_MODEL is blank" }
 
 $health = Invoke-RestMethod -Uri "$BaseUrl/health" -TimeoutSec 10
 if ($health.status -ne "ok") { throw "Reranker is not ready" }
+if ($health.model -ne $expectedModel) {
+    throw "Loaded model '$($health.model)' does not match RERANK_MODEL '$expectedModel'"
+}
 
 $body = @{
-    model = "Qwen/Qwen3-VL-Reranker-2B"
+    model = $expectedModel
     query = "How do I sign an electronic contract online with Dianqian?"
     documents = @(
         "The weather is sunny today with a high temperature of thirty degrees.",

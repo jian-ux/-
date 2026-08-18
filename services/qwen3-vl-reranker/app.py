@@ -14,19 +14,20 @@ logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(name)s - %(message)s",
 )
-log = logging.getLogger("qwen3-vl-reranker")
+log = logging.getLogger("qwen3-reranker")
 
-MODEL_ID = os.getenv("RERANK_MODEL", "Qwen/Qwen3-VL-Reranker-2B")
+MODEL_ID = os.getenv("RERANK_MODEL", "Qwen/Qwen3-Reranker-0.6B")
 DEVICE = os.getenv("RERANK_DEVICE", "cuda")
 DTYPE = os.getenv("RERANK_DTYPE", "bfloat16")
 INSTRUCTION = os.getenv(
     "RERANK_INSTRUCTION",
-    "Retrieve text relevant to the user's query.",
+    "Given a customer service question, retrieve passages that contain accurate information needed to answer it.",
 )
 MAX_CANDIDATES = int(os.getenv("RERANK_MAX_CANDIDATES", "10"))
 MAX_LENGTH = int(os.getenv("RERANK_MAX_LENGTH", "2048"))
 BATCH_SIZE = int(os.getenv("RERANK_BATCH_SIZE", "1"))
 CACHE_MAX_ENTRIES = max(0, int(os.getenv("RERANK_CACHE_MAX_ENTRIES", "256")))
+SCORE_TEMPERATURE = max(0.1, float(os.getenv("RERANK_SCORE_TEMPERATURE", "1.0")))
 API_KEY = os.getenv("RERANK_API_KEY", "").strip()
 
 _model: Any = None
@@ -93,7 +94,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Qwen3-VL Reranker", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Qwen3 Reranker", version="1.0.0", lifespan=lifespan)
 
 
 def _authorize(authorization: str | None) -> None:
@@ -108,7 +109,8 @@ def _predict_cached(query: str, documents: tuple[str, ...]) -> tuple[float, ...]
         pairs,
         prompt=INSTRUCTION,
         batch_size=max(1, BATCH_SIZE),
-        activation_fn=_torch.nn.Sigmoid(),
+        activation_fn=lambda values: _torch.sigmoid(
+            values.float() / SCORE_TEMPERATURE),
         show_progress_bar=False,
         convert_to_numpy=True,
     )
@@ -133,6 +135,7 @@ def health() -> dict[str, Any]:
         "model": MODEL_ID,
         "device": DEVICE,
         "gpu": gpu,
+        "score_temperature": SCORE_TEMPERATURE,
         "cache": {
             "max_entries": CACHE_MAX_ENTRIES,
             "entries": cache_info.currsize,

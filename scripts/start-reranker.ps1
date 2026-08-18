@@ -1,10 +1,13 @@
 param(
     [switch]$Background,
     [switch]$ForceInstall,
+    [string]$Model = "",
     [ValidateRange(1, 10)]
     [int]$BatchSize = 1,
     [ValidateRange(0, 10000)]
     [int]$CacheMaxEntries = 256,
+    [ValidateRange(0.1, 100.0)]
+    [double]$ScoreTemperature = 1.0,
     [int]$StartupTimeoutSeconds = 1200
 )
 
@@ -61,11 +64,16 @@ if ([string]::IsNullOrWhiteSpace($apiKey)) {
 $env:HF_HOME = $cacheRoot
 $env:SENTENCE_TRANSFORMERS_HOME = $cacheRoot
 $env:HF_HUB_DISABLE_SYMLINKS_WARNING = "1"
+$env:HF_HUB_DISABLE_XET = "1"
 $env:TORCH_HOME = Join-Path $repoRoot ".model-cache\torch"
 $env:RERANK_API_KEY = $apiKey
-$env:RERANK_MODEL = (Get-DotEnvValue "RERANK_MODEL")
+$env:RERANK_MODEL = if ([string]::IsNullOrWhiteSpace($Model)) {
+    Get-DotEnvValue "RERANK_MODEL"
+} else {
+    $Model.Trim()
+}
 if ([string]::IsNullOrWhiteSpace($env:RERANK_MODEL)) {
-    $env:RERANK_MODEL = "Qwen/Qwen3-VL-Reranker-2B"
+    $env:RERANK_MODEL = "Qwen/Qwen3-Reranker-0.6B"
 }
 $env:RERANK_DEVICE = "cuda"
 $env:RERANK_DTYPE = "bfloat16"
@@ -73,6 +81,7 @@ $env:RERANK_MAX_CANDIDATES = "10"
 $env:RERANK_MAX_LENGTH = "2048"
 $env:RERANK_BATCH_SIZE = [string]$BatchSize
 $env:RERANK_CACHE_MAX_ENTRIES = [string]$CacheMaxEntries
+$env:RERANK_SCORE_TEMPERATURE = [string]$ScoreTemperature
 
 $uvicornArgs = @(
     "-m", "uvicorn", "app:app",

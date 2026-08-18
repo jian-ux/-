@@ -6,20 +6,38 @@ import app
 class _FakeModel:
     def __init__(self):
         self.calls = 0
+        self.last_temperature = None
 
-    def predict(self, pairs, **_kwargs):
+    def predict(self, pairs, **kwargs):
         self.calls += 1
-        return [0.75 - index * 0.1 for index, _pair in enumerate(pairs)]
+        values = _FakeValues(
+            [0.75 - index * 0.1 for index, _pair in enumerate(pairs)])
+        scores = kwargs["activation_fn"](values)
+        self.last_temperature = values.divisor
+        return scores
 
 
-class _FakeNn:
-    @staticmethod
-    def Sigmoid():
-        return object()
+class _FakeValues:
+    def __init__(self, scores):
+        self.scores = scores
+        self.converted_to_float = False
+        self.divisor = None
+
+    def float(self):
+        self.converted_to_float = True
+        return self
+
+    def __truediv__(self, divisor):
+        if not self.converted_to_float:
+            raise AssertionError("logits must be converted to float before scaling")
+        self.divisor = divisor
+        return self
 
 
 class _FakeTorch:
-    nn = _FakeNn()
+    @staticmethod
+    def sigmoid(values):
+        return values.scores
 
 
 class PredictionCacheTest(unittest.TestCase):
@@ -50,6 +68,7 @@ class PredictionCacheTest(unittest.TestCase):
         self.assertTrue(second_cache_hit)
         self.assertFalse(changed_cache_hit)
         self.assertEqual(2, self.model.calls)
+        self.assertEqual(app.SCORE_TEMPERATURE, self.model.last_temperature)
 
 
 if __name__ == "__main__":

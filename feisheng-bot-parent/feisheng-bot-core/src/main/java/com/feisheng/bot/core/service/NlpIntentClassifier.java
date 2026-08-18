@@ -35,7 +35,8 @@ public class NlpIntentClassifier {
     private static final List<String> ACCOUNT_ACTION_TERMS = List.of(
         "怎么", "如何", "怎样", "申请", "创建", "开通", "重置", "修改", "找回", "无法", "失败");
     private static final List<String> SUBJECT_MARKERS = List.of(
-        "是否可以签", "可不可以签", "能不能签", "是否能签", "支持签", "可以签", "能否签", "能签",
+        "是否支持签署", "支持签署", "是否可以签", "可不可以签", "能不能签", "是否能签",
+        "支持签", "可以签", "能否签", "能签",
         "怎么签", "如何签", "怎样签", "我要签", "想签", "支持", "发起", "上传", "起草", "撰写", "代写", "拟定", "写");
     private static final List<String> SUBJECT_PREFIXES = List.of(
         "请问", "咨询", "关于", "我想了解", "我想咨询", "我想问", "我要", "想要", "帮我",

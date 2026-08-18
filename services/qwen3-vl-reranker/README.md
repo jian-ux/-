@@ -1,13 +1,12 @@
-# Qwen3-VL-Reranker-2B service
+# Qwen3-Reranker-0.6B service
 
 This service exposes the OpenAI-style `POST /rerank` contract used by
 `RerankService.java`. The default deployment runs it on the Docker NVIDIA
 runtime and persists model files in the `reranker_model_cache` named volume.
 
-Enable the Compose profile in `.env` and start the stack:
+Start the complete stack with Docker Compose:
 
 ```powershell
-COMPOSE_PROFILES=reranker
 RAG_RERANK_ENABLED=true
 docker compose up -d
 .\scripts\verify-reranker.ps1
@@ -30,6 +29,10 @@ The host-side Python runtime remains available as a development fallback:
 and every document string to match. The cache is cleared whenever the process
 restarts, so model, instruction, or runtime configuration changes cannot reuse
 scores from an older process.
+
+`RERANK_SCORE_TEMPERATURE` applies temperature scaling before the sigmoid. Keep
+the default `1.0` unless an evaluation shows that a model's logits saturate near
+zero or one; changing it requires recalibrating confidence thresholds.
 
 Do not run the host service and Compose service together because both use the
 same GPU and localhost port. Remove the legacy scheduled task before switching

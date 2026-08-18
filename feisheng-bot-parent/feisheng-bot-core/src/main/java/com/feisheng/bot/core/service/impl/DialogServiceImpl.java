@@ -216,6 +216,11 @@ public class DialogServiceImpl {
             + "除非内部事实明确说明不支持，否则不得把未检索到的信息推断为平台不支持。"
             + "内部事实能支持两者时，使用数字序号分别简要说明，再自然询问客户选择“发起签署”或“纸质归档”，不得使用“下一步：”标签；"
             + "只能确认一个场景时，先回答已确认内容，再询问合同是否已经签署。";
+    private static final String CONTRACT_TYPE_ALREADY_SPECIFIED_INSTRUCTION =
+        "客户已经明确给出了合同类型“%s”，当前不缺合同类型。"
+            + "不得再追问商品房、二手房、具体合同类型或签署主体。"
+            + "如果本轮企业内部事实不能确认点签是否支持该合同类型，只输出 "
+            + NO_ANSWER_SIGNAL + "，不得用新的合同类型问题替代答案。";
     private static final String COMPANY_INTRODUCTION_ANSWER_INSTRUCTION =
         "客户当前是在请求公司介绍，不是在询问未经证实的口碑、排名或经营评价。"
             + "请仅依据企业内部事实，客观概括公司定位、主营业务以及已明确的产品或服务；"
@@ -246,6 +251,9 @@ public class DialogServiceImpl {
     private static final List<String> CUSTOM_QUOTE_CONTEXT_TERMS = List.of(
         "定制", "专属", "商务", "最终", "折扣", "优惠", "议价", "最低价", "底价",
         "便宜", "打折", "合同价", "采购价", "预算", "按人数", "按人", "签署量", "年用量");
+    private static final List<String> SPECIFIC_PRICE_CONTEXT_TERMS = List.of(
+        "会员", "会员价", "会员价格", "专业版", "高级版", "通用版", "基础版",
+        "个人版", "企业版", "活动价", "促销价", "续费价", "升级价");
     private static final List<String> BUSINESS_SCOPE_TERMS = List.of(
         "点签", "飞晟", "电子合同", "合同", "签署", "签约", "签名", "签章", "印章", "用印",
         "骑缝章", "认证", "实名", "账号", "账户", "登录", "模板", "附件", "发起", "撤回",
@@ -505,7 +513,7 @@ public class DialogServiceImpl {
                 "answered", AnswerDecision.ANSWER, "price_handoff_declined",
                 emotion, started, redactedTypes);
         }
-        if (isAwaitingAnnualSigningVolume(recentMessages)) {
+        if (isAwaitingAnnualSigningVolume(recentMessages, safeText)) {
             return annualSigningVolumeResponse(
                 conversation, preCheck, classifyAnnualSigningVolume(safeText, true),
                 emotion, started, redactedTypes);
@@ -545,14 +553,21 @@ public class DialogServiceImpl {
                 conversation, preCheck, toolRouting, emotion, started, redactedTypes);
         }
 
-        IntentService.IntentMatch intentMatch = intentService.match(safeText).orElse(null);
+        // Resolve the conversational topic before applying configurable intent
+        // replies. A short follow-up such as "企业的呢？" or "怎么登录？"
+        // must be answered against its inherited topic instead of being
+        // intercepted by a broad keyword rule (for example "登录" or "合同").
+        ContextualQueryResolver.Resolution queryResolution =
+            contextualQueryResolver.resolve(recentMessages, safeText);
+        boolean contextualQuestion = queryResolution.contextDependent()
+            || queryResolution.rewritten();
+        IntentService.IntentMatch intentMatch = contextualQuestion
+            ? null : intentService.match(safeText).orElse(null);
         if (intentMatch != null) {
             return intentResponse(
                 conversation, preCheck, intentMatch, emotion, started, redactedTypes);
         }
 
-        ContextualQueryResolver.Resolution queryResolution =
-            contextualQueryResolver.resolve(recentMessages, safeText);
         String resolvedRetrievalQuestion = stripLeadingCourtesyPrefix(queryResolution.query());
         NlpIntentClassifier.IntentAnalysis nlpIntent =
             nlpIntentClassifier.classify(resolvedRetrievalQuestion);
@@ -744,9 +759,11 @@ public class DialogServiceImpl {
             directKnowledge = true;
         } else {
             String safeRetrievalContext = redact(retrieval.context(), redactedTypes);
+            boolean partialEvidenceNeedsClarification = "partial_rag".equals(retrieval.decision())
+                && shouldClarifyPartialEvidence(nlpIntent);
             String prompt = buildPrompt(
                 buildChatHistory(recentMessages, redactedTypes), safeRetrievalContext,
-                safeText, retrievalQuery, "partial_rag".equals(retrieval.decision()));
+                safeText, retrievalQuery, partialEvidenceNeedsClarification);
             modelPrompt = prompt;
             SystemPromptResolution systemPrompt = customerServiceSystemPrompt(
                 emotion, safeText, nlpIntent, promptVersion);
@@ -907,6 +924,8 @@ public class DialogServiceImpl {
         }
         String richReply = RichReplyFormatter.format(replyText);
         replyText = PlainTextReplyFormatter.format(replyText);
+        Map<String, Object> pendingClarification = pendingClarificationState(
+            nlpIntent, replyText, answerStatus);
 
         List<KnowledgeImageService.ImageAttachment> attachments =
             replyAttachmentService.fromCitations(citations, "answered".equals(answerStatus));
@@ -945,6 +964,11 @@ public class DialogServiceImpl {
         response.put("queryContextDependent", queryResolution.contextDependent());
         response.put("contextResolutionApplied", queryResolution.rewritten());
         response.put("contextResolvedQuery", resolvedRetrievalQuestion);
+        response.put("clarificationStateConsumed", queryResolution.clarificationResolved());
+        response.put("clarificationResolutionSource", queryResolution.clarificationSource());
+        if (pendingClarification != null) {
+            response.put("pendingClarification", pendingClarification);
+        }
         response.put("nlpIntent", nlpIntentDetails(nlpIntent));
         response.put("emotion", emotionDetails(emotion));
         response.put("promptVersion", promptVersion);
@@ -994,6 +1018,12 @@ public class DialogServiceImpl {
         messageMetadata.put("queryContextDependent", queryResolution.contextDependent());
         messageMetadata.put("contextResolutionApplied", queryResolution.rewritten());
         messageMetadata.put("contextResolvedQuery", resolvedRetrievalQuestion);
+        messageMetadata.put("clarificationStateConsumed", queryResolution.clarificationResolved());
+        messageMetadata.put("clarificationResolutionSource",
+            queryResolution.clarificationSource());
+        if (pendingClarification != null) {
+            messageMetadata.put("pendingClarification", pendingClarification);
+        }
         messageMetadata.put("nlpIntent", nlpIntentDetails(nlpIntent));
         messageMetadata.put("emotion", emotionDetails(emotion));
         messageMetadata.put("promptVersion", promptVersion);
@@ -2466,15 +2496,22 @@ public class DialogServiceImpl {
             || List.of("怎么收费", "如何收费", "怎样收费", "多少钱", "价格多少",
                 "收费标准", "价格怎么样").contains(normalized);
         if (!productPricingContext) return false;
+        // Specific package or membership prices should be answered from the
+        // knowledge base (or routed as a custom quote), not treated as a
+        // request for annual-volume qualification.
+        if (SPECIFIC_PRICE_CONTEXT_TERMS.stream().anyMatch(normalized::contains)) return false;
 
         PriceVolumeBand volumeBand = classifyAnnualSigningVolume(question, false);
         return volumeBand != PriceVolumeBand.UNKNOWN
             || !containsConfiguredKeyword(question, priceHandoffKeywords);
     }
 
-    private boolean isAwaitingAnnualSigningVolume(List<BotMessage> recentMessages) {
+    private boolean isAwaitingAnnualSigningVolume(
+            List<BotMessage> recentMessages, String currentQuestion) {
         String reply = latestAiReply(recentMessages);
-        return hasText(reply) && reply.contains(PRICE_VOLUME_QUESTION);
+        return hasText(reply)
+            && reply.contains(PRICE_VOLUME_QUESTION)
+            && classifyAnnualSigningVolume(currentQuestion, true) != PriceVolumeBand.UNKNOWN;
     }
 
     private boolean isPriceHandoffConsent(
@@ -2687,6 +2724,13 @@ public class DialogServiceImpl {
                 && question.contains("上传")) {
             prompt += "\n" + CONTRACT_UPLOAD_AMBIGUITY_INSTRUCTION;
         }
+        if (nlpIntent.intentCode()
+                == NlpIntentClassifier.IntentCode.CONTRACT_TYPE_CAPABILITY
+                && !nlpIntent.needsClarification()
+                && hasText(nlpIntent.subject())) {
+            prompt += "\n" + CONTRACT_TYPE_ALREADY_SPECIFIED_INSTRUCTION.formatted(
+                nlpIntent.subject());
+        }
         if (isOperationalQuestion(question)) {
             prompt += "\n" + OPERATIONAL_ANSWER_INSTRUCTION;
         }
@@ -2711,6 +2755,40 @@ public class DialogServiceImpl {
             CustomerServicePromptProvider.fingerprint(basePrompt),
             CustomerServicePromptProvider.fingerprint(prompt), prompt.length(), 0);
         return new SystemPromptResolution(prompt, trace);
+    }
+
+    private boolean shouldClarifyPartialEvidence(
+            NlpIntentClassifier.IntentAnalysis nlpIntent) {
+        return nlpIntent == null
+            || nlpIntent.intentCode()
+                != NlpIntentClassifier.IntentCode.CONTRACT_TYPE_CAPABILITY
+            || nlpIntent.needsClarification();
+    }
+
+    private Map<String, Object> pendingClarificationState(
+            NlpIntentClassifier.IntentAnalysis nlpIntent, String reply,
+            String answerStatus) {
+        if (nlpIntent == null
+                || nlpIntent.intentCode()
+                    != NlpIntentClassifier.IntentCode.CONTRACT_TYPE_CAPABILITY
+                || !"answered".equals(answerStatus)
+                || !isContractTypeClarificationReply(reply)) {
+            return null;
+        }
+        Map<String, Object> state = new LinkedHashMap<>();
+        state.put("intentCode", NlpIntentClassifier.IntentCode.CONTRACT_TYPE_CAPABILITY.name());
+        state.put("missingSlot", "contractType");
+        state.put("queryTemplate", "点签 是否支持签署 {contractType}");
+        state.put("expiresAfterTurns", 1);
+        return state;
+    }
+
+    private boolean isContractTypeClarificationReply(String reply) {
+        if (!hasText(reply) || (!reply.contains("？") && !reply.contains("?"))) return false;
+        return reply.contains("合同") && List.of(
+            "什么合同", "哪种合同", "哪类合同", "哪一类合同", "什么类型的合同",
+            "商品房买卖合同", "二手房买卖合同")
+            .stream().anyMatch(reply::contains);
     }
 
     private boolean isServiceLevelPromiseQuestion(String question) {

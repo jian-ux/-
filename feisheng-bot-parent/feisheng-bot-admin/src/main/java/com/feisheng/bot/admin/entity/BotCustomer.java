@@ -12,6 +12,7 @@ public class BotCustomer extends BaseEntity {
     private String name;
     private String phone;
     private String email;
+    private String remark;
     private String channelType;
     private String channelUserId;
     private String nickname;

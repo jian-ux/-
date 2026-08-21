@@ -406,7 +406,7 @@ async function fetch() {
     const r = await request.get('/admin/doc/list', { params: { page: page.value, size: pageSize } })
     documents.value = r.data?.records || []
     total.value = r.data?.total || 0
-  } catch(e) {
+  } catch {
     documents.value = []
     total.value = 0
   } finally { loading.value = false }
@@ -422,7 +422,7 @@ async function handleExpandChange(row, expandedRows) {
   try {
     const r = await request.get('/admin/doc/' + row.id + '/chunks')
     row._chunks = r.data || []
-  } catch(e) { row._chunks = [] }
+  } catch { row._chunks = [] }
   finally { row._loading = false }
 }
 
@@ -432,7 +432,7 @@ async function approve(row, chunk) {
     chunk.status = 'APPROVED'
     resetChunkPage(row)
     ElMessage.success('已通过')
-  } catch(e) {}
+  } catch {}
 }
 
 async function reject(row, chunk) {
@@ -442,7 +442,7 @@ async function reject(row, chunk) {
     qaGroupChunks(row, chunk).forEach(item => { item.directAnswerEnabled = 0 })
     resetChunkPage(row)
     ElMessage.success('已拒绝')
-  } catch(e) {}
+  } catch {}
 }
 
 function qaGroupChunks(row, chunk) {
@@ -490,7 +490,7 @@ async function approveAll(row) {
     row.approvedCount = row.chunkCount || row._chunks?.length || 0
     resetChunkPage(row)
     ElMessage.success(`已通过 ${r.data?.approved || 0} 条切片`)
-  } catch(e) {}
+  } catch {}
 }
 
 async function retryOcr(row) {
@@ -499,7 +499,7 @@ async function retryOcr(row) {
     row.ocrStatus = 'PROCESSING'
     ElMessage.success('已重新提交文字识别')
     setTimeout(fetch, 2000)
-  } catch(e) {}
+  } catch {}
 }
 
 async function retryEmbedding(row) {
@@ -582,7 +582,7 @@ async function del(id) {
     ElMessage.success('已删除')
     if (documents.value.length === 1 && page.value > 1) page.value--
     fetch()
-  } catch(e) {}
+  } catch {}
 }
 
 onMounted(fetch)

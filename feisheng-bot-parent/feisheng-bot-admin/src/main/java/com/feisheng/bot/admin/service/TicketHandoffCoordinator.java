@@ -52,13 +52,12 @@ public class TicketHandoffCoordinator implements HandoffCoordinator {
         if (conversation == null) return HandoffResult.failed("会话不存在");
 
         String priority = normalizePriority(requestedPriority);
-        updateConversation(conversation, priority);
-
         BotTicket existing = ticketMapper.selectOne(new LambdaQueryWrapper<BotTicket>()
             .eq(BotTicket::getConversationId, conversationId)
             .in(BotTicket::getStatus, ACTIVE_TICKET_STATUSES)
             .orderByDesc(BotTicket::getCreateTime)
             .last("LIMIT 1"));
+        updateConversation(conversation, priority, existing);
         if (existing != null) {
             updateExistingTicket(existing, conversation, priority);
             String summary = hasText(existing.getDescription())
@@ -129,12 +128,23 @@ public class TicketHandoffCoordinator implements HandoffCoordinator {
         return true;
     }
 
-    private void updateConversation(BotConversation conversation, String priority) {
+    private void updateConversation(BotConversation conversation, String priority,
+                                    BotTicket existingTicket) {
         String previousPriority = normalizePriority(conversation.getPriority());
         String effectivePriority = higherPriority(previousPriority, priority);
         conversation.setStatus("transferred");
         conversation.setPriority(effectivePriority);
-        if (!"PROCESSING".equals(conversation.getHandoffStatus())) {
+        boolean processing = existingTicket != null
+            && "processing".equalsIgnoreCase(existingTicket.getStatus())
+            && existingTicket.getAssigneeId() != null;
+        if (processing) {
+            conversation.setHandoffStatus("PROCESSING");
+            conversation.setAssignedAgentId(existingTicket.getAssigneeId());
+            if (conversation.getAcceptedTime() == null
+                    && existingTicket.getAcceptedTime() != null) {
+                conversation.setAcceptedTime(existingTicket.getAcceptedTime());
+            }
+        } else if (!"PROCESSING".equals(conversation.getHandoffStatus())) {
             conversation.setHandoffStatus("WAITING");
         }
         if (conversation.getHandoffTime() == null) conversation.setHandoffTime(new Date());

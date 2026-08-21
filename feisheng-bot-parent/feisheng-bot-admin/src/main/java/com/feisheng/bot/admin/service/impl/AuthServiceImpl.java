@@ -18,11 +18,16 @@ public class AuthServiceImpl implements AuthService {
         if (u == null || !passwordEncoder.matches(password, u.getPassword())) throw new BusinessException(401, "账号或密码错误");
         if (u.getStatus() != null && u.getStatus() == 0) throw new BusinessException(403, "账号已禁用");
         String token = jwtUtil.generateToken(u.getId(), u.getUsername());
-        return new LoginVO(token, new LoginVO.UserInfo(u.getId(), u.getUsername(), u.getRealName()));
+        return new LoginVO(token, userInfo(u));
     }
     @Override
     public LoginVO.UserInfo getUserInfo(Long userId) {
         SysUser u = userMapper.selectById(userId); if (u == null) throw new BusinessException(404, "用户不存在");
-        return new LoginVO.UserInfo(u.getId(), u.getUsername(), u.getRealName());
+        return userInfo(u);
+    }
+
+    private LoginVO.UserInfo userInfo(SysUser user) {
+        return new LoginVO.UserInfo(user.getId(), user.getUsername(), user.getRealName(),
+            userMapper.selectPermissionsByUserId(user.getId()));
     }
 }

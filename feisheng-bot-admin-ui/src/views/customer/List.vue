@@ -27,7 +27,7 @@
         v-model="keyword"
         class="keyword-filter"
         clearable
-        placeholder="姓名、昵称、手机或渠道用户标识"
+        placeholder="姓名、昵称、手机、备注或渠道用户标识"
         @clear="search"
         @keyup.enter="search"
       />
@@ -63,6 +63,9 @@
       <el-table-column prop="email" label="邮箱" min-width="180" show-overflow-tooltip>
         <template #default="{ row }">{{ row.email || '-' }}</template>
       </el-table-column>
+      <el-table-column prop="remark" label="备注" min-width="180" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.remark || '-' }}</template>
+      </el-table-column>
       <el-table-column prop="channelType" label="渠道" width="110">
         <template #default="{ row }">
           <el-tag size="small" effect="plain">{{ channelTypeText(row.channelType) }}</el-tag>
@@ -94,6 +97,7 @@
         <dl class="customer-meta">
           <div><dt>手机</dt><dd>{{ customer.phone || '-' }}</dd></div>
           <div><dt>会话数</dt><dd>{{ customer.totalConversations || 0 }}</dd></div>
+          <div class="full-row"><dt>备注</dt><dd>{{ customer.remark || '-' }}</dd></div>
           <div class="full-row"><dt>最后联系</dt><dd>{{ formatDateTime(customer.lastContactTime) }}</dd></div>
         </dl>
         <el-button class="detail-button" size="small" @click="goDetail(customer)">查看详情</el-button>

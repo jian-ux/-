@@ -39,7 +39,7 @@ async function fetch() {
     const r = await request.get('/admin/log/operation', { params: { page: page.value, size: pageSize } })
     logs.value = r.data?.records || []
     total.value = r.data?.total || 0
-  } catch(e) {
+  } catch {
     logs.value = []
     total.value = 0
   } finally {

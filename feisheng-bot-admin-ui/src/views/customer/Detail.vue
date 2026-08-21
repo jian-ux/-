@@ -19,6 +19,7 @@
       <el-descriptions-item label="会话数">{{ customer.totalConversations || 0 }}</el-descriptions-item>
       <el-descriptions-item label="最后联系">{{ formatDateTime(customer.lastContactTime) }}</el-descriptions-item>
       <el-descriptions-item label="创建时间">{{ formatDateTime(customer.createTime) }}</el-descriptions-item>
+      <el-descriptions-item label="备注" :span="2">{{ customer.remark || '-' }}</el-descriptions-item>
     </el-descriptions>
 
     <section class="conversation-section">
@@ -60,6 +61,9 @@
       <el-form-item label="姓名"><el-input v-model="form.name" maxlength="100" /></el-form-item>
       <el-form-item label="手机"><el-input v-model="form.phone" maxlength="20" /></el-form-item>
       <el-form-item label="邮箱"><el-input v-model="form.email" maxlength="100" /></el-form-item>
+      <el-form-item label="备注">
+        <el-input v-model="form.remark" type="textarea" :rows="4" maxlength="500" show-word-limit />
+      </el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="editVisible=false">取消</el-button>
@@ -82,7 +86,7 @@ const conversationPage = ref(1)
 const conversationSize = 10
 const editVisible = ref(false)
 const saving = ref(false)
-const form = reactive({ name:'', phone:'', email:'' })
+const form = reactive({ name:'', phone:'', email:'', remark:'' })
 
 async function loadCustomer() {
   const r = await request.get('/admin/customer/'+route.params.id)
@@ -101,7 +105,8 @@ function openEdit() {
   Object.assign(form, {
     name: customer.value?.name || '',
     phone: customer.value?.phone || '',
-    email: customer.value?.email || ''
+    email: customer.value?.email || '',
+    remark: customer.value?.remark || ''
   })
   editVisible.value = true
 }
@@ -112,7 +117,8 @@ async function saveCustomer() {
     await request.put(`/admin/customer/${route.params.id}`, {
       name: form.name.trim(),
       phone: form.phone.trim(),
-      email: form.email.trim()
+      email: form.email.trim(),
+      remark: form.remark.trim()
     })
     ElMessage.success('客户资料已更新')
     editVisible.value = false

@@ -1,5 +1,6 @@
 package com.feisheng.bot.admin.entity;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
@@ -17,4 +18,6 @@ public class SysUser extends BaseEntity {
     private String phone;
     private String avatar;
     private Integer status;
+    @TableField(exist = false)
+    private Boolean admin;
 }

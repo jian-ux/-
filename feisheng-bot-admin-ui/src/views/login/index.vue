@@ -23,7 +23,7 @@ const form = reactive({ username: '', password: '' })
 const handleLogin = async () => {
   loading.value = true
   try { await auth.login(form.username, form.password); ElMessage.success('登录成功'); router.push('/') }
-  catch (e) {}
+  catch {}
   finally { loading.value = false }
 }
 </script>

@@ -39,6 +39,19 @@ class ContextualQueryResolverTest {
     }
 
     @Test
+    void rewritesDianqianSelectionAfterCaClarification() {
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", "CA证书怎么申请？"),
+            message("ai", "您是咨询翔晟CA吗还是点签电子合同平台呢？"),
+            message("user", "点签电子合同")), "点签电子合同");
+
+        assertTrue(result.clarificationResolved());
+        assertTrue(result.rewritten());
+        assertEquals("CA证书怎么申请？ 点签电子合同", result.query());
+        assertEquals("CA证书怎么申请？", result.previousQuestion());
+    }
+
+    @Test
     void replacesAccessChannelWithoutChangingOperation() {
         ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
             message("user", "微信端怎么发起合同？"),
@@ -108,6 +121,36 @@ class ContextualQueryResolverTest {
         assertTrue(result.contextDependent());
         assertTrue(result.rewritten());
         assertEquals("点签电子合同 怎么登录？", result.query());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"那费用呢？", "价格呢？", "多少钱一份？", "套餐多少钱？"})
+    void mergesShortAttributeFollowUpsWithThePreviousBusinessScenario(
+            String currentQuestion) {
+        String previousQuestion = "点签电子合同的标准套餐怎么购买？";
+
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", previousQuestion),
+            message("ai", "可以按企业签署量购买套餐。"),
+            message("user", currentQuestion)), currentQuestion);
+
+        assertTrue(result.contextDependent());
+        assertTrue(result.rewritten());
+        assertTrue(result.previousQuestionMerged());
+        assertEquals(previousQuestion + " " + currentQuestion, result.query());
+        assertEquals(previousQuestion, result.previousQuestion());
+    }
+
+    @Test
+    void doesNotInventShortAttributeContextWithoutBusinessHistory() {
+        String currentQuestion = "多少钱一份？";
+
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", "之前的问题已经结束了")), currentQuestion);
+
+        assertTrue(result.contextDependent());
+        assertFalse(result.rewritten());
+        assertEquals(currentQuestion, result.query());
     }
 
     @Test

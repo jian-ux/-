@@ -3,7 +3,10 @@ import request from '../api/index.js'
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({ token: localStorage.getItem('token') || '', userInfo: null }),
-  getters: { isLoggedIn: state => !!state.token },
+  getters: {
+    permissions: state => state.userInfo?.permissions || [],
+    hasPermission: state => permission => (state.userInfo?.permissions || []).includes(permission)
+  },
   actions: {
     async login(username, password) {
       const res = await request.post('/admin/login', { username, password })

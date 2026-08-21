@@ -190,7 +190,7 @@ async function fetch() {
     const r = await request.get('/admin/rules/list', {params:{size:500}})
     rules.value = r.data?.records || []
     page.value = Math.min(page.value, Math.max(1, Math.ceil(filteredRules.value.length / pageSize)))
-  } catch(e) { rules.value = [] }
+  } catch { rules.value = [] }
 }
 
 function openAdd() {

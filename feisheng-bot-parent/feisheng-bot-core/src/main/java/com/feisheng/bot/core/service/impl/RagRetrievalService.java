@@ -62,6 +62,31 @@ public class RagRetrievalService {
     private static final double FOCUSED_QA_MIN_QUESTION_SIMILARITY = 0.30;
     private static final double FOCUSED_QA_MIN_SIMILARITY_GAIN = 0.15;
     private static final double FOCUSED_QA_MAX_RERANK_SCORE_GAP = 0.12;
+    private static final List<Map.Entry<String, String>> QUESTION_SYNONYMS = List.of(
+        Map.entry("公司认证", "企业认证"),
+        Map.entry("实名核验", "实名认证"),
+        Map.entry("如何", "怎么"),
+        Map.entry("怎样", "怎么"),
+        Map.entry("咋样", "怎么"),
+        Map.entry("怎么做", "怎么"),
+        Map.entry("签署", "签"),
+        Map.entry("签约", "签"),
+        Map.entry("签字", "签"),
+        Map.entry("电子签章", "印章"),
+        Map.entry("电子印章", "印章"),
+        Map.entry("多少钱", "价格"),
+        Map.entry("费用", "价格"),
+        Map.entry("收费", "价格"),
+        Map.entry("模版", "模板"),
+        Map.entry("创建合同", "发起合同"),
+        Map.entry("新建合同", "发起合同"),
+        Map.entry("官方网站", "官网"),
+        Map.entry("哪些", "什么"),
+        Map.entry("资料", "材料"));
+    private static final List<String> QUESTION_FILLERS = List.of(
+        "能不能", "可不可以", "为什么", "为何", "是否", "能否", "可以",
+        "请问", "怎么", "吗", "呢", "呀", "吧", "哪些", "什么", "多少",
+        "哪里", "哪儿");
 
     private final FaqMatchServiceImpl faqMatchService;
     private final EmbeddingService embeddingService;
@@ -384,6 +409,8 @@ public class RagRetrievalService {
                 Boolean.TRUE.equals(candidate.get("structuredQa"))
                     && StructuredQaUtil.normalizeQuestion(query).equals(
                         StructuredQaUtil.normalizeQuestion(structuredQuestion(candidate))));
+            candidate.put("sentenceSimilarity",
+                round6(questionSimilarity(query, focusQuestion(candidate))));
             TopicAlignment alignment = topicAlignment(query, candidate);
             candidate.put("topicMismatch", alignment.mismatch());
             candidate.put("topicAlignment", alignment.label());
@@ -1103,9 +1130,9 @@ public class RagRetrievalService {
         return number(candidate.get("combinedScore"));
     }
 
-    private double questionSimilarity(String left, String right) {
-        String first = StructuredQaUtil.normalizeQuestion(left);
-        String second = StructuredQaUtil.normalizeQuestion(right);
+    double questionSimilarity(String left, String right) {
+        String first = canonicalQuestion(left);
+        String second = canonicalQuestion(right);
         if (first.isBlank() || second.isBlank()) return 0;
         int[][] lengths = new int[first.length() + 1][second.length() + 1];
         for (int i = 1; i <= first.length(); i++) {
@@ -1115,8 +1142,36 @@ public class RagRetrievalService {
                     : Math.max(lengths[i - 1][j], lengths[i][j - 1]);
             }
         }
-        return 2.0 * lengths[first.length()][second.length()]
+        double lcsSimilarity = 2.0 * lengths[first.length()][second.length()]
             / (first.length() + second.length());
+        return Math.max(lcsSimilarity, bigramSimilarity(first, second));
+    }
+
+    private String canonicalQuestion(String value) {
+        String normalized = StructuredQaUtil.normalizeQuestion(value);
+        for (Map.Entry<String, String> synonym : QUESTION_SYNONYMS) {
+            normalized = normalized.replace(synonym.getKey(), synonym.getValue());
+        }
+        return normalized;
+    }
+
+    private double bigramSimilarity(String first, String second) {
+        Set<String> firstBigrams = contentBigrams(first);
+        Set<String> secondBigrams = contentBigrams(second);
+        if (firstBigrams.isEmpty() || secondBigrams.isEmpty()) return 0;
+        long overlap = firstBigrams.stream().filter(secondBigrams::contains).count();
+        return 2.0 * overlap / (firstBigrams.size() + secondBigrams.size());
+    }
+
+    private Set<String> contentBigrams(String value) {
+        String content = value;
+        for (String filler : QUESTION_FILLERS) content = content.replace(filler, "");
+        if (content.length() < 2) return Set.of();
+        Set<String> bigrams = new LinkedHashSet<>();
+        for (int index = 0; index < content.length() - 1; index++) {
+            bigrams.add(content.substring(index, index + 2));
+        }
+        return bigrams;
     }
 
     /**
@@ -1441,6 +1496,7 @@ public class RagRetrievalService {
             copy.put("qaDirectStatus", candidate.get("qaDirectStatus"));
             copy.put("directMatchMode", candidate.get("directMatchMode"));
             copy.put("structuredQaExactMatch", candidate.get("structuredQaExactMatch"));
+            copy.put("sentenceSimilarity", candidate.get("sentenceSimilarity"));
             copy.put("answerTypeCoverage", candidate.get("answerTypeCoverage"));
             copy.put("answerTypeCoveragePromoted", candidate.get("answerTypeCoveragePromoted"));
             copy.put("focusedStructuredQaPromoted",
@@ -1862,6 +1918,9 @@ public class RagRetrievalService {
         double rightRank = number(right.get("rankScore"));
         int ranking = Double.compare(rightRank, leftRank);
         if (Math.abs(rightRank - leftRank) > 0.002) return ranking;
+        int sentenceSimilarity = Double.compare(
+            number(right.get("sentenceSimilarity")), number(left.get("sentenceSimilarity")));
+        if (sentenceSimilarity != 0) return sentenceSimilarity;
         int priority = Double.compare(
             number(right.get("documentPriority")), number(left.get("documentPriority")));
         if (priority != 0) return priority;

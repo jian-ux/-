@@ -7,6 +7,7 @@ import com.feisheng.bot.admin.entity.BotCustomer;
 import com.feisheng.bot.admin.mapper.BotConversationMapper;
 import com.feisheng.bot.admin.mapper.BotCustomerMapper;
 import com.feisheng.bot.admin.service.CustomerProfileSyncService;
+import com.feisheng.bot.common.exception.BusinessException;
 import com.feisheng.bot.common.vo.R;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
@@ -38,6 +39,7 @@ public class CustomerController {
             q.and(w -> w.like(BotCustomer::getName, normalizedKeyword)
                 .or().like(BotCustomer::getPhone, normalizedKeyword)
                 .or().like(BotCustomer::getEmail, normalizedKeyword)
+                .or().like(BotCustomer::getRemark, normalizedKeyword)
                 .or().like(BotCustomer::getNickname, normalizedKeyword)
                 .or().like(BotCustomer::getChannelUserId, normalizedKeyword));
         }
@@ -66,6 +68,11 @@ public class CustomerController {
         customer.setName(trimToNull(changes.getName()));
         customer.setPhone(trimToNull(changes.getPhone()));
         customer.setEmail(trimToNull(changes.getEmail()));
+        String remark = trimToNull(changes.getRemark());
+        if (remark != null && remark.length() > 500) {
+            throw new BusinessException(400, "客户备注不能超过 500 个字符");
+        }
+        customer.setRemark(remark);
         mapper.updateById(customer);
         return R.ok();
     }

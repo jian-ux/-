@@ -49,6 +49,12 @@ public class ContextualQueryResolver {
             + "(?:号码|手机号|接收人号码|接收方号码)(?:还)?(?:能|可以))"
             + ".{0,16}(?:改掉|修改|更换|换掉|撤回|重发|重新发起|补进去|补充|添加|删除|取消|继续使用|改|换)"
             + "(?:吗|么|呢|不)?$");
+    private static final Pattern SHORT_ATTRIBUTE_FOLLOW_UP = Pattern.compile(
+        "^(?:(?:那|那么|然后|这个|那个)?"
+            + "(?:费用|价格|收费|套餐|官网|电话|热线|联系方式|材料|资料|流程|时间|期限|功能|作用|条件|原因|效果|地址|账号|合同|模板)"
+            + "(?:呢|吗|怎么样|如何|怎么|多少|多少钱(?:一份|一套|一次)?|是什么|有哪些|有吗|在哪(?:里|儿)?)?"
+            + "|(?:那|那么|然后)?多少钱(?:一份|一套|一次)?"
+            + "|(?:那|那么|然后)?怎么收费)$");
     private static final List<String> BUSINESS_SUBJECTS = List.of(
         "管理员", "企业", "公司", "单位", "机构", "组织", "个人", "员工", "用户", "法人");
     private static final List<String> ACCESS_CHANNELS = List.of(
@@ -154,10 +160,25 @@ public class ContextualQueryResolver {
 
     private ClarificationResolution resolveClarification(
             List<BotMessage> messages, String currentQuestion) {
+        int previousAiIndex = messages == null || messages.isEmpty()
+            ? -1 : immediatelyPreviousAiIndex(messages, currentQuestion);
+        if (previousAiIndex >= 0) {
+            BotMessage previousAi = messages.get(previousAiIndex);
+            String previousReply = previousAi == null ? "" : normalize(previousAi.getContent());
+            String previousQuestion = previousUserQuestionBefore(messages, previousAiIndex);
+            if (previousReply.contains("翔晟ca")
+                    && containsAny(normalize(currentQuestion),
+                        List.of("点签", "电子合同", "电子签约"))) {
+                String query = previousQuestion == null
+                    ? currentQuestion : previousQuestion + " 点签电子合同";
+                return new ClarificationResolution(query, previousQuestion,
+                    "other_product_ca");
+            }
+        }
+
         String contractType = contractTypeAnswer(currentQuestion);
         if (contractType == null || messages == null || messages.isEmpty()) return null;
 
-        int previousAiIndex = immediatelyPreviousAiIndex(messages, currentQuestion);
         if (previousAiIndex < 0) return null;
         BotMessage previousAi = messages.get(previousAiIndex);
         String previousQuestion = previousUserQuestionBefore(messages, previousAiIndex);
@@ -250,6 +271,7 @@ public class ContextualQueryResolver {
         if (REFERENCE_MARKERS.stream().anyMatch(normalized::contains)) return true;
         if (SUBJECTLESS_FOLLOW_UPS.contains(normalized)) return true;
         if (isEllipticalBusinessFollowUp(normalized)) return true;
+        if (SHORT_ATTRIBUTE_FOLLOW_UP.matcher(normalized).matches()) return true;
         if (normalized.length() <= 24
                 && SUBJECTLESS_FOLLOW_UPS.stream().anyMatch(normalized::endsWith)) {
             return true;
@@ -280,6 +302,7 @@ public class ContextualQueryResolver {
         return normalizedQuestion.length() <= 48
             && containsAny(previousQuestion, CONTEXTUAL_BUSINESS_MARKERS)
             && (containsAny(normalizedQuestion, CONTEXT_CARRY_TERMS)
+                || SHORT_ATTRIBUTE_FOLLOW_UP.matcher(normalizedQuestion).matches()
                 || isEllipticalBusinessFollowUp(normalizedQuestion));
     }
 

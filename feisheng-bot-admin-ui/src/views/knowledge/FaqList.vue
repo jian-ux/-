@@ -89,7 +89,7 @@ const fetch = async () => {
     const r=await request.get('/admin/knowledge/item/search',{params:{page:page.value,size:pageSize,keyword:keyword.value}})
     items.value=r.data?.records||[]
     total.value=r.data?.total||0
-  } catch(e) { items.value=[]; total.value=0 }
+  } catch { items.value=[]; total.value=0 }
 }
 const search = () => { page.value = 1; fetch() }
 const resetForm = () => {

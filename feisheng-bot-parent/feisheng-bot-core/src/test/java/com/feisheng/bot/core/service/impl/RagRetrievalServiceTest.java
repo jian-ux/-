@@ -1584,6 +1584,22 @@ class RagRetrievalServiceTest {
     }
 
     @Test
+    void recognizesDomainSynonymsAndWordOrderAsSimilarSentences() {
+        double similarity = service.questionSimilarity(
+            "如何进行企业认证？", "公司认证怎么做？");
+
+        assertTrue(similarity >= 0.70, "similarity=" + similarity);
+    }
+
+    @Test
+    void keepsDifferentOperationsApartWhenOnlyQuestionFormMatches() {
+        double similarity = service.questionSimilarity(
+            "怎么登录？", "怎么认证？");
+
+        assertTrue(similarity < 0.60, "similarity=" + similarity);
+    }
+
+    @Test
     void promotesFocusedStructuredQaWhenTopRerankHitHasVeryLowQuestionAlignment() {
         String query = "一个账号能管理多家子公司的合同吗？";
         ReflectionTestUtils.setField(service, "rerankHighMinScore", 0.65);

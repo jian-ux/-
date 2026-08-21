@@ -18,6 +18,7 @@ import com.feisheng.bot.core.service.PlainTextReplyFormatter;
 import com.feisheng.bot.core.service.ReplyAttachmentService;
 import com.feisheng.bot.core.service.RichReplyFormatter;
 import com.feisheng.bot.core.service.SensitiveDataService;
+import com.feisheng.bot.core.service.TextCorrectionService;
 import com.feisheng.bot.knowledge.service.KnowledgeImageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -50,6 +51,7 @@ public class DialogServiceImpl {
     private static final String PARTIAL_ANSWER_SIGNAL = "__ANSWER_PARTIAL__";
     private static final ModelAnswerSignalParser MODEL_ANSWER_SIGNAL_PARSER =
         new ModelAnswerSignalParser();
+    private static final TextCorrectionService TEXT_CORRECTION = new TextCorrectionService();
     private static final Pattern STRUCTURED_ANSWER_IN_CONTEXT = Pattern.compile(
         "(?ms)^答案：(.*?)(?=^事实：|^回答时先锁定|\\z)");
     private static final Pattern ANNUAL_SIGNING_VOLUME_NUMBER = Pattern.compile("\\d{1,9}");
@@ -146,6 +148,20 @@ public class DialogServiceImpl {
         "好的，您可以先参考上述方案；后续需要客户经理对接时，随时告诉我“转人工”即可。";
     private static final String EVIDENCE_CONFLICT_REPLY =
         "目前可确认的价格口径存在冲突，我不能直接给出具体金额，需要由人工客服进一步核实。";
+    private static final String UNIFIED_CONTRACT_PRICING_REPLY =
+        "您好！感谢您的咨询。关于合同套餐和每份合同的价格，我们点签电子合同平台是以套餐形式进行收费的，"
+            + "您可以根据企业的实际签署量选择相应的套餐份数进行购买。\n\n"
+            + "目前，官网的标准套餐价格会根据不同的份数档位有所差异。为了给您提供最准确的价格信息，"
+            + "建议您访问我们的官网查看具体的套餐详情和价格：https://www.fs-signature.com/。\n\n"
+            + "也可以直接拨打客服热线询问（186 8963 3999）。";
+    private static final String OFFICIAL_WEBSITE_REPLY =
+        "您好！我们公司的官网地址是：https://www.fs-signature.com/。";
+    private static final String CA_PRODUCT_CLARIFICATION_REPLY =
+        "您是咨询翔晟CA吗还是点签电子合同平台呢？";
+    private static final String UKEY_PRODUCT_CLARIFICATION_REPLY =
+        "您是咨询翔晟UKey吗？还是点签电子合同平台呢？";
+    private static final String UKEY_DIANQIAN_LIMIT_REPLY =
+        "您好，这个问题我不能准确地回答，需要我帮您转接人工吗？";
     private static final String INSUFFICIENT_LIST_EVIDENCE_REPLY =
         "目前可确认的信息不足以列出完整、准确的材料清单，我不能补充未经核实的材料，需要由人工客服进一步确认。";
     private static final String PRODUCT_USAGE_CHANNEL_QUERY = "点签可以在哪里使用？";
@@ -460,6 +476,7 @@ public class DialogServiceImpl {
         String promptVersion = promptProvider.resolveVersion(requestedPromptVersion);
         Set<String> redactedTypes = new LinkedHashSet<>();
         String safeText = redact(text, redactedTypes);
+        String understandingText = TEXT_CORRECTION.correct(safeText);
         String safeTitle = redact(title, redactedTypes);
         String safeProvidedContext = redact(providedRagContext, redactedTypes);
         String safeModalityContext = redact(modalityContext, redactedTypes);
@@ -498,28 +515,28 @@ public class DialogServiceImpl {
                 conversation, businessPreCheck, emotion, started, redactedTypes);
         }
 
-        if (isPreviousQuestionRequest(safeText)) {
+        if (isPreviousQuestionRequest(understandingText)) {
             return previousQuestionResponse(
                 conversation, preCheck, recentMessages, safeText, emotion, started,
                 redactedTypes, promptVersion);
         }
 
-        if (isPriceHandoffConsent(safeText, recentMessages)) {
+        if (isPriceHandoffConsent(understandingText, recentMessages)) {
             return manualHandoffResponse(conversation, emotion, started, redactedTypes);
         }
-        if (isPriceHandoffDeclined(safeText, recentMessages)) {
+        if (isPriceHandoffDeclined(understandingText, recentMessages)) {
             return priceQualificationResponse(
                 conversation, preCheck, PRICE_HANDOFF_DECLINED_REPLY,
                 "answered", AnswerDecision.ANSWER, "price_handoff_declined",
                 emotion, started, redactedTypes);
         }
-        if (isAwaitingAnnualSigningVolume(recentMessages, safeText)) {
+        if (isAwaitingAnnualSigningVolume(recentMessages, understandingText)) {
             return annualSigningVolumeResponse(
-                conversation, preCheck, classifyAnnualSigningVolume(safeText, true),
+                conversation, preCheck, classifyAnnualSigningVolume(understandingText, true),
                 emotion, started, redactedTypes);
         }
 
-        BasicConversationIntent basicIntent = matchBasicConversationIntent(safeText);
+        BasicConversationIntent basicIntent = matchBasicConversationIntent(understandingText);
         if (basicIntent != null) {
             return basicConversationResponse(
                 conversation, preCheck, basicIntent, emotion, started, redactedTypes,
@@ -529,25 +546,52 @@ public class DialogServiceImpl {
         // An explicit human request is a deterministic routing command, not a
         // knowledge question. Handle it before pricing, tools, and RAG so a
         // phrase such as "转人工" cannot fall through to the no-answer reply.
-        if (isExplicitHandoffRequest(safeText)) {
+        if (isExplicitHandoffRequest(understandingText)) {
             return manualHandoffResponse(conversation, emotion, started, redactedTypes);
         }
 
-        if (isPriceQualificationQuestion(safeText)) {
+        if (isUKeyDianqianQuestion(understandingText)) {
+            return basicConversationResponse(
+                conversation, preCheck, BasicConversationIntent.UKEY_DIANQIAN_LIMIT,
+                emotion, started, redactedTypes, promptVersion);
+        }
+        if (isOtherProductClarificationQuestion(understandingText)) {
+            BasicConversationIntent clarificationIntent = hasStandaloneCa(understandingText)
+                ? BasicConversationIntent.CA_PRODUCT_CLARIFICATION
+                : BasicConversationIntent.UKEY_PRODUCT_CLARIFICATION;
+            return basicConversationResponse(
+                conversation, preCheck, clarificationIntent,
+                emotion, started, redactedTypes, promptVersion);
+        }
+
+        if (isOfficialWebsiteQuestion(understandingText, recentMessages)) {
+            return basicConversationResponse(
+                conversation, preCheck, BasicConversationIntent.OFFICIAL_WEBSITE,
+                emotion, started, redactedTypes, promptVersion);
+        }
+
+        if (isUnifiedContractPricingQuestion(understandingText, recentMessages)) {
+            return priceQualificationResponse(
+                conversation, preCheck, UNIFIED_CONTRACT_PRICING_REPLY,
+                "answered", AnswerDecision.ANSWER, "unified_contract_pricing",
+                emotion, started, redactedTypes);
+        }
+
+        if (isPriceQualificationQuestion(understandingText)) {
             return annualSigningVolumeResponse(
-                conversation, preCheck, classifyAnnualSigningVolume(safeText, false),
+                conversation, preCheck, classifyAnnualSigningVolume(understandingText, false),
                 emotion, started, redactedTypes);
         }
 
         // Price information is an explicit human-confirmation boundary. This
         // executes before tools, retrieval, and the model, even if a price table
         // has been uploaded to the knowledge base.
-        if (isPriceQuestion(safeText)) {
+        if (isPriceQuestion(understandingText)) {
             return priceHandoffResponse(conversation, safeText, emotion, started, redactedTypes);
         }
 
         BusinessToolOrchestrator.ToolRoutingResult toolRouting = businessToolOrchestrator.route(
-            conversation.getId(), channelType, channelUserId, safeText, recentMessages);
+            conversation.getId(), channelType, channelUserId, understandingText, recentMessages);
         if (toolRouting != null && toolRouting.handled()) {
             return toolResponse(
                 conversation, preCheck, toolRouting, emotion, started, redactedTypes);
@@ -558,11 +602,11 @@ public class DialogServiceImpl {
         // must be answered against its inherited topic instead of being
         // intercepted by a broad keyword rule (for example "登录" or "合同").
         ContextualQueryResolver.Resolution queryResolution =
-            contextualQueryResolver.resolve(recentMessages, safeText);
+            contextualQueryResolver.resolve(recentMessages, understandingText);
         boolean contextualQuestion = queryResolution.contextDependent()
             || queryResolution.rewritten();
         IntentService.IntentMatch intentMatch = contextualQuestion
-            ? null : intentService.match(safeText).orElse(null);
+            ? null : intentService.match(understandingText).orElse(null);
         if (intentMatch != null) {
             return intentResponse(
                 conversation, preCheck, intentMatch, emotion, started, redactedTypes);
@@ -571,8 +615,8 @@ public class DialogServiceImpl {
         String resolvedRetrievalQuestion = stripLeadingCourtesyPrefix(queryResolution.query());
         NlpIntentClassifier.IntentAnalysis nlpIntent =
             nlpIntentClassifier.classify(resolvedRetrievalQuestion);
-        boolean companyIntroductionQuestion = isCompanyIntroductionQuestion(safeText);
-        boolean compoundRenewalQuestion = isCompoundRenewalQuestion(safeText);
+        boolean companyIntroductionQuestion = isCompanyIntroductionQuestion(understandingText);
+        boolean compoundRenewalQuestion = isCompoundRenewalQuestion(understandingText);
         boolean broadProductUsageQuestion = nlpIntent.intentCode()
             == NlpIntentClassifier.IntentCode.PRODUCT_USAGE
             && isBroadProductUsageQuestion(resolvedRetrievalQuestion);
@@ -586,7 +630,7 @@ public class DialogServiceImpl {
             : queryResolution.rewritten() ? retrievalQuery : resolvedRetrievalQuestion;
         List<QueryVariant> supplementalRetrievalVariants = supplementalRetrievalVariants(
             primaryRetrievalQuery, retrievalQuery, resolvedRetrievalQuestion,
-            safeText, queryResolution.rewritten());
+            understandingText, queryResolution.rewritten());
         List<String> retrievalVariants = retrievalVariantQueries(
             primaryRetrievalQuery, supplementalRetrievalVariants);
         boolean retrievalQueryRewritten = queryResolution.rewritten()
@@ -599,14 +643,14 @@ public class DialogServiceImpl {
             ? null : retrievalHistory;
         RagRetrievalService.RetrievalResult retrieval;
         long retrievalStarted = System.nanoTime();
-        boolean parentCompanyQuestion = isParentCompanyQuestion(safeText)
-            || (!Objects.equals(safeText, retrievalQuery)
+        boolean parentCompanyQuestion = isParentCompanyQuestion(understandingText)
+            || (!Objects.equals(understandingText, retrievalQuery)
                 && isParentCompanyQuestion(retrievalQuery));
         boolean outOfScopeQuestion = parentCompanyQuestion
-            || isClearlyUnrelatedQuestion(safeText)
-            || (!Objects.equals(safeText, retrievalQuery)
+            || isClearlyUnrelatedQuestion(understandingText)
+            || (!Objects.equals(understandingText, retrievalQuery)
                 && isClearlyUnrelatedQuestion(retrievalQuery));
-        boolean ambiguousContractUpload = isAmbiguousContractUpload(nlpIntent, safeText);
+        boolean ambiguousContractUpload = isAmbiguousContractUpload(nlpIntent, understandingText);
         if (outOfScopeQuestion) {
             retrieval = emptyRetrieval();
         } else if (compoundRenewalQuestion
@@ -686,9 +730,9 @@ public class DialogServiceImpl {
         String retrievalEvidence = evidenceText(retrieval);
         boolean conflictingScalarFacts = retrieval.answerable()
             && EvidenceConsistencyGuard.hasConflictingScalarFacts(
-                safeText, retrievalEvidence);
+                understandingText, retrievalEvidence);
         String evidenceBackedReply = retrieval.answerable()
-            ? evidenceBackedKnowledgeReply(safeText, nlpIntent, retrieval) : null;
+            ? evidenceBackedKnowledgeReply(understandingText, nlpIntent, retrieval) : null;
         String guardedKnowledgeReply = hasText(evidenceBackedReply)
             ? evidenceBackedReply
             : retrieval.answerable() ? guardedKnowledgeReply(
@@ -860,7 +904,7 @@ public class DialogServiceImpl {
 
         if ("answered".equals(answerStatus) && retrieval.answerable()
                 && EvidenceConsistencyGuard.hasUnsupportedEnumeratedFacts(
-                    safeText, retrievalEvidence, replyText)) {
+                    understandingText, retrievalEvidence, replyText)) {
             replyText = INSUFFICIENT_LIST_EVIDENCE_REPLY;
             source = "rag_guardrail";
             answerStatus = "insufficient_evidence";
@@ -872,7 +916,7 @@ public class DialogServiceImpl {
                 && EvidenceConsistencyGuard.contradictsStandaloneAppBoundary(
                     retrievalEvidence, replyText)) {
             String reliableKnowledgeReply = verifiedProductUsageReply(
-                safeText, nlpIntent, retrieval);
+                understandingText, nlpIntent, retrieval);
             replyText = hasText(reliableKnowledgeReply)
                 ? reliableKnowledgeReply : STANDALONE_APP_BOUNDARY_REPLY;
             source = "rag_guardrail";
@@ -881,7 +925,7 @@ public class DialogServiceImpl {
             directKnowledge = true;
         } else if ("answered".equals(answerStatus) && retrieval.answerable()
                 && EvidenceConsistencyGuard.hasUnsupportedProceduralSteps(
-                    safeText, retrievalEvidence, replyText)) {
+                    understandingText, retrievalEvidence, replyText)) {
             String reliableKnowledgeReply = structuredKnowledgeFallback(retrieval);
             replyText = hasText(reliableKnowledgeReply)
                 ? reliableKnowledgeReply + "\n\n" + PROCEDURE_EVIDENCE_CLARIFICATION_REPLY
@@ -895,7 +939,7 @@ public class DialogServiceImpl {
             directKnowledge = hasText(reliableKnowledgeReply);
         } else if ("answered".equals(answerStatus) && retrieval.answerable()
                 && EvidenceConsistencyGuard.contradictsNegativeBoundary(
-                    safeText, retrievalEvidence, replyText)) {
+                    understandingText, retrievalEvidence, replyText)) {
             String reliableKnowledgeReply = structuredKnowledgeFallback(retrieval);
             replyText = hasText(reliableKnowledgeReply)
                 ? reliableKnowledgeReply
@@ -964,6 +1008,8 @@ public class DialogServiceImpl {
         response.put("queryContextDependent", queryResolution.contextDependent());
         response.put("contextResolutionApplied", queryResolution.rewritten());
         response.put("contextResolvedQuery", resolvedRetrievalQuestion);
+        response.put("queryCorrectionApplied", !Objects.equals(safeText, understandingText));
+        response.put("correctedQuery", understandingText);
         response.put("clarificationStateConsumed", queryResolution.clarificationResolved());
         response.put("clarificationResolutionSource", queryResolution.clarificationSource());
         if (pendingClarification != null) {
@@ -1018,6 +1064,8 @@ public class DialogServiceImpl {
         messageMetadata.put("queryContextDependent", queryResolution.contextDependent());
         messageMetadata.put("contextResolutionApplied", queryResolution.rewritten());
         messageMetadata.put("contextResolvedQuery", resolvedRetrievalQuestion);
+        messageMetadata.put("queryCorrectionApplied", !Objects.equals(safeText, understandingText));
+        messageMetadata.put("correctedQuery", understandingText);
         messageMetadata.put("clarificationStateConsumed", queryResolution.clarificationResolved());
         messageMetadata.put("clarificationResolutionSource",
             queryResolution.clarificationSource());
@@ -2221,8 +2269,16 @@ public class DialogServiceImpl {
 
     private boolean isParentCompanyQuestion(String question) {
         if (!hasText(question)) return false;
+        String normalized = normalizeQuestionForMatching(question);
+        boolean pointProductContext = containsAny(normalized,
+            "点签", "电子合同", "电子签约");
+        boolean explicitOtherProduct = containsAny(normalized,
+            "ca锁", "实体锁", "ukey", "安全控件", "守信签", "总部电子签章",
+            "翔晟电子签章", "翔晟");
+        if (pointProductContext && !explicitOtherProduct) return false;
         return containsConfiguredKeyword(question, outOfScopeKeywords)
-            || question.matches("(?is).*(?<![a-z])ca(?![a-z]).*");
+            || hasStandaloneCa(question)
+            || containsAny(normalized, "翔晟");
     }
 
     private boolean isClearlyUnrelatedQuestion(String question) {
@@ -2484,6 +2540,71 @@ public class DialogServiceImpl {
         boolean explicitQuantity = normalized.matches(".*\\d+\\s*(人|份|套|单|次|年).*?")
             || normalized.matches(".*(几十|几百|几千|多少)(人|份|套|单|次).*?");
         return customQuoteContext || explicitQuantity;
+    }
+
+    private boolean isUnifiedContractPricingQuestion(
+            String question, List<BotMessage> recentMessages) {
+        if (!hasText(question)) return false;
+        String normalized = normalizeQuestionForMatching(question);
+        boolean hasPriceTerm = PRICE_TERMS.stream().anyMatch(normalized::contains)
+            || containsConfiguredKeyword(question, priceHandoffKeywords);
+        if (!hasPriceTerm) return false;
+
+        boolean contractContext = containsAny(normalized,
+            "点签", "电子合同", "电子签约", "合同", "套餐", "签署量", "年用量",
+            "份", "每份", "一份", "每单", "每次");
+        if (contractContext) return true;
+
+        String previousQuestion = previousUserQuestion(recentMessages, question);
+        String latestReply = latestAiReply(recentMessages);
+        boolean previousPricingContext = hasText(previousQuestion)
+            && containsAny(previousQuestion,
+                "点签", "电子合同", "电子签约", "合同", "套餐", "签署量");
+        boolean latestPricingReply = hasText(latestReply)
+            && containsAny(latestReply,
+                "合同套餐", "每份合同", "价格", "收费", "官网标准套餐");
+        return previousPricingContext || latestPricingReply;
+    }
+
+    private boolean isOfficialWebsiteQuestion(
+            String question, List<BotMessage> recentMessages) {
+        if (!hasText(question)) return false;
+        String normalized = normalizeQuestionForMatching(question);
+        boolean websiteTerm = containsAny(normalized,
+            "官网", "官方网站", "网址", "网站地址", "网页地址", "官网链接", "官网地址");
+        if (!websiteTerm) return false;
+        if (containsAny(normalized, "点签", "电子合同", "电子签约")) return true;
+
+        String previousQuestion = previousUserQuestion(recentMessages, question);
+        return hasText(previousQuestion)
+            && containsAny(normalizeQuestionForMatching(previousQuestion),
+                "点签", "电子合同", "电子签约");
+    }
+
+    private boolean isOtherProductClarificationQuestion(String question) {
+        if (!hasText(question)) return false;
+        String normalized = normalizeQuestionForMatching(question);
+        boolean dianqian = containsAny(normalized, "点签", "电子合同", "电子签约");
+        boolean xiangsheng = containsAny(normalized, "翔晟");
+        boolean directOtherProduct = containsAny(normalized,
+            "ca锁", "实体锁", "安全控件", "守信签", "总部电子签章", "翔晟电子签章");
+        if (hasStandaloneCa(question)) {
+            return !dianqian && !xiangsheng && !directOtherProduct;
+        }
+        boolean ukey = containsAny(normalized, "ukey", "u-key");
+        return ukey && !dianqian && !xiangsheng;
+    }
+
+    private boolean isUKeyDianqianQuestion(String question) {
+        if (!hasText(question)) return false;
+        String normalized = normalizeQuestionForMatching(question);
+        return containsAny(normalized, "ukey", "u-key")
+            && containsAny(normalized, "点签", "电子合同", "电子签约")
+            && !containsAny(normalized, "翔晟");
+    }
+
+    private boolean hasStandaloneCa(String question) {
+        return hasText(question) && question.matches("(?is).*(?<![a-z])ca(?![a-z]).*");
     }
 
     private boolean isPriceQualificationQuestion(String question) {
@@ -3308,7 +3429,11 @@ public class DialogServiceImpl {
         CAPABILITY("capability", BASIC_CAPABILITY_REPLY),
         GREETING("greeting", BASIC_GREETING_REPLY),
         THANKS("thanks", BASIC_THANKS_REPLY),
-        GOODBYE("goodbye", BASIC_GOODBYE_REPLY);
+        GOODBYE("goodbye", BASIC_GOODBYE_REPLY),
+        OFFICIAL_WEBSITE("official_website", OFFICIAL_WEBSITE_REPLY),
+        CA_PRODUCT_CLARIFICATION("ca_product_clarification", CA_PRODUCT_CLARIFICATION_REPLY),
+        UKEY_PRODUCT_CLARIFICATION("ukey_product_clarification", UKEY_PRODUCT_CLARIFICATION_REPLY),
+        UKEY_DIANQIAN_LIMIT("ukey_dianqian_limit", UKEY_DIANQIAN_LIMIT_REPLY);
 
         private final String code;
         private final String reply;

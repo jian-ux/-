@@ -80,6 +80,36 @@ class QueryExpansionServiceTest {
     }
 
     @Test
+    void addsDomainSynonymsWithoutCallingModelWhenModelExpansionIsDisabled() {
+        service = new QueryExpansionService(
+            aiModelService, new ObjectMapper(), false, 5, 160);
+
+        List<QueryVariant> variants = service.expand("公司认证后怎么盖章？");
+
+        assertEquals(List.of(
+            QueryVariant.original("公司认证后怎么盖章？"),
+            new QueryVariant("企业认证后怎么盖章？", 0.84, "synonym", false),
+            new QueryVariant("公司认证后怎么用印？", 0.84, "synonym", false)
+        ), variants);
+        assertTrue(service.shouldExpand("公司认证后怎么盖章？", false));
+        verify(aiModelService, never()).chat(anyString(), anyString());
+    }
+
+    @Test
+    void capsBuiltInVariantsAndKeepsOriginalFirst() {
+        service = new QueryExpansionService(
+            aiModelService, new ObjectMapper(), false, 3, 160);
+
+        List<QueryVariant> variants = service.expand("公司认证后如何发起合同签署？");
+
+        assertEquals(3, variants.size());
+        assertTrue(variants.get(0).original());
+        assertEquals("企业认证后如何发起合同签署？", variants.get(1).query());
+        assertEquals("公司认证后如何发起合同签约？", variants.get(2).query());
+        verify(aiModelService, never()).chat(anyString(), anyString());
+    }
+
+    @Test
     void skipsVeryLongQueries() {
         service = new QueryExpansionService(aiModelService, new ObjectMapper(), 5, 32);
         String query = "电子合同".repeat(9);
@@ -152,8 +182,60 @@ class QueryExpansionServiceTest {
             ]}
             """);
 
-        assertOriginalOnly(service.expand("电子合同支持离线签署吗？"),
-            "电子合同支持离线签署吗？");
+        assertEquals(List.of(
+            QueryVariant.original("电子合同支持离线签署吗？"),
+            new QueryVariant("电子合同支持离线签约吗？", 0.84, "synonym", false)
+        ), service.expand("电子合同支持离线签署吗？"));
+    }
+
+    @Test
+    void rejectsVariantThatMovesNegationToAnotherAction() {
+        respondWith("""
+            {"original_query":"合同不能下载但可以查看吗？","variants":[
+              {"query":"合同可以下载但不能查看吗？","purpose":"standardized"}
+            ]}
+            """);
+
+        assertOriginalOnly(service.expand("合同不能下载但可以查看吗？"),
+            "合同不能下载但可以查看吗？");
+    }
+
+    @Test
+    void recognizesColloquialNegationWhenModelDropsIt() {
+        respondWith("""
+            {"original_query":"没显示下载按钮怎么办？","variants":[
+              {"query":"下载按钮在哪里？","purpose":"standardized"}
+            ]}
+            """);
+
+        assertOriginalOnly(service.expand("没显示下载按钮怎么办？"),
+            "没显示下载按钮怎么办？");
+    }
+
+    @Test
+    void acceptsEquivalentNegativeWordingForTheSameAction() {
+        respondWith("""
+            {"original_query":"电子合同为什么不能离线签署？","variants":[
+              {"query":"电子合同为何无法离线签约？","purpose":"standardized"}
+            ]}
+            """);
+
+        List<QueryVariant> variants = service.expand("电子合同为什么不能离线签署？");
+
+        assertTrue(variants.stream().anyMatch(variant ->
+            "电子合同为何无法离线签约？".equals(variant.query())));
+    }
+
+    @Test
+    void keepsNeutralChoiceQuestionsNeutral() {
+        respondWith("""
+            {"original_query":"合同能不能下载？","variants":[
+              {"query":"合同是否支持下载？","purpose":"standardized"}
+            ]}
+            """);
+
+        assertTrue(service.expand("合同能不能下载？").stream().anyMatch(variant ->
+            "合同是否支持下载？".equals(variant.query())));
     }
 
     @Test

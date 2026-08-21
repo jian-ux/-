@@ -161,7 +161,7 @@ async function del(id) {
     await request.delete('/admin/ai/model/' + id)
     ElMessage.success('已删除')
     fetch()
-  } catch(e) {}
+  } catch {}
 }
 
 onMounted(fetch)

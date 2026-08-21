@@ -1,1 +1,0 @@
-// Pinia stores auto-register

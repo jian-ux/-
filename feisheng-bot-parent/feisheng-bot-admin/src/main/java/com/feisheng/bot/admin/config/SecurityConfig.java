@@ -30,17 +30,37 @@ public class SecurityConfig {
                     "/api/public/knowledge-images/**",
                     "/gateway/channel/dingtalk/**", "/gateway/channel/wechat/**"
                 ).permitAll()
-                .requestMatchers(
-                    "/api/admin/user/**",
-                    "/api/admin/role/**",
-                    "/api/admin/permission/**",
-                    "/api/admin/ai/model/**",
-                    "/api/admin/rag/**",
-                    "/api/admin/knowledge/semantic-unit/**",
-                    "/api/admin/business/**",
-                    "/api/admin/channel/config/**",
-                    "/api/admin/rules/**"
-                ).hasRole("ADMIN")
+                .requestMatchers("/api/admin/user/info").authenticated()
+                .requestMatchers("/api/admin/permission/**", "/api/admin/role/**")
+                    .hasAuthority("system:permission:assign")
+                .requestMatchers("/api/admin/user/**").hasAuthority("system:user:list")
+                .requestMatchers("/api/admin/statistics/**").hasAuthority("dashboard:view")
+                .requestMatchers("/api/admin/channel/config/**").hasAuthority("channel:view")
+                .requestMatchers("/api/admin/customer/**").hasAuthority("customer:view")
+                .requestMatchers("/api/admin/intent/**").hasAuthority("intent:view")
+                .requestMatchers("/api/admin/ai/model/enabled")
+                    .hasAnyAuthority("ai:model:view", "playground:view")
+                .requestMatchers("/api/admin/ai/model/**").hasAuthority("ai:model:view")
+                .requestMatchers("/api/admin/ticket/**")
+                    .hasAnyAuthority("ticket:view", "conversation:view")
+                .requestMatchers("/api/admin/conversation/**").hasAuthority("conversation:view")
+                .requestMatchers("/api/admin/playground/**")
+                    .hasAnyAuthority("playground:view", "conversation:view")
+                .requestMatchers("/api/admin/log/**").hasAuthority("log:view")
+                .requestMatchers("/api/admin/rules/**").hasAuthority("settings:rules:view")
+                .requestMatchers("/api/admin/reply-strategy/**")
+                    .hasAuthority("settings:reply-strategy:view")
+                .requestMatchers("/api/admin/knowledge/item/**")
+                    .hasAuthority("knowledge:faq:list")
+                .requestMatchers("/api/admin/doc/**")
+                    .hasAnyAuthority("knowledge:upload:view", "knowledge:semantic:view")
+                .requestMatchers("/api/admin/knowledge/semantic-unit/**")
+                    .hasAuthority("knowledge:semantic:view")
+                .requestMatchers("/api/admin/knowledge-quality/**")
+                    .hasAuthority("knowledge:quality:view")
+                .requestMatchers("/api/admin/unmatched/**")
+                    .hasAuthority("knowledge:unmatched:view")
+                .requestMatchers("/api/admin/rag/**", "/api/admin/business/**").hasRole("ADMIN")
                 .anyRequest().authenticated())
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();

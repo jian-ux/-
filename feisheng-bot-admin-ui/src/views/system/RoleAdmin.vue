@@ -47,7 +47,7 @@ async function fetch() {
       page.value = Math.max(1, Math.ceil(total.value / pageSize))
       return await fetch()
     }
-  } catch(e) {
+  } catch {
     roles.value = []
     total.value = 0
   } finally {

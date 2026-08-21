@@ -1134,15 +1134,16 @@ class DialogServiceImplTest {
     }
 
     @Test
-    void asksForAnnualSigningVolumeBeforeAnsweringStandardPricingQuestion() {
+    void usesUnifiedReplyForContractPricingQuestion() {
         Map<String, Object> result = dialogService.send(
             "web", "user-price-defaults", "点签电子合同怎么收费？", "咨询");
 
         assertEquals("price_qualification", result.get("source"));
-        assertEquals("clarify", result.get("answerStatus"));
-        assertEquals("CLARIFY", result.get("answerDecision"));
-        assertEquals("price_volume_requested", result.get("fallbackDecision"));
-        assertEquals("请问贵公司一年的签署量大约在多少呢？", result.get("reply"));
+        assertEquals("answered", result.get("answerStatus"));
+        assertEquals("ANSWER", result.get("answerDecision"));
+        assertEquals("unified_contract_pricing", result.get("fallbackDecision"));
+        assertTrue(((String) result.get("reply")).contains("https://www.fs-signature.com/"));
+        assertTrue(((String) result.get("reply")).contains("186 8963 3999"));
         assertEquals(false, result.get("needsTransfer"));
         verify(retrievalService, never()).retrieve(anyString());
         verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
@@ -1150,19 +1151,112 @@ class DialogServiceImplTest {
     }
 
     @Test
-    void doesNotUseAnnualVolumeQualificationForSpecificMembershipPriceQuestion() {
+    void usesUnifiedReplyForPerContractPriceFollowUp() {
+        when(messageService.getByConversation(10L)).thenReturn(List.of(
+            message("user", "一千份合同多少钱？"),
+            message("ai", "请问贵公司一年的签署量大约在多少呢？"),
+            message("user", "多少钱一份")));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "user-price-follow-up", "多少钱一份", "咨询");
+
+        assertEquals("price_qualification", result.get("source"));
+        assertEquals("unified_contract_pricing", result.get("fallbackDecision"));
+        assertTrue(((String) result.get("reply")).contains("合同套餐和每份合同的价格"));
+        assertEquals(false, result.get("needsTransfer"));
+        verify(retrievalService, never()).retrieve(anyString());
+        verify(handoffCoordinator, never()).handoff(any(), anyString(), anyString());
+    }
+
+    @Test
+    void usesUnifiedReplyForOfficialWebsiteQuestion() {
+        Map<String, Object> result = dialogService.send(
+            "web", "user-official-website", "点签官网地址是什么？", "咨询");
+
+        assertEquals("basic_conversation", result.get("source"));
+        assertEquals("answered", result.get("answerStatus"));
+        assertEquals("ANSWER", result.get("answerDecision"));
+        assertEquals("basic_official_website", result.get("fallbackDecision"));
+        assertEquals("您好！我们公司的官网地址是：https://www.fs-signature.com/。",
+            result.get("reply"));
+        assertEquals(false, result.get("needsTransfer"));
+        verify(retrievalService, never()).retrieve(anyString());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+        verify(handoffCoordinator, never()).handoff(any(), anyString(), anyString());
+    }
+
+    @Test
+    void clarifiesGenericCaProductBeforeRetrieval() {
+        Map<String, Object> result = dialogService.send(
+            "web", "user-ca-clarification", "CA证书怎么申请？", "咨询");
+
+        assertEquals("basic_conversation", result.get("source"));
+        assertEquals("basic_ca_product_clarification", result.get("fallbackDecision"));
+        assertEquals("您是咨询翔晟CA吗还是点签电子合同平台呢？", result.get("reply"));
+        assertEquals(false, result.get("needsTransfer"));
+        verify(retrievalService, never()).retrieve(anyString());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+        verify(handoffCoordinator, never()).handoff(any(), anyString(), anyString());
+    }
+
+    @Test
+    void clarifiesGenericUKeyProductBeforeRetrieval() {
+        Map<String, Object> result = dialogService.send(
+            "web", "user-ukey-clarification", "U-Key怎么用？", "咨询");
+
+        assertEquals("basic_conversation", result.get("source"));
+        assertEquals("basic_ukey_product_clarification", result.get("fallbackDecision"));
+        assertEquals("您是咨询翔晟UKey吗？还是点签电子合同平台呢？", result.get("reply"));
+        assertEquals(false, result.get("needsTransfer"));
+        verify(retrievalService, never()).retrieve(anyString());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+        verify(handoffCoordinator, never()).handoff(any(), anyString(), anyString());
+    }
+
+    @Test
+    void routesExplicitXiangshengProductToServiceGroup() {
+        Map<String, Object> result = dialogService.send(
+            "web", "user-xiangsheng-ukey", "翔晟UKey怎么申请？", "咨询");
+
+        assertEquals("out_of_scope", result.get("source"));
+        assertEquals("parent_company_out_of_scope", result.get("fallbackDecision"));
+        assertTrue(((String) result.get("reply")).contains("575467556"));
+        assertEquals(false, result.get("needsTransfer"));
+        verify(retrievalService, never()).retrieve(anyString());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+        verify(handoffCoordinator, never()).handoff(any(), anyString(), anyString());
+    }
+
+    @Test
+    void givesUKeyLimitReplyWhenCustomerSelectsDianqian() {
+        Map<String, Object> result = dialogService.send(
+            "web", "user-dianqian-ukey", "点签电子合同的UKey怎么用？", "咨询");
+
+        assertEquals("basic_conversation", result.get("source"));
+        assertEquals("basic_ukey_dianqian_limit", result.get("fallbackDecision"));
+        assertEquals("您好，这个问题我不能准确地回答，需要我帮您转接人工吗？",
+            result.get("reply"));
+        assertEquals(false, result.get("needsTransfer"));
+        verify(retrievalService, never()).retrieve(anyString());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+        verify(handoffCoordinator, never()).handoff(any(), anyString(), anyString());
+    }
+
+    @Test
+    void usesUnifiedReplyForSpecificMembershipPriceQuestion() {
         String question = "点签的会员价是多少钱？";
-        when(retrievalService.retrieve(question)).thenReturn(
-            new RagRetrievalService.RetrievalResult(
-                false, false, null, null, 0.3, "no_answer", true,
-                Collections.emptyList(), Collections.emptyList()));
 
         Map<String, Object> result = dialogService.send(
             "web", "user-membership-price", question, "咨询");
 
-        verify(retrievalService).retrieve(question);
-        assertFalse("price_qualification".equals(result.get("source")));
-        assertFalse("请问贵公司一年的签署量大约在多少呢？".equals(result.get("reply")));
+        assertEquals("price_qualification", result.get("source"));
+        assertEquals("unified_contract_pricing", result.get("fallbackDecision"));
+        assertTrue(((String) result.get("reply")).contains("https://www.fs-signature.com/"));
+        assertTrue(((String) result.get("reply")).contains("186 8963 3999"));
+        assertEquals(false, result.get("needsTransfer"));
+        verify(retrievalService, never()).retrieve(anyString());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+        verify(handoffCoordinator, never()).handoff(any(), anyString(), anyString());
     }
 
     @Test
@@ -1402,7 +1496,7 @@ class DialogServiceImplTest {
         ReflectionTestUtils.setField(dialogService, "transferOnNoAnswer", false);
 
         for (String question : List.of(
-                "实体锁怎么续期", "安徽CA锁延期怎么延期", "CA证书到期怎么办")) {
+                "实体锁怎么续期", "安徽CA锁延期怎么延期")) {
             Map<String, Object> result = dialogService.send(
                 "wecom", "parent-company-" + question.hashCode(), question, "咨询");
 
@@ -1930,16 +2024,15 @@ class DialogServiceImplTest {
         Map<String, Object> result = dialogService.send(
             "wecom", "user-high-risk-sentinel", "量子合同定制报价是多少", "咨询");
 
-        assertEquals("price_handoff", result.get("source"));
-        assertEquals("price_handoff", result.get("fallbackDecision"));
-        assertEquals("价格问题已提交人工确认", result.get("reply"));
-        assertEquals(true, result.get("needsTransfer"));
+        assertEquals("price_qualification", result.get("source"));
+        assertEquals("unified_contract_pricing", result.get("fallbackDecision"));
+        assertTrue(((String) result.get("reply")).contains("https://www.fs-signature.com/"));
+        assertEquals(false, result.get("needsTransfer"));
         assertEquals(Collections.emptyList(), result.get("citations"));
         verify(retrievalService, never()).retrieve(anyString());
         verify(aiModelService, never()).chatWithModel(
             anyString(), anyString(), any());
-        verify(handoffCoordinator).handoff(
-            10L, "价格相关信息需要人工确认", "P1");
+        verify(handoffCoordinator, never()).handoff(any(), anyString(), anyString());
     }
 
     @Test

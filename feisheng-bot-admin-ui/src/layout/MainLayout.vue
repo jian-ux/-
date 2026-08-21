@@ -15,33 +15,32 @@
     >
       <div class="app-brand">飞晟智能客服</div>
       <el-menu :default-active="route.path" router background-color="#304156" text-color="#bfcbd9" active-text-color="#409eff">
-        <el-menu-item index="/dashboard"><el-icon><Odometer /></el-icon><span>统计数据</span></el-menu-item>
-        <el-menu-item index="/channel"><el-icon><Connection /></el-icon><span>渠道配置</span></el-menu-item>
-        <el-menu-item index="/conversation"><el-icon><ChatDotSquare /></el-icon><span>对话监控</span></el-menu-item>
-        <el-menu-item index="/playground"><el-icon><ChatLineSquare /></el-icon><span>智能试聊</span></el-menu-item>
-        <el-menu-item index="/customer"><el-icon><UserFilled /></el-icon><span>客户管理</span></el-menu-item>
-        <el-menu-item index="/intent"><el-icon><SetUp /></el-icon><span>意图管理</span></el-menu-item>
-        <el-menu-item index="/ai/model"><el-icon><Cpu /></el-icon><span>智能模型</span></el-menu-item>
-        <el-menu-item index="/ticket"><el-icon><Ticket /></el-icon><span>工单管理</span></el-menu-item>
-        <el-menu-item index="/log"><el-icon><Document /></el-icon><span>操作日志</span></el-menu-item>
-        <el-sub-menu index="/knowledge">
+        <el-menu-item v-if="can('dashboard:view')" index="/dashboard"><el-icon><Odometer /></el-icon><span>统计数据</span></el-menu-item>
+        <el-menu-item v-if="can('channel:view')" index="/channel"><el-icon><Connection /></el-icon><span>渠道配置</span></el-menu-item>
+        <el-menu-item v-if="can('conversation:view')" index="/conversation"><el-icon><ChatDotSquare /></el-icon><span>对话监控</span></el-menu-item>
+        <el-menu-item v-if="can('playground:view')" index="/playground"><el-icon><ChatLineSquare /></el-icon><span>智能试聊</span></el-menu-item>
+        <el-menu-item v-if="can('customer:view')" index="/customer"><el-icon><UserFilled /></el-icon><span>客户管理</span></el-menu-item>
+        <el-menu-item v-if="can('intent:view')" index="/intent"><el-icon><SetUp /></el-icon><span>意图管理</span></el-menu-item>
+        <el-menu-item v-if="can('ai:model:view')" index="/ai/model"><el-icon><Cpu /></el-icon><span>智能模型</span></el-menu-item>
+        <el-menu-item v-if="can('ticket:view')" index="/ticket"><el-icon><Ticket /></el-icon><span>工单管理</span></el-menu-item>
+        <el-menu-item v-if="can('log:view')" index="/log"><el-icon><Document /></el-icon><span>操作日志</span></el-menu-item>
+        <el-sub-menu v-if="canAny(knowledgePermissions)" index="/knowledge">
           <template #title><el-icon><Notebook /></el-icon><span>知识库管理</span></template>
-          <el-menu-item index="/knowledge/faq"><span>常见问题管理</span></el-menu-item>
-          <el-menu-item index="/knowledge/upload"><span>知识库上传</span></el-menu-item>
-          <el-menu-item index="/knowledge/semantic-units"><span>结构化知识审核</span></el-menu-item>
-          <el-menu-item index="/knowledge/quality-audit"><span>知识质量审计</span></el-menu-item>
-          <el-menu-item index="/knowledge/unmatched"><span>未命中问题</span></el-menu-item>
+          <el-menu-item v-if="can('knowledge:faq:list')" index="/knowledge/faq"><span>常见问题管理</span></el-menu-item>
+          <el-menu-item v-if="can('knowledge:upload:view')" index="/knowledge/upload"><span>知识库上传</span></el-menu-item>
+          <el-menu-item v-if="can('knowledge:semantic:view')" index="/knowledge/semantic-units"><span>结构化知识审核</span></el-menu-item>
+          <el-menu-item v-if="can('knowledge:quality:view')" index="/knowledge/quality-audit"><span>知识质量审计</span></el-menu-item>
+          <el-menu-item v-if="can('knowledge:unmatched:view')" index="/knowledge/unmatched"><span>未命中问题</span></el-menu-item>
         </el-sub-menu>
-        <el-sub-menu index="/system">
+        <el-sub-menu v-if="canAny(systemPermissions)" index="/system">
           <template #title><el-icon><User /></el-icon><span>系统管理</span></template>
-          <el-menu-item index="/system/user"><span>用户管理</span></el-menu-item>
-          <el-menu-item index="/system/role"><span>角色管理</span></el-menu-item>
-          <el-menu-item index="/system/permission"><span>权限管理</span></el-menu-item>
+          <el-menu-item v-if="can('system:user:list')" index="/system/user"><span>用户管理</span></el-menu-item>
+          <el-menu-item v-if="can('system:permission:assign')" index="/system/permission"><span>权限分配</span></el-menu-item>
         </el-sub-menu>
-        <el-sub-menu index="/settings">
+        <el-sub-menu v-if="canAny(settingsPermissions)" index="/settings">
           <template #title><el-icon><Tools /></el-icon><span>设置</span></template>
-          <el-menu-item index="/settings/rules"><span>安全规则</span></el-menu-item>
-          <el-menu-item index="/settings/reply-strategy"><span>回复策略</span></el-menu-item>
+          <el-menu-item v-if="can('settings:rules:view')" index="/settings/rules"><span>安全规则</span></el-menu-item>
+          <el-menu-item v-if="can('settings:reply-strategy:view')" index="/settings/reply-strategy"><span>回复策略</span></el-menu-item>
         </el-sub-menu>
       </el-menu>
     </el-aside>
@@ -72,6 +71,11 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Odometer, User, Connection, Notebook, ChatDotSquare, UserFilled, Cpu, Ticket, Document, ArrowDown, ChatLineSquare, Tools, SetUp, Menu as MenuIcon } from '@element-plus/icons-vue'
 import { operatorText } from '../utils/displayText.js'
 const route = useRoute(); const router = useRouter(); const auth = useAuthStore()
+const knowledgePermissions = ['knowledge:faq:list', 'knowledge:upload:view', 'knowledge:semantic:view', 'knowledge:quality:view', 'knowledge:unmatched:view']
+const systemPermissions = ['system:user:list', 'system:permission:assign']
+const settingsPermissions = ['settings:rules:view', 'settings:reply-strategy:view']
+const can = permission => auth.hasPermission(permission)
+const canAny = permissions => permissions.some(can)
 const isMobile = ref(false)
 const sidebarOpen = ref(false)
 let mobileMedia = null

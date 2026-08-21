@@ -94,6 +94,30 @@ class TicketHandoffCoordinatorTest {
     }
 
     @Test
+    void keepsConversationInProcessingWhenExistingTicketIsAssigned() {
+        BotConversation conversation = new BotConversation();
+        conversation.setId(9L);
+        conversation.setStatus("transferred");
+        conversation.setHandoffStatus("WAITING");
+        BotTicket existing = new BotTicket();
+        existing.setId(100L);
+        existing.setStatus("processing");
+        existing.setAssigneeId(42L);
+        existing.setDescription("客服已接手");
+        when(conversationMapper.selectOne(any(Wrapper.class))).thenReturn(conversation);
+        when(ticketMapper.selectOne(any(Wrapper.class))).thenReturn(existing);
+
+        HandoffCoordinator.HandoffResult result = coordinator.handoff(
+            9L, "重复转接请求", "P1");
+
+        assertTrue(result.success());
+        assertFalse(result.created());
+        assertEquals("PROCESSING", conversation.getHandoffStatus());
+        assertEquals(42L, conversation.getAssignedAgentId());
+        verify(conversationMapper).updateById(conversation);
+    }
+
+    @Test
     void appendsRedactedCustomerSupplementToQueuedTicket() {
         BotTicket ticket = new BotTicket();
         ticket.setId(11L);

@@ -63,7 +63,7 @@ const form = reactive({ id:null, intentName:'', intentKeywords:'', replyTemplate
 async function fetch() {
   loading.value = true
   try { const r = await request.get('/admin/intent/list', {params:{page:page.value,size:pageSize,intentName:intentName.value.trim()}}); intents.value = r.data.records; total.value = r.data.total }
-  catch(e) { intents.value = [] }
+  catch { intents.value = [] }
   finally { loading.value = false }
 }
 function onPageChange(val) { page.value = val; fetch() }

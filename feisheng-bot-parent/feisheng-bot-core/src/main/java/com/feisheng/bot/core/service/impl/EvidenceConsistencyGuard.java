@@ -42,7 +42,8 @@ final class EvidenceConsistencyGuard {
         Pattern.CASE_INSENSITIVE);
     private static final Pattern DIRECT_OPERATION_QUERY = Pattern.compile(
         "能否|是否(?:还能|可以|能够)|还能|还可以|可不可以|能不能|可以.{0,12}[吗么]"
-            + "|能.{0,12}[吗么]");
+            + "|能.{0,12}[吗么]|为什么.{0,12}(?:不能|无法|不可|不支持|不允许)"
+            + "|(?:不能|无法|不可|不支持|不允许).{0,16}(?:吗|么|呢|原因|怎么回事)");
     private static final Pattern NEGATIVE_DIRECT_BOUNDARY = Pattern.compile(
         "(?:不能|无法|不可|不支持|不允许).{0,12}直接"
             + "|直接.{0,12}(?:不能|无法|不可|不支持|不允许)");

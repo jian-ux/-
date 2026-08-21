@@ -8,6 +8,7 @@ import com.feisheng.bot.admin.mapper.SysUserRoleMapper;
 import com.feisheng.bot.common.vo.R;
 import com.feisheng.bot.common.exception.BusinessException;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
@@ -23,7 +24,10 @@ public class UserController {
         LambdaQueryWrapper<SysUser> q = new LambdaQueryWrapper<>();
         if (StringUtils.hasText(username)) q.like(SysUser::getUsername, username);
         if (status != null) q.eq(SysUser::getStatus, status);
-        return R.ok(mapper.selectPage(new Page<>(page, size), q));
+        Page<SysUser> result = mapper.selectPage(new Page<>(page, size), q);
+        result.getRecords().forEach(user -> user.setAdmin(
+            mapper.selectRolesByUserId(user.getId()).contains("ROLE_ADMIN")));
+        return R.ok(result);
     }
     @PostMapping("/add") public R<Long> add(@RequestBody SysUser u) {
         if (!StringUtils.hasText(u.getUsername()) || !StringUtils.hasText(u.getPassword())) {
@@ -39,7 +43,17 @@ public class UserController {
         mapper.updateById(u);
         return R.ok();
     }
-    @DeleteMapping("/{id}") public R<Void> delete(@PathVariable Long id) { mapper.deleteById(id); return R.ok(); }
+    @DeleteMapping("/{id}")
+    @Transactional
+    public R<Void> delete(@PathVariable Long id) {
+        if (mapper.selectRolesByUserId(id).contains("ROLE_ADMIN")) {
+            throw new BusinessException(400, "不能删除超级管理员");
+        }
+        mapper.deleteDirectPermissions(id);
+        roleMapper.delete(new LambdaQueryWrapper<SysUserRole>().eq(SysUserRole::getUserId, id));
+        mapper.deleteById(id);
+        return R.ok();
+    }
 
     @GetMapping("/{id}/roles")
     public R<List<Long>> getUserRoles(@PathVariable Long id) {

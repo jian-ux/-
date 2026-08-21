@@ -2,7 +2,9 @@ package com.feisheng.bot.admin.controller;
 
 import com.feisheng.bot.admin.mapper.BotConversationMapper;
 import com.feisheng.bot.admin.mapper.BotCustomerMapper;
+import com.feisheng.bot.admin.entity.BotCustomer;
 import com.feisheng.bot.admin.service.CustomerProfileSyncService;
+import com.feisheng.bot.common.exception.BusinessException;
 import com.feisheng.bot.common.exception.GlobalExceptionHandler;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -13,7 +15,9 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -22,6 +26,37 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class CustomerControllerTest {
+    @Test
+    void updateTrimsAndSavesCustomerRemark() {
+        BotCustomerMapper customerMapper = mock(BotCustomerMapper.class);
+        BotCustomer customer = new BotCustomer();
+        customer.setId(7L);
+        when(customerMapper.selectById(7L)).thenReturn(customer);
+        CustomerController controller = new CustomerController(
+            customerMapper, mock(BotConversationMapper.class), mock(CustomerProfileSyncService.class));
+        BotCustomer changes = new BotCustomer();
+        changes.setRemark("  重点客户  ");
+
+        controller.update(7L, changes);
+
+        assertEquals("重点客户", customer.getRemark());
+        verify(customerMapper).updateById(customer);
+    }
+
+    @Test
+    void updateRejectsCustomerRemarkOverLimit() {
+        BotCustomerMapper customerMapper = mock(BotCustomerMapper.class);
+        BotCustomer customer = new BotCustomer();
+        when(customerMapper.selectById(7L)).thenReturn(customer);
+        CustomerController controller = new CustomerController(
+            customerMapper, mock(BotConversationMapper.class), mock(CustomerProfileSyncService.class));
+        BotCustomer changes = new BotCustomer();
+        changes.setRemark("x".repeat(501));
+
+        assertThrows(BusinessException.class, () -> controller.update(7L, changes));
+        verify(customerMapper, never()).updateById(customer);
+    }
+
     @Test
     void syncEndpointUpdatesCustomerProfiles() throws Exception {
         BotCustomerMapper customerMapper = mock(BotCustomerMapper.class);

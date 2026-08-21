@@ -372,7 +372,7 @@ async function loadModels() {
     const def = enabledModels.value.find(m => m.isDefault)
     if (def) selectedModelId.value = def.id
     else if (enabledModels.value.length > 0) selectedModelId.value = enabledModels.value[0].id
-  } catch(e) { enabledModels.value = [] }
+  } catch { enabledModels.value = [] }
 }
 
 async function loadSpeechSynthesisStatus() {
@@ -544,7 +544,7 @@ async function uploadImage(event) {
       ocrText: result.data.ocrText
     }
     ElMessage.success(`文字识别完成，共识别 ${result.data.ocrChars} 字`)
-  } catch (e) {
+  } catch {
     URL.revokeObjectURL(preview)
     attachedImage.value = null
   } finally {

@@ -112,4 +112,13 @@ class EvidenceConsistencyGuardTest {
         assertFalse(EvidenceConsistencyGuard.contradictsNegativeBoundary(
             "附件还能补进去吗？", evidence, reply));
     }
+
+    @Test
+    void detectsPositiveAnswerToExplicitNegativeQuestion() {
+        String evidence = "合同发出后不能直接追加附件，需要先撤回，补齐后重新发起。";
+        String reply = "合同可以直接追加附件。";
+
+        assertTrue(EvidenceConsistencyGuard.contradictsNegativeBoundary(
+            "合同为什么不能直接追加附件？", evidence, reply));
+    }
 }

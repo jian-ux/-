@@ -72,7 +72,7 @@ const form = reactive({ strategyName:'', action:'BLOCK', ruleCondition:'', prior
 async function fetch() {
   loading.value = true
   try { const r = await request.get('/admin/reply-strategy/list', {params:{page:page.value,size:pageSize}}); strategies.value = r.data.records; total.value = r.data.total }
-  catch(e) { strategies.value = [] }
+  catch { strategies.value = [] }
   finally { loading.value = false }
 }
 function onPageChange(val) { page.value = val; fetch() }

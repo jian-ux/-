@@ -23,11 +23,21 @@ public class NlpIntentClassifier {
     private static final List<String> CAPABILITY_TERMS = List.of(
         "可以签", "能签", "支持签", "是否可以签", "是否能签", "能不能签", "可不可以签", "能否签", "支持");
     private static final List<String> LEGAL_RISK_TERMS = List.of(
-        "法律效力", "有法律效力", "是否合法", "合法吗", "合规吗", "违约责任", "赔偿责任", "法律风险", "有效吗");
+        "法律合规性", "法律合规", "法律效力", "有法律效力", "是否合法", "合法吗", "合规吗",
+        "违约责任", "赔偿责任", "法律风险", "有效吗");
     private static final List<String> PRODUCT_TERMS = List.of(
         "点签", "你们平台", "贵司平台", "本公司平台", "平台", "产品", "系统");
     private static final List<String> FEATURE_TERMS = List.of(
-        "有哪些功能", "有什么功能", "什么功能", "有哪些能力", "有什么能力", "能做什么", "支持什么", "产品介绍", "平台介绍");
+        "有哪些功能", "有什么功能", "什么功能", "点签功能", "产品功能", "有哪些能力", "有什么能力",
+        "能做什么", "支持什么", "产品介绍", "平台介绍");
+    private static final List<String> VERSION_FEATURE_TERMS = List.of(
+        "版本功能", "版本区别", "版本差异", "版本对比", "不同版本", "各版本");
+    private static final List<String> VERSION_NAMES = List.of(
+        "基础版", "专业版", "高级版", "增值服务");
+    private static final List<String> SIGNING_FLOW_TERMS = List.of(
+        "合同签署流程", "电子合同签署流程", "签署流程", "合同签约流程", "签约流程");
+    private static final Set<String> LEGAL_COMPLIANCE_MENU_QUESTIONS = Set.of(
+        "法律合规性", "法律合规", "点签法律合规性", "电子合同法律合规性");
     private static final List<String> USAGE_TERMS = List.of(
         "怎么使用", "如何使用", "怎样使用", "怎么用", "如何用", "使用方法", "在哪里使用", "怎么操作", "如何操作");
     private static final List<String> ACCOUNT_TERMS = List.of(
@@ -65,6 +75,12 @@ public class NlpIntentClassifier {
         String productSignal = firstMatch(normalized, PRODUCT_TERMS);
         String subject = extractContractSubject(normalized);
 
+        if (LEGAL_COMPLIANCE_MENU_QUESTIONS.contains(normalized)) {
+            addSignal(signals, actions, "legal", legalSignal);
+            return result(IntentCode.CONTRACT_LEGAL_RISK, "contract", RiskLevel.HIGH,
+                entities, actions, false, "电子合同法律合规性", signals, null, false);
+        }
+
         addSignal(signals, entities, "domain", contractSignal);
         addSignal(signals, entities, "product", productSignal);
         if (subject != null) entities.add(subject);
@@ -95,17 +111,30 @@ public class NlpIntentClassifier {
             if (signingSignal != null) {
                 addSignal(signals, actions, "operation", signingSignal);
                 boolean ambiguousUpload = isAmbiguousContractUpload(normalized);
+                boolean signingFlowQuestion = firstMatch(normalized, SIGNING_FLOW_TERMS) != null;
                 String signingRetrievalQuery = ambiguousUpload
                     ? "发起合同有几种方式？ 已有合同文件怎么上传发起签署，"
                         + "已签纸质合同怎么上传归档？"
+                    : signingFlowQuestion ? "签署的流程是怎么样的？"
                     : original;
                 return result(IntentCode.CONTRACT_SIGNING_OPERATION, "contract", RiskLevel.LOW,
-                    entities, actions, ambiguousUpload || productSignal == null,
+                    entities, actions,
+                    ambiguousUpload || (productSignal == null && !signingFlowQuestion),
                     signingRetrievalQuery, signals, subject, false);
             }
         }
 
         String featureSignal = firstMatch(normalized, FEATURE_TERMS);
+        String versionSignal = firstMatch(normalized, VERSION_FEATURE_TERMS);
+        String versionName = firstMatch(normalized, VERSION_NAMES);
+        if (versionSignal != null || (versionName != null && featureSignal != null)) {
+            addSignal(signals, entities, "version", versionName);
+            addSignal(signals, actions, "version_features",
+                versionSignal == null ? featureSignal : versionSignal);
+            return result(IntentCode.PRODUCT_VERSION_FEATURES, "product", RiskLevel.LOW,
+                entities, actions, false, "点签不同产品版本有什么区别？", signals,
+                versionName, false);
+        }
         if (productSignal != null && featureSignal != null) {
             addSignal(signals, actions, "features", featureSignal);
             return result(IntentCode.PRODUCT_FEATURES, "product", RiskLevel.LOW,
@@ -226,6 +255,7 @@ public class NlpIntentClassifier {
         CONTRACT_TYPE_CAPABILITY,
         CONTRACT_LEGAL_RISK,
         PRODUCT_FEATURES,
+        PRODUCT_VERSION_FEATURES,
         PRODUCT_USAGE,
         ACCOUNT_OPERATION,
         UNKNOWN

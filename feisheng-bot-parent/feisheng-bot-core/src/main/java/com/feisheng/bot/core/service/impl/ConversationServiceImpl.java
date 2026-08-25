@@ -27,6 +27,7 @@ public class ConversationServiceImpl {
         BotConversation cv = mapper.selectById(id);
         if (cv != null) { cv.setStatus("closed"); mapper.updateById(cv); }
     }
+    public BotConversation getById(Long id) { return mapper.selectById(id); }
     public void updateStatus(BotConversation cv) {
         mapper.updateById(cv);
     }

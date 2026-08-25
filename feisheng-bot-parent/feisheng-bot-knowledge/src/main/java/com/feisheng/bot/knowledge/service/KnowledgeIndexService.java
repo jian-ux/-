@@ -9,6 +9,7 @@ import com.feisheng.bot.knowledge.mapper.BotKnowledgeChunkMapper;
 import com.feisheng.bot.knowledge.mapper.BotKnowledgeDocumentMapper;
 import com.feisheng.bot.knowledge.mapper.BotKnowledgeItemMapper;
 import com.feisheng.bot.knowledge.mapper.BotKnowledgeItemChunkMapper;
+import com.feisheng.bot.common.util.KnowledgeTextUtil;
 import com.feisheng.bot.common.util.StructuredQaUtil;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -223,7 +224,7 @@ public class KnowledgeIndexService {
         for (ItemEntry entry : current.items().values()) {
             Map<String, Object> payload = itemPayload(entry);
             if (PayloadFilters.matches(payload, normalizedFilters)) {
-                addPhoneticMatch(scored, payload, query, entry.question(), minScore);
+                addPhoneticMatch(scored, payload, query, entry.searchableText(), minScore);
             }
         }
         for (FaqChunkEntry entry : current.faqChunks().values()) {
@@ -265,7 +266,7 @@ public class KnowledgeIndexService {
         for (ItemEntry entry : current.items().values()) {
             Map<String, Object> payload = itemPayload(entry);
             if (PayloadFilters.matches(payload, normalizedFilters)) {
-                addLexicalMatch(scored, payload, query, entry.question(), minScore);
+                addLexicalMatch(scored, payload, query, entry.searchableText(), minScore);
             }
         }
         for (FaqChunkEntry entry : current.faqChunks().values()) {
@@ -443,7 +444,8 @@ public class KnowledgeIndexService {
             if (!vector.isEmpty()) {
                 itemEntries.put(item.getId(), new ItemEntry(
                     item.getId(), item.getCategoryId(), nullToEmpty(item.getQuestion()),
-                    nullToEmpty(item.getAnswer()), nullToEmpty(item.getKeywords()), vector,
+                    nullToEmpty(item.getAnswer()), nullToEmpty(item.getKeywords()),
+                    KnowledgeTextUtil.questionAliases(item.getAlternateQuestions(), item.getQuestion()), vector,
                     nullToEmpty(item.getEmbeddingModel()), nullToEmpty(item.getEmbeddingVersion()),
                     item.getEmbeddingDimensions(), nullToEmpty(item.getEmbeddingContentHash())));
             }
@@ -482,7 +484,7 @@ public class KnowledgeIndexService {
             if (!vector.isEmpty()) {
                 faqChunkEntries.put(chunk.getId(), new FaqChunkEntry(
                     chunk.getId(), chunk.getItemId(), chunk.getChunkIndex(),
-                    parent.categoryId(), parent.question(), parent.keywords(),
+                    parent.categoryId(), parent.question(), parent.keywords(), parent.alternateQuestions(),
                     nullToEmpty(chunk.getContent()), vector,
                     nullToEmpty(chunk.getEmbeddingModel()), nullToEmpty(chunk.getEmbeddingVersion()),
                     chunk.getEmbeddingDimensions(), nullToEmpty(chunk.getEmbeddingContentHash())));
@@ -532,8 +534,7 @@ public class KnowledgeIndexService {
         List<Bm25SearchIndex.SourceDocument> documents = new ArrayList<>(
             items.size() + faqChunks.size() + chunks.size());
         items.values().forEach(entry -> documents.add(new Bm25SearchIndex.SourceDocument(
-            itemPayload(entry), String.join("\n", entry.question(), entry.question(),
-                entry.keywords(), entry.answer()))));
+            itemPayload(entry), entry.searchableText())));
         faqChunks.values().forEach(entry -> documents.add(new Bm25SearchIndex.SourceDocument(
             faqChunkPayload(entry), entry.searchableText())));
         chunks.values().forEach(entry -> documents.add(new Bm25SearchIndex.SourceDocument(
@@ -601,6 +602,7 @@ public class KnowledgeIndexService {
         payload.put("question", entry.question());
         payload.put("answer", entry.answer());
         payload.put("keywords", entry.keywords());
+        payload.put("alternateQuestions", entry.alternateQuestions());
         addEmbeddingMetadata(payload, entry.embeddingModel(), entry.embeddingVersion(),
             entry.embeddingDimensions(), entry.embeddingContentHash());
         payload.put("content", entry.answer());
@@ -622,6 +624,7 @@ public class KnowledgeIndexService {
         payload.put("answer", entry.content());
         payload.put("content", entry.content());
         payload.put("keywords", entry.keywords());
+        payload.put("alternateQuestions", entry.alternateQuestions());
         addEmbeddingMetadata(payload, entry.embeddingModel(), entry.embeddingVersion(),
             entry.embeddingDimensions(), entry.embeddingContentHash());
         return payload;
@@ -886,16 +889,24 @@ public class KnowledgeIndexService {
     }
 
     private record ItemEntry(Long id, Long categoryId, String question, String answer, String keywords,
-                             List<Double> vector, String embeddingModel, String embeddingVersion,
-                               Integer embeddingDimensions, String embeddingContentHash) {}
+                             List<String> alternateQuestions, List<Double> vector,
+                             String embeddingModel, String embeddingVersion,
+                               Integer embeddingDimensions, String embeddingContentHash) {
+        private String searchableText() {
+            return String.join("\n", question, keywords,
+                String.join("\n", alternateQuestions), answer);
+        }
+    }
 
     private record FaqChunkEntry(Long id, Long itemId, Integer chunkIndex,
-                                  Long categoryId, String question, String keywords, String content,
+                                  Long categoryId, String question, String keywords,
+                                  List<String> alternateQuestions, String content,
                                   List<Double> vector, String embeddingModel,
                                  String embeddingVersion, Integer embeddingDimensions,
                                  String embeddingContentHash) {
         private String searchableText() {
-            return String.join("\n", question, keywords, content);
+            return String.join("\n", question, keywords,
+                String.join("\n", alternateQuestions), content);
         }
     }
 

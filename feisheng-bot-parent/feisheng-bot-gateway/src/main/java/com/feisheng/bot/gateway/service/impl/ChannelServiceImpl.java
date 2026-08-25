@@ -51,8 +51,14 @@ public class ChannelServiceImpl {
             if (!StringUtils.hasText(dto.getContent())) {
                 throw new IllegalArgumentException("message content is empty after normalization");
             }
-            Map<String, Object> result = coreClient.sendMessage(
-                dto.getChannelType(), dto.getChannelUserId(), dto.getContent(), null);
+            Map<String, Object> result = StringUtils.hasText(dto.getMessageContentType())
+                    || StringUtils.hasText(dto.getMessageMetadata())
+                ? coreClient.sendMessage(dto.getChannelType(), dto.getChannelUserId(),
+                    dto.getContent(), null, dto.getMessageContentType(),
+                    dto.getMessageMetadata())
+                : coreClient.sendMessage(
+                    dto.getChannelType(), dto.getChannelUserId(), dto.getContent(), null);
+            result = suppressConcurrentHumanAcknowledgement(dto, result);
             try {
                 channelUserProfileService.refreshConversationStats(dto);
             } catch (RuntimeException e) {
@@ -72,6 +78,31 @@ public class ChannelServiceImpl {
                 log.warn("Could not release failed message {}: {}", dto.getMsgId(), cleanupError.getMessage());
             }
             throw e;
+        }
+    }
+
+    private Map<String, Object> suppressConcurrentHumanAcknowledgement(
+            ChannelMessageDTO dto, Map<String, Object> result) {
+        if (result == null
+                || !"dingtalk".equalsIgnoreCase(dto.getChannelType())
+                || !Boolean.TRUE.equals(result.get("humanHandling"))
+                || Boolean.TRUE.equals(result.get("suppressReply"))
+                || !StringUtils.hasText(String.valueOf(result.get("reply")))
+                || !StringUtils.hasText(String.valueOf(result.get("conversationId")))) {
+            return result;
+        }
+        String key = "human-handoff-ack:dingtalk:" + dto.getChannelUserId()
+            + ":" + result.get("conversationId");
+        try {
+            if (redisUtil.setnx(key, "sent", 24, TimeUnit.HOURS)) return result;
+            Map<String, Object> suppressed = new java.util.HashMap<>(result);
+            suppressed.put("reply", "");
+            suppressed.put("suppressReply", true);
+            return suppressed;
+        } catch (RuntimeException e) {
+            log.warn("Could not reserve one-time human handoff acknowledgement for {}: {}",
+                key, e.getMessage());
+            return result;
         }
     }
 }

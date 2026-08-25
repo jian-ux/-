@@ -25,4 +25,12 @@ class KnowledgeTextUtilTest {
             .map(KnowledgeTextUtil.FaqEmbeddingPart::answerPart)
             .reduce("", String::concat));
     }
+
+    @Test
+    void includesPublishedQuestionAliasesInFaqEmbeddingText() {
+        String text = KnowledgeTextUtil.faqEmbeddingText(
+            "套餐怎么收费？", "价格", "按套餐份数收费。", "[\"电子合同多少钱一份？\"]");
+
+        assertTrue(text.contains("套餐怎么收费？\n价格\n电子合同多少钱一份？"));
+    }
 }

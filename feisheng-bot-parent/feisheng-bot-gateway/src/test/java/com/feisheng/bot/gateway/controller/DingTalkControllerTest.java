@@ -5,6 +5,7 @@ import com.feisheng.bot.gateway.dto.ChannelMessageDTO;
 import com.feisheng.bot.gateway.dto.DingTalkMediaRequest;
 import com.feisheng.bot.gateway.service.DingTalkMediaProcessingException;
 import com.feisheng.bot.gateway.service.DingTalkMediaProcessor;
+import com.feisheng.bot.gateway.service.DingTalkImageReplyDispatcher.ReplyTarget;
 import com.feisheng.bot.gateway.service.impl.ChannelServiceImpl;
 import com.feisheng.bot.gateway.stream.DingTalkStreamCallbackListener;
 import com.feisheng.bot.gateway.util.DingTalkCryptoUtil;
@@ -138,7 +139,7 @@ class DingTalkControllerTest {
         ChannelServiceImpl channelService = mock(ChannelServiceImpl.class);
         DingTalkStreamCallbackListener streamListener =
             mock(DingTalkStreamCallbackListener.class);
-        when(streamListener.dispatchText(any(), anyString())).thenReturn(true);
+        when(streamListener.dispatchText(any(), anyString(), any())).thenReturn(true);
         DingTalkController controller = new DingTalkController(
             channelService, new ObjectMapper(), (DingTalkMediaProcessor) null, streamListener,
             SECRET, "", "");
@@ -151,10 +152,13 @@ class DingTalkControllerTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(Map.of(), response.getBody());
         ArgumentCaptor<ChannelMessageDTO> dto = ArgumentCaptor.forClass(ChannelMessageDTO.class);
+        ArgumentCaptor<ReplyTarget> target = ArgumentCaptor.forClass(ReplyTarget.class);
         verify(streamListener).dispatchText(dto.capture(),
-            eq("https://oapi.dingtalk.com/robot/sendBySession"));
+            eq("https://oapi.dingtalk.com/robot/sendBySession"), target.capture());
         assertEquals("text", dto.getValue().getMsgType());
         assertEquals("慢问题", dto.getValue().getContent());
+        assertEquals("user-1", target.getValue().senderStaffId());
+        assertEquals("cid-1", target.getValue().conversationId());
         verifyNoInteractions(channelService);
     }
 
@@ -164,7 +168,7 @@ class DingTalkControllerTest {
         DingTalkMediaProcessor mediaProcessor = mock(DingTalkMediaProcessor.class);
         DingTalkStreamCallbackListener streamListener =
             mock(DingTalkStreamCallbackListener.class);
-        when(streamListener.dispatchMedia(any(), any(), anyString())).thenReturn(true);
+        when(streamListener.dispatchMedia(any(), any(), anyString(), any())).thenReturn(true);
         DingTalkController controller = new DingTalkController(
             channelService, new ObjectMapper(), mediaProcessor, streamListener,
             SECRET, "", "");
@@ -182,7 +186,7 @@ class DingTalkControllerTest {
         ArgumentCaptor<DingTalkMediaRequest> media =
             ArgumentCaptor.forClass(DingTalkMediaRequest.class);
         verify(streamListener).dispatchMedia(dto.capture(), media.capture(),
-            eq("https://oapi.dingtalk.com/robot/sendBySession"));
+            eq("https://oapi.dingtalk.com/robot/sendBySession"), any());
         assertEquals("picture", dto.getValue().getMsgType());
         assertEquals("download-code", media.getValue().downloadCode());
         assertEquals("order.png", media.getValue().fileName());
@@ -195,7 +199,7 @@ class DingTalkControllerTest {
         DingTalkMediaProcessor mediaProcessor = mock(DingTalkMediaProcessor.class);
         DingTalkStreamCallbackListener streamListener =
             mock(DingTalkStreamCallbackListener.class);
-        when(streamListener.dispatchMedia(any(), any(), anyString())).thenReturn(true);
+        when(streamListener.dispatchMedia(any(), any(), anyString(), any())).thenReturn(true);
         DingTalkController controller = new DingTalkController(
             channelService, new ObjectMapper(), mediaProcessor, streamListener,
             SECRET, "", "");
@@ -215,7 +219,7 @@ class DingTalkControllerTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         ArgumentCaptor<DingTalkMediaRequest> media =
             ArgumentCaptor.forClass(DingTalkMediaRequest.class);
-        verify(streamListener).dispatchMedia(any(), media.capture(), anyString());
+        verify(streamListener).dispatchMedia(any(), media.capture(), anyString(), any());
         assertEquals("picture", media.getValue().msgType());
         assertEquals("rich-download-code", media.getValue().downloadCode());
         assertEquals("robot-code", media.getValue().robotCode());

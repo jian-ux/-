@@ -2,26 +2,146 @@
   <el-card>
     <template #header>
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <span>未命中问题收集</span>
+        <span>问题改进池</span>
         <div class="header-actions">
-          <el-tag type="info">智能试聊中知识库无法回答的问题会自动记录</el-tag>
+          <el-tag type="info">自动收集无答案、护栏、低置信度、慢响应和低评分问题</el-tag>
+          <el-button :loading="regressionRunning" @click="runRegression">回归验证</el-button>
           <el-button type="primary" :loading="clustering" @click="runClustering">聚类分析</el-button>
         </div>
       </div>
     </template>
+    <section v-loading="qualityLoading" class="quality-overview">
+      <dl class="quality-metrics">
+        <div>
+          <dt>待处理问题</dt>
+          <dd>{{ quality.pendingQuestionCount || 0 }}</dd>
+        </div>
+        <div>
+          <dt>累计发生次数</dt>
+          <dd>{{ quality.totalOccurrenceCount || 0 }}</dd>
+        </div>
+        <div>
+          <dt>问题处理率</dt>
+          <dd>{{ percentage(quality.resolutionRate) }}</dd>
+        </div>
+        <div>
+          <dt>最近回归通过率</dt>
+          <dd>{{ latestRegression ? percentage(latestRegression.passRate) : '-' }}</dd>
+        </div>
+      </dl>
+      <div class="quality-details">
+        <div class="quality-block">
+          <div class="quality-block-heading">
+            <strong>问题原因分布</strong>
+            <span>按发生次数统计</span>
+          </div>
+          <div v-if="quality.triggerCounts?.length" class="trigger-list">
+            <div v-for="item in quality.triggerCounts" :key="item.triggerType" class="trigger-row">
+              <span>{{ badCaseTypeLabel(item.triggerType) }}</span>
+              <el-tag size="small" type="info">{{ item.count }}</el-tag>
+            </div>
+          </div>
+          <el-empty v-else description="暂无问题原因" :image-size="44" />
+        </div>
+        <div class="quality-block regression-history">
+          <div class="quality-block-heading">
+            <strong>最近回归验证</strong>
+            <span v-if="quality.passRateDelta != null" :class="quality.passRateDelta >= 0 ? 'rate-up' : 'rate-down'">
+              较上次 {{ signedPercentage(quality.passRateDelta) }}
+            </span>
+            <span v-else>至少验证两次后显示变化</span>
+          </div>
+          <el-table v-if="quality.regressionHistory?.length" :data="quality.regressionHistory" size="small">
+            <el-table-column label="时间" min-width="130">
+              <template #default="{ row }">{{ formatDateTime(row.createTime) }}</template>
+            </el-table-column>
+            <el-table-column label="通过率" width="90">
+              <template #default="{ row }">{{ percentage(row.passRate) }}</template>
+            </el-table-column>
+            <el-table-column label="结果" width="76">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.passed ? 'success' : 'danger'">{{ row.passed ? '通过' : '未通过' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="failedCaseCount" label="失败" width="64" />
+          </el-table>
+          <el-empty v-else description="暂无回归记录" :image-size="44" />
+        </div>
+      </div>
+      <div v-if="quality.repeatedFailures?.length" class="repeated-failures">
+        <div class="quality-block-heading">
+          <strong>反复失败问题</strong>
+          <span>同一问法在多次回归中未通过</span>
+        </div>
+        <div class="repeated-list">
+          <div v-for="item in quality.repeatedFailures" :key="item.question" class="repeated-item">
+            <span class="repeated-question">{{ item.question }}</span>
+            <el-tag size="small" type="danger">失败 {{ item.failedRunCount }} 次</el-tag>
+          </div>
+        </div>
+      </div>
+    </section>
+    <div v-if="regressionReport" class="regression-result">
+      <el-alert
+        :title="regressionReport.passed ? '回归验证通过' : `回归验证发现 ${regressionReport.failedCaseCount} 个问题`"
+        :type="regressionReport.passed ? 'success' : 'error'"
+        :closable="false"
+        show-icon
+      />
+      <div class="regression-metrics">
+        <el-tag>已发布FAQ {{ regressionReport.publishedDraftCount }}</el-tag>
+        <el-tag type="info">样本 {{ regressionReport.datasetCaseCount }}</el-tag>
+        <el-tag type="success">通过 {{ regressionReport.passedCaseCount }}</el-tag>
+        <el-tag :type="regressionReport.failedCaseCount ? 'danger' : 'info'">失败 {{ regressionReport.failedCaseCount }}</el-tag>
+        <el-tag v-if="regressionReport.truncated" type="warning">本次执行前 {{ regressionReport.executedCaseCount }} 条</el-tag>
+      </div>
+      <el-table v-if="regressionReport.failedCases?.length" :data="regressionReport.failedCases" size="small" border>
+        <el-table-column prop="id" label="样本" width="150" />
+        <el-table-column prop="question" label="问题" min-width="220" show-overflow-tooltip />
+        <el-table-column prop="source" label="回答来源" width="120" />
+        <el-table-column prop="reply" label="实际回答" min-width="300" show-overflow-tooltip />
+        <el-table-column prop="error" label="错误" min-width="180" show-overflow-tooltip />
+      </el-table>
+    </div>
     <el-table v-loading="loading" :data="questions" border stripe>
       <el-table-column prop="id" label="编号" width="68" />
-      <el-table-column prop="question" label="问题" min-width="300" show-overflow-tooltip />
+      <el-table-column prop="question" label="问题" min-width="260" show-overflow-tooltip />
+      <el-table-column label="收集原因" min-width="220">
+        <template #default="{row}">
+          <el-tag
+            v-for="type in badCaseTypes(row.triggerTypes)"
+            :key="type"
+            size="small"
+            :type="badCaseTagType(type)"
+            class="reason-tag"
+          >{{ badCaseTypeLabel(type) }}</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column prop="similarCount" label="出现次数" width="100" align="center">
         <template #default="{row}"><el-tag size="small" :type="row.similarCount>1?'warning':'info'">{{ row.similarCount }}</el-tag></template>
+      </el-table-column>
+      <el-table-column label="最近诊断" min-width="250">
+        <template #default="{row}">
+          <span>{{ row.lastSource || '-' }}</span>
+          <span v-if="row.lastConfidence != null"> · 置信度 {{ formatScore(row.lastConfidence) }}</span>
+          <span v-if="row.lastLatencyMs != null"> · {{ row.lastLatencyMs }}ms</span>
+          <span v-if="row.lastCsatScore != null"> · {{ row.lastCsatScore }}星</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="改进建议" min-width="340">
+        <template #default="{row}">
+          <div v-for="advice in row.improvementAdvice || []" :key="advice.triggerType" class="advice-item">
+            <span class="advice-title">{{ advice.title }}：</span>{{ advice.suggestion }}
+          </div>
+        </template>
       </el-table-column>
       <el-table-column prop="isResolved" label="状态" width="100">
         <template #default="{row}">
           <el-tag size="small" :type="row.isResolved===1?'success':'danger'">{{ row.isResolved===1?'已处理':'待处理' }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="createTime" label="时间" width="180">
-        <template #default="{row}">{{ formatDateTime(row.createTime) }}</template>
+      <el-table-column prop="updateTime" label="最近发生" width="180">
+        <template #default="{row}">{{ formatDateTime(row.updateTime || row.createTime) }}</template>
       </el-table-column>
       <el-table-column label="操作" width="100">
         <template #default="{row}">
@@ -269,10 +389,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { formatDateTime } from '../../utils/displayText.js'
 const questions = ref([])
 const loading = ref(false)
+const qualityLoading = ref(false)
+const quality = ref({})
 const total = ref(0)
 const page = ref(1)
 const pageSize = 10
 const clustering = ref(false)
+const regressionRunning = ref(false)
+const regressionReport = ref(null)
 const clusterResult = ref(null)
 const selectedClusterIds = ref([])
 const splitSelections = ref({})
@@ -285,10 +409,12 @@ const draftForm = ref({ question: '', answer: '', keywords: '' })
 const draftSaving = ref(false)
 const draftPublishing = ref(false)
 const faqDraftTimeout = 180000
+const regressionTimeout = 1800000
 const canPublishDraft = computed(() => activeDraft.value?.status === 'DRAFT'
   && activeDraft.value?.evidenceStatus === 'SUPPORTED'
   && draftForm.value.question.trim()
   && draftForm.value.answer.trim())
+const latestRegression = computed(() => quality.value.regressionHistory?.[0] || null)
 
 async function fetch() {
   loading.value = true
@@ -304,9 +430,22 @@ async function fetch() {
   }
 }
 
+async function loadQuality() {
+  qualityLoading.value = true
+  try {
+    const response = await request.get('/admin/unmatched/quality')
+    quality.value = response.data || {}
+  } catch {
+    quality.value = {}
+  } finally {
+    qualityLoading.value = false
+  }
+}
+
 async function resolve(id) {
   await request.put('/admin/unmatched/' + id + '/resolve')
-  ElMessage.success('已标记'); fetch()
+  ElMessage.success('已标记')
+  await Promise.all([fetch(), loadQuality()])
 }
 
 async function runClustering() {
@@ -324,8 +463,63 @@ async function runClustering() {
   }
 }
 
+async function runRegression() {
+  if (regressionRunning.value) return
+  try {
+    await ElMessageBox.confirm(
+      '回归验证会调用真实模型并产生API费用，评测产生的会话数据会自动回滚。',
+      '运行回归验证',
+      { type: 'warning', confirmButtonText: '开始验证', cancelButtonText: '取消' }
+    )
+    regressionRunning.value = true
+    const response = await request.post('/admin/unmatched/faq-draft/regression', {}, { timeout: regressionTimeout })
+    regressionReport.value = response.data || null
+    await loadQuality()
+    ElMessage[response.data?.passed ? 'success' : 'warning'](
+      response.data?.passed ? '回归验证通过' : '回归验证发现未通过样本'
+    )
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') throw error
+  } finally {
+    regressionRunning.value = false
+  }
+}
+
 function formatScore(value) {
   return `${Math.round(Number(value || 0) * 100)}%`
+}
+
+function percentage(value) {
+  return `${Math.round(Number(value || 0) * 1000) / 10}%`
+}
+
+function signedPercentage(value) {
+  const percentageValue = Math.round(Number(value || 0) * 1000) / 10
+  return `${percentageValue > 0 ? '+' : ''}${percentageValue}%`
+}
+
+function badCaseTypes(value) {
+  return String(value || 'NO_ANSWER').split(',').map(item => item.trim()).filter(Boolean)
+}
+
+function badCaseTypeLabel(type) {
+  return {
+    NO_ANSWER: '无答案',
+    GUARDRAIL: '护栏触发',
+    LOW_CONFIDENCE: '低置信度',
+    SLOW_RESPONSE: '响应过慢',
+    LOW_RATING: '低评分'
+  }[type] || type
+}
+
+function badCaseTagType(type) {
+  return {
+    NO_ANSWER: 'danger',
+    GUARDRAIL: 'warning',
+    LOW_CONFIDENCE: 'warning',
+    SLOW_RESPONSE: 'info',
+    LOW_RATING: 'danger'
+  }[type] || 'info'
 }
 
 async function fetchLatestCluster() {
@@ -473,6 +667,7 @@ async function publishFaqDraft() {
       timeout: faqDraftTimeout
     })
     replaceDraft(response.data)
+    regressionReport.value = null
     await fetch()
     ElMessage.success('FAQ已发布并完成向量索引')
   } catch (error) {
@@ -592,10 +787,35 @@ async function deleteCluster(cluster) {
 onMounted(() => {
   fetch()
   fetchLatestCluster()
+  loadQuality()
 })
 </script>
 <style scoped>
 .header-actions { display:flex; align-items:center; gap:10px; }
+.quality-overview { margin-bottom:16px; padding:16px 0 0; border-bottom:1px solid #ebeef5; }
+.quality-metrics { display:grid; grid-template-columns:repeat(4, minmax(130px, 1fr)); margin:0; border:1px solid #ebeef5; border-radius:6px; }
+.quality-metrics div { min-width:0; padding:14px 16px; border-right:1px solid #ebeef5; }
+.quality-metrics div:last-child { border-right:0; }
+.quality-metrics dt { color:#7b8494; font-size:13px; }
+.quality-metrics dd { margin:6px 0 0; color:#202938; font-size:24px; font-weight:700; font-variant-numeric:tabular-nums; }
+.quality-details { display:grid; grid-template-columns:minmax(220px, .7fr) minmax(420px, 1.3fr); gap:24px; margin-top:16px; }
+.quality-block { min-width:0; }
+.quality-block-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:28px; margin-bottom:8px; }
+.quality-block-heading strong { color:#303133; }
+.quality-block-heading span { color:#909399; font-size:12px; }
+.trigger-list { border-top:1px solid #ebeef5; }
+.trigger-row { display:flex; align-items:center; justify-content:space-between; min-height:36px; border-bottom:1px solid #ebeef5; color:#606266; font-size:13px; }
+.rate-up { color:#198754 !important; }
+.rate-down { color:#c43d3d !important; }
+.repeated-failures { margin-top:16px; padding-top:14px; border-top:1px solid #ebeef5; }
+.repeated-list { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px 16px; }
+.repeated-item { display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; padding:8px 0; border-bottom:1px solid #f0f2f5; }
+.repeated-question { overflow:hidden; color:#606266; text-overflow:ellipsis; white-space:nowrap; }
+.reason-tag { margin:2px 6px 2px 0; }
+.advice-item + .advice-item { margin-top:6px; }
+.advice-title { color:#303133; font-weight:600; }
+.regression-result { margin-bottom:16px; }
+.regression-metrics { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; }
 .pagination-wrap { display:flex; justify-content:flex-end; margin-top:16px; overflow-x:auto; }
 .cluster-card { margin-top:16px; }
 .cluster-summary { display:flex; justify-content:space-between; align-items:center; gap:12px; }
@@ -615,6 +835,10 @@ onMounted(() => {
 .draft-section-title { color:#303133; font-weight:600; margin-bottom:10px; }
 .question-tag { margin:0 8px 8px 0; max-width:100%; white-space:normal; height:auto; }
 @media (max-width: 720px) {
+  .quality-metrics { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+  .quality-metrics div:nth-child(2) { border-right:0; }
+  .quality-metrics div:nth-child(-n+2) { border-bottom:1px solid #ebeef5; }
+  .quality-details, .repeated-list { grid-template-columns:minmax(0, 1fr); }
   .header-actions, .cluster-summary { align-items:flex-start; flex-direction:column; }
   .summary-items { justify-content:flex-start; }
   .cluster-title { display:block; }

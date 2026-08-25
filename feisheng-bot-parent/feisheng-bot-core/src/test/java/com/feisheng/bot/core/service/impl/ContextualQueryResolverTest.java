@@ -25,6 +25,7 @@ class ContextualQueryResolverTest {
 
         assertTrue(result.contextDependent());
         assertTrue(result.rewritten());
+        assertFalse(result.unresolved());
         assertEquals("企业怎么签合同", result.query());
     }
 
@@ -278,7 +279,51 @@ class ContextualQueryResolverTest {
 
         assertTrue(result.contextDependent());
         assertFalse(result.rewritten());
+        assertTrue(result.unresolved());
         assertEquals(question, result.query());
+    }
+
+    @Test
+    void identifiesUnresolvedReferenceWithoutConversationContext() {
+        ContextualQueryResolver.Resolution result =
+            resolver.resolve(List.of(), "这个怎么操作？");
+
+        assertTrue(result.contextDependent());
+        assertFalse(result.rewritten());
+        assertTrue(result.unresolved());
+    }
+
+    @Test
+    void doesNotMarkCompleteStandaloneQuestionAsUnresolved() {
+        ContextualQueryResolver.Resolution result =
+            resolver.resolve(List.of(), "电子合同有法律效力吗？");
+
+        assertFalse(result.contextDependent());
+        assertFalse(result.rewritten());
+        assertFalse(result.unresolved());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "我要签借款合同，这个怎么写？",
+        "合同已经发出但没人签，附件还能补进去吗？",
+        "点签的会员价是多少钱？"
+    })
+    void recognizesBusinessContextAlreadyProvidedInCurrentQuestion(String question) {
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(), question);
+
+        assertTrue(result.contextDependent());
+        assertFalse(result.rewritten());
+        assertFalse(result.unresolved());
+    }
+
+    @Test
+    void doesNotCountOverlappingBusinessTermsAsSeparateContext() {
+        ContextualQueryResolver.Resolution result =
+            resolver.resolve(List.of(), "电子合同的这个页面怎么操作？");
+
+        assertTrue(result.contextDependent());
+        assertTrue(result.unresolved());
     }
 
     @ParameterizedTest

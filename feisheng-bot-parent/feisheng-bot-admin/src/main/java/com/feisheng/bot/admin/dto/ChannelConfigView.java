@@ -21,6 +21,8 @@ public class ChannelConfigView {
     private String corpId;
     private String agentId;
     private boolean corpSecretConfigured;
+    private boolean callbackTokenConfigured;
+    private boolean callbackAesKeyConfigured;
 
     private String endpoint;
     private boolean accessTokenConfigured;

@@ -69,6 +69,8 @@ class FaqPublicationServiceTest {
         assertThat(captor.getValue().getStatus()).isEqualTo(1);
         assertThat(captor.getValue().getDirectAnswerEnabled()).isZero();
         assertThat(captor.getValue().getEmbedding()).isNotBlank();
+        assertThat(captor.getValue().getAlternateQuestions())
+            .isEqualTo("[\"电子合同多少钱一份？\"]");
         verify(unmatchedQuestionMapper).update(any(), any());
         verify(vectorSearchService).reloadItem(70L);
         verify(indexService).sync();
@@ -91,6 +93,7 @@ class FaqPublicationServiceTest {
         draft.setQuestion("电子合同套餐怎么收费？");
         draft.setAnswer("点签按照套餐份数收费。");
         draft.setKeywords("套餐价格,电子合同多少钱一份？");
+        draft.setSimilarQuestionsJson("[\"电子合同套餐怎么收费？\",\"电子合同多少钱一份？\"]");
         return draft;
     }
 }

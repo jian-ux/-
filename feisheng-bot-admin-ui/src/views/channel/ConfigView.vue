@@ -46,7 +46,7 @@
       <el-table-column label="操作" width="230" fixed="right">
         <template #default="{ row }">
           <el-button
-            v-if="row.channelType === 'dingtalk'"
+            v-if="row.channelType === 'dingtalk' || row.channelType === 'wechat'"
             size="small"
             :loading="testingId === row.id"
             @click="testConnection(row)"
@@ -128,6 +128,27 @@
           <el-form-item label="应用标识" prop="agentId">
             <el-input v-model="form.agentId" autocomplete="off" placeholder="请输入应用标识" />
           </el-form-item>
+          <el-form-item label="回调 Token" prop="callbackToken">
+            <el-input
+              v-model="form.callbackToken"
+              type="password"
+              show-password
+              autocomplete="new-password"
+              :placeholder="secretPlaceholder(form.callbackTokenConfigured, '请输入回调 Token')"
+            />
+          </el-form-item>
+          <el-form-item label="回调 AESKey" prop="callbackAesKey">
+            <el-input
+              v-model="form.callbackAesKey"
+              type="password"
+              show-password
+              autocomplete="new-password"
+              :placeholder="secretPlaceholder(form.callbackAesKeyConfigured, '请输入 EncodingAESKey')"
+            />
+          </el-form-item>
+          <el-form-item label="接收消息 URL">
+            <el-input model-value="/gateway/channel/wechat/message" readonly />
+          </el-form-item>
         </template>
 
         <template v-else-if="form.channelType === 'other'">
@@ -190,6 +211,10 @@ const emptyForm = () => ({
   corpSecret: '',
   agentId: '',
   corpSecretConfigured: false,
+  callbackToken: '',
+  callbackAesKey: '',
+  callbackTokenConfigured: false,
+  callbackAesKeyConfigured: false,
   endpoint: '',
   accessToken: '',
   accessTokenConfigured: false
@@ -211,6 +236,8 @@ const rules = {
   corpId: [{ validator: requiredWhen('wechat', null, '请输入企业标识'), trigger: 'blur' }],
   corpSecret: [{ validator: requiredWhen('wechat', 'corpSecretConfigured', '请输入应用密钥'), trigger: 'blur' }],
   agentId: [{ validator: requiredWhen('wechat', null, '请输入应用标识'), trigger: 'blur' }],
+  callbackToken: [{ validator: requiredWhen('wechat', 'callbackTokenConfigured', '请输入回调 Token'), trigger: 'blur' }],
+  callbackAesKey: [{ validator: requiredWhen('wechat', 'callbackAesKeyConfigured', '请输入 EncodingAESKey'), trigger: 'blur' }],
   endpoint: [{ validator: requiredWhen('other', null, '请输入服务地址'), trigger: 'blur' }]
 }
 
@@ -252,6 +279,8 @@ async function edit(row) {
     corpId: row.corpId || '',
     agentId: row.agentId || '',
     corpSecretConfigured: Boolean(row.corpSecretConfigured),
+    callbackTokenConfigured: Boolean(row.callbackTokenConfigured),
+    callbackAesKeyConfigured: Boolean(row.callbackAesKeyConfigured),
     endpoint: row.endpoint || '',
     accessTokenConfigured: Boolean(row.accessTokenConfigured)
   })
@@ -285,16 +314,14 @@ async function save() {
       corpId: form.corpId.trim(),
       corpSecret: form.corpSecret.trim(),
       agentId: form.agentId.trim(),
+      callbackToken: form.callbackToken.trim(),
+      callbackAesKey: form.callbackAesKey.trim(),
       endpoint: form.endpoint.trim(),
       accessToken: form.accessToken.trim()
     }
     if (isEdit.value) await request.put('/admin/channel/config/save', payload)
     else await request.post('/admin/channel/config/save', payload)
-    ElMessage.success(
-      form.channelType === 'dingtalk' && form.status === 1
-        ? '钉钉渠道已保存并连接'
-        : '渠道已保存'
-    )
+    ElMessage.success('渠道已保存')
     dialogVisible.value = false
     await fetch()
   } finally {
@@ -307,6 +334,10 @@ async function testConnection(row) {
   testingId.value = row.id
   try {
     const response = await request.post(`/admin/channel/config/${row.id}/test`)
+    if (response.data?.success === false) {
+      ElMessage.error(response.data.message || '连接测试失败')
+      return
+    }
     ElMessage.success(response.data?.message || '连接测试成功')
     await fetch()
   } finally {

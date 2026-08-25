@@ -48,6 +48,49 @@ public class AiModelServiceImpl {
         return chatConfigured(prompt, systemPrompt, preferredModelId);
     }
 
+    /**
+     * Calls only the requested configured model. This is used for privacy-sensitive
+     * local extraction jobs that must not fall back to a different provider.
+     */
+    public ChatResponse chatWithExactModel(String prompt, String systemPrompt, Long modelId) {
+        return chatWithExactModel(prompt, systemPrompt, modelId, null);
+    }
+
+    /** Calls one configured model with a provider-enforced JSON schema. */
+    public ChatResponse chatWithExactModelJson(String prompt, String systemPrompt, Long modelId,
+                                               Map<String, Object> responseSchema) {
+        return chatWithExactModel(prompt, systemPrompt, modelId, responseSchema);
+    }
+
+    private ChatResponse chatWithExactModel(String prompt, String systemPrompt, Long modelId,
+                                            Map<String, Object> responseSchema) {
+        if (modelId == null || modelId <= 0) {
+            return unavailableResponse("未配置指定模型");
+        }
+        try {
+            List<Map<String, Object>> activeModels = adminClient.getActiveModels();
+            if (activeModels == null) return unavailableResponse("指定模型配置不可用");
+            for (Map<String, Object> model : activeModels) {
+                if (!modelId.equals(longValue(model.get("id")))
+                        || numberValue(model.get("status"), 0) != 1) continue;
+                String apiUrl = stringValue(model.get("apiUrl"));
+                String apiKey = stringValue(model.get("apiKey"));
+                String modelName = stringValue(model.get("modelName"));
+                if (apiUrl.isBlank() || modelName.isBlank()) {
+                    return unavailableResponse("指定模型地址不可用");
+                }
+                return responseSchema == null
+                    ? llmClient.call(apiUrl, apiKey, modelName, systemPrompt, prompt, "exact")
+                    : llmClient.callJsonSchema(apiUrl, apiKey, modelName,
+                        systemPrompt, prompt, "exact", responseSchema);
+            }
+            return unavailableResponse("指定模型未启用");
+        } catch (Exception e) {
+            log.warn("Exact model call failed: {}", e.getMessage());
+            return unavailableResponse("指定模型调用失败");
+        }
+    }
+
     private ChatResponse chatConfigured(String prompt, String systemPrompt, Long preferredModelId) {
         String sp = systemPrompt != null ? systemPrompt : llmClient.getDefaultSystemPrompt();
 
@@ -95,11 +138,15 @@ public class AiModelServiceImpl {
 
     private ChatResponse fallbackResponse(Throwable t) {
         log.warn("AI model circuit breaker triggered, fallback: {}", t.getMessage());
+        return unavailableResponse("AI服务暂时不可用");
+    }
+
+    private ChatResponse unavailableResponse(String message) {
         ChatResponse resp = new ChatResponse();
-        resp.setContent("抱歉，AI服务暂时不可用，请稍后再试。");
+        resp.setContent(message);
         resp.setSuccess(false);
-        resp.setModel("fallback");
-        resp.setProviderCode("fallback");
+        resp.setModel("unavailable");
+        resp.setProviderCode("exact");
         return resp;
     }
 

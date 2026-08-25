@@ -48,4 +48,19 @@ class ReplyAttachmentServiceTest {
             Map.of("sourceType", "image", "documentId", 10L)), false).isEmpty());
         verifyNoInteractions(imageService);
     }
+
+    @Test
+    void returnsFixedKnowledgeImageByTitle() {
+        KnowledgeImageService imageService = mock(KnowledgeImageService.class);
+        when(imageService.attachmentByTitle("点签产品版本功能.png"))
+            .thenReturn(Optional.of(new KnowledgeImageService.ImageAttachment(
+                "image", 42L, "点签产品版本功能.png", "/signed/42")));
+        ReplyAttachmentService service = new ReplyAttachmentService(imageService, 3);
+
+        List<KnowledgeImageService.ImageAttachment> result =
+            service.fromKnowledgeImageTitle("点签产品版本功能.png");
+
+        assertEquals(List.of(42L), result.stream().map(
+            KnowledgeImageService.ImageAttachment::documentId).toList());
+    }
 }

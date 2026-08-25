@@ -130,6 +130,21 @@ class KnowledgeItemControllerTest {
     }
 
     @Test
+    void treatsPublishedAlternateQuestionAsAnExactFaqAlias() {
+        BotKnowledgeItem faq = item(291L, "点签套餐怎么收费？",
+            "根据套餐份数收费。", "套餐价格");
+        faq.setAlternateQuestions("[\"电子合同多少钱一份？\"]");
+        when(mapper.selectList(any())).thenReturn(List.of(faq));
+
+        R<Map<String, Object>> response = controller.match(Map.of(
+            "text", "电子合同多少钱一份？", "trackHit", false));
+
+        assertEquals(291L, response.getData().get("itemId"));
+        assertEquals(1.0, response.getData().get("score"));
+        assertEquals("exact_alias", response.getData().get("matchMode"));
+    }
+
+    @Test
     void keepsOrdinaryKeywordsAsRecallOnly() {
         BotKnowledgeItem hotline = item(290L, "客服热线是多少？",
             "客服热线：025-66085508。", "人工,联系方式,热线");

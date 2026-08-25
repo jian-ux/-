@@ -66,6 +66,31 @@ class ChannelServiceImplTest {
         verify(profileService).refreshConversationStats(eq(message));
     }
 
+    @Test
+    void suppressesConcurrentDingTalkHumanAcknowledgement() {
+        CoreClient coreClient = mock(CoreClient.class);
+        RedisUtil redisUtil = mock(RedisUtil.class);
+        ChannelUserProfileService profileService = mock(ChannelUserProfileService.class);
+        when(redisUtil.setnx("msg:dedup:dingtalk:msg-1", "processing",
+            24, TimeUnit.HOURS)).thenReturn(true);
+        when(redisUtil.setnx("human-handoff-ack:dingtalk:user-1:42", "sent",
+            24, TimeUnit.HOURS)).thenReturn(false);
+        when(coreClient.sendMessage(
+            "dingtalk", "user-1", "recognized text", null))
+            .thenReturn(Map.of(
+                "conversationId", 42L,
+                "humanHandling", true,
+                "reply", "客服已接手处理"));
+        ChannelServiceImpl service = new ChannelServiceImpl(
+            coreClient, redisUtil, profileService);
+
+        Map<String, Object> result = service.processMessage(
+            mediaMessage(), () -> "recognized text");
+
+        assertEquals(true, result.get("suppressReply"));
+        assertEquals("", result.get("reply"));
+    }
+
     private ChannelMessageDTO mediaMessage() {
         ChannelMessageDTO dto = new ChannelMessageDTO();
         dto.setChannelType("dingtalk");

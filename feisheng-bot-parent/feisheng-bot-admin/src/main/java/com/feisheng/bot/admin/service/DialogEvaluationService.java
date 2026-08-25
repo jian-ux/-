@@ -179,6 +179,7 @@ public class DialogEvaluationService {
         int handoffCorrect = 0;
         int piiLeaks = 0;
         int modelErrors = 0;
+        int passedCases = 0;
 
         for (DialogCaseResult result : results) {
             decisionExpected++;
@@ -193,6 +194,7 @@ public class DialogEvaluationService {
             }
             piiLeaks += result.piiLeak() ? 1 : 0;
             modelErrors += result.modelError() ? 1 : 0;
+            if (casePassed(result)) passedCases++;
         }
 
         for (int i = 0; i < results.size(); i++) {
@@ -207,7 +209,8 @@ public class DialogEvaluationService {
         return new DialogEvaluationReport(
             name, promptVersion, Instant.now().toString(), true, true,
             "评测会调用真实模型并产生 API 成本；会话、消息、工单和日志数据均按样本回滚。",
-            results.size(), decisionExpected, decisionCorrect,
+            results.size(), passedCases == results.size(), passedCases,
+            results.size() - passedCases, decisionExpected, decisionCorrect,
             ratio(decisionCorrect, decisionExpected), groundingExpected, groundingMatched,
             ratio(groundingMatched, groundingExpected), requiredPhraseTotal, requiredPhraseHit,
             ratio(requiredPhraseHit, requiredPhraseTotal), forbiddenPhraseTotal,
@@ -250,12 +253,30 @@ public class DialogEvaluationService {
     private boolean decisionMatches(DialogEvaluationCase sample, boolean actualAnswerable,
                                      String answerStatus, String answerDecision) {
         if (hasText(sample.expectedAnswerDecision())) {
-            return sample.expectedAnswerDecision().equalsIgnoreCase(answerDecision);
+            if ("ANSWER_OR_PARTIAL".equalsIgnoreCase(sample.expectedAnswerDecision())) {
+                if (!"ANSWER".equalsIgnoreCase(answerDecision)
+                        && !"ANSWER_PARTIAL".equalsIgnoreCase(answerDecision)) {
+                    return false;
+                }
+            } else if (!sample.expectedAnswerDecision().equalsIgnoreCase(answerDecision)) {
+                return false;
+            }
         }
-        if (hasText(sample.expectedAnswerStatus())) {
-            return sample.expectedAnswerStatus().equalsIgnoreCase(answerStatus);
+        if (hasText(sample.expectedAnswerStatus())
+                && !sample.expectedAnswerStatus().equalsIgnoreCase(answerStatus)) {
+            return false;
         }
-        return sample.answerable().equals(actualAnswerable);
+        return sample.answerable() == null || sample.answerable().equals(actualAnswerable);
+    }
+
+    private boolean casePassed(DialogCaseResult result) {
+        return result.decisionCorrect()
+            && !Boolean.FALSE.equals(result.groundingMatched())
+            && result.missingRequiredPhrases().isEmpty()
+            && result.forbiddenPhrasesFound().isEmpty()
+            && !Boolean.FALSE.equals(result.handoffCorrect())
+            && !result.piiLeak()
+            && !result.modelError();
     }
 
     private boolean expectsGrounding(DialogEvaluationCase sample) {
@@ -412,7 +433,8 @@ public class DialogEvaluationService {
     public record DialogEvaluationReport(
         String name, String promptVersion, String evaluatedAt,
         boolean usesRealModel, boolean databaseRolledBack,
-        String costNotice, int total, int decisionExpected, int decisionCorrect,
+        String costNotice, int total, boolean passed, int passedCaseCount,
+        int failedCaseCount, int decisionExpected, int decisionCorrect,
         double decisionAccuracy, int groundingExpected, int groundingMatched,
         double groundingAccuracy, int requiredPhraseTotal, int requiredPhraseHit,
         double requiredPhraseHitRate, int forbiddenPhraseTotal,

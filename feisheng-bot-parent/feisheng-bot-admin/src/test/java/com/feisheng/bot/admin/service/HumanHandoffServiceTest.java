@@ -15,12 +15,14 @@ import com.feisheng.bot.admin.mapper.BotTicketRecordMapper;
 import com.feisheng.bot.admin.mapper.SysUserMapper;
 import com.feisheng.bot.common.exception.BusinessException;
 import com.feisheng.bot.core.service.SensitiveDataService;
+import com.feisheng.bot.knowledge.service.MinioStorageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.web.MockMultipartFile;
 
 import java.util.List;
 
@@ -30,7 +32,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -41,6 +45,8 @@ class HumanHandoffServiceTest {
     @Mock private BotMessageMapper messageMapper;
     @Mock private SysUserMapper userMapper;
     @Mock private ChannelReplyDispatcher replyDispatcher;
+    @Mock private MinioStorageService storageService;
+    @Mock private ConversationImageService imageService;
 
     private HumanHandoffService service;
 
@@ -48,7 +54,10 @@ class HumanHandoffServiceTest {
     void setUp() {
         service = new HumanHandoffService(ticketMapper, recordMapper, conversationMapper,
             messageMapper, userMapper, replyDispatcher,
-            new SensitiveDataService("18689633999"), new ObjectMapper());
+            new SensitiveDataService("18689633999"), new ObjectMapper(), storageService,
+            imageService);
+        lenient().when(messageMapper.selectOne(any(Wrapper.class)))
+            .thenReturn(customerMessage(), (BotMessage) null);
     }
 
     @Test
@@ -108,6 +117,118 @@ class HumanHandoffServiceTest {
     }
 
     @Test
+    void storesAndDispatchesDingTalkHumanImage() {
+        BotTicket ticket = ticket("processing", 9L);
+        BotConversation conversation = conversation();
+        conversation.setChannelType("dingtalk");
+        when(ticketMapper.selectOne(any(Wrapper.class))).thenReturn(ticket);
+        when(conversationMapper.selectById(3L)).thenReturn(conversation);
+        when(userMapper.selectById(9L)).thenReturn(operator());
+        when(replyDispatcher.dispatchImage(any(), any(), any(), any())).thenReturn(
+            new ChannelReplyDispatcher.DispatchResult(true, "SENT", "dingtalk", null));
+        MockMultipartFile file = new MockMultipartFile(
+            "file", "guide.png", "image/png", new byte[] {1, 2, 3});
+
+        HumanHandoffService.ReplyResult result = service.replyImage(7L, 9L, file);
+
+        assertTrue(result.delivered());
+        assertEquals("SENT", result.deliveryStatus());
+        ArgumentCaptor<BotMessage> messageCaptor = ArgumentCaptor.forClass(BotMessage.class);
+        verify(messageMapper).insert(messageCaptor.capture());
+        assertEquals("image", messageCaptor.getValue().getContentType());
+        assertEquals("guide.png", messageCaptor.getValue().getContent());
+        verify(replyDispatcher).dispatchImage(
+            eq(conversation), any(), eq("guide.png"), eq("image/png"));
+    }
+
+    @Test
+    void sendsHumanTextAndImageInOneDingTalkMarkdownMessage() throws Exception {
+        BotTicket ticket = ticket("processing", 9L);
+        BotConversation conversation = conversation();
+        conversation.setChannelType("dingtalk");
+        when(ticketMapper.selectOne(any(Wrapper.class))).thenReturn(ticket);
+        when(conversationMapper.selectById(3L)).thenReturn(conversation);
+        when(userMapper.selectById(9L)).thenReturn(operator());
+        when(storageService.upload(any(byte[].class), eq("guide.png"), eq("image/png")))
+            .thenReturn(new MinioStorageService.UploadResult(
+                "knowledge", "human/guide.png", "png", 3));
+        when(imageService.url(any())).thenReturn(
+            "https://bot.example.com/api/public/conversation-images/3/55?signature=test");
+        when(replyDispatcher.dispatchMarkdown(
+            eq(conversation), eq("客服回复"), any(), eq(null)))
+            .thenReturn(new ChannelReplyDispatcher.DispatchResult(
+                true, "SENT", "dingtalk", null));
+        MockMultipartFile file = new MockMultipartFile(
+            "file", "guide.png", "image/png", new byte[] {1, 2, 3});
+
+        HumanHandoffService.ReplyResult result = service.replyImage(
+            7L, 9L, "请参考下图", 101L, file);
+
+        assertTrue(result.delivered());
+        ArgumentCaptor<BotMessage> messageCaptor = ArgumentCaptor.forClass(BotMessage.class);
+        verify(messageMapper).insert(messageCaptor.capture());
+        assertEquals("mixed", messageCaptor.getValue().getContentType());
+        assertEquals("请参考下图", messageCaptor.getValue().getContent());
+        verify(replyDispatcher).dispatchMarkdown(
+            eq(conversation), eq("客服回复"),
+            eq("请参考下图\n\n![guide.png]"
+                + "(https://bot.example.com/api/public/conversation-images/3/55?signature=test)"),
+            eq(null));
+    }
+
+    @Test
+    void rejectsHumanReplyWhenAiAlreadyAnsweredCustomerMessage() {
+        BotTicket ticket = ticket("processing", 9L);
+        BotConversation conversation = conversation();
+        BotMessage customer = customerMessage();
+        BotMessage aiReply = new BotMessage();
+        aiReply.setId(102L);
+        aiReply.setRole("ai");
+        when(ticketMapper.selectOne(any(Wrapper.class))).thenReturn(ticket);
+        when(conversationMapper.selectById(3L)).thenReturn(conversation);
+        when(userMapper.selectById(9L)).thenReturn(operator());
+        when(messageMapper.selectOne(any(Wrapper.class))).thenReturn(customer, aiReply);
+
+        BusinessException error = assertThrows(BusinessException.class,
+            () -> service.reply(7L, 9L, "您好", 101L));
+
+        assertEquals(409, error.getCode());
+        verifyNoInteractions(replyDispatcher);
+    }
+
+    @Test
+    void sendsDingTalkHumanReplyAsNaturalPlainText() {
+        BotTicket ticket = ticket("processing", 9L);
+        BotConversation conversation = conversation();
+        conversation.setChannelType("dingtalk");
+        when(ticketMapper.selectOne(any(Wrapper.class))).thenReturn(ticket);
+        when(conversationMapper.selectById(3L)).thenReturn(conversation);
+        when(userMapper.selectById(9L)).thenReturn(operator());
+        when(replyDispatcher.dispatch(any(), any())).thenReturn(
+            new ChannelReplyDispatcher.DispatchResult(true, "SENT", "dingtalk", null));
+
+        service.reply(7L, 9L, "您好\n请问有什么可以帮助您的？");
+
+        verify(replyDispatcher).dispatch(conversation,
+            "您好\n请问有什么可以帮助您的？");
+    }
+
+    @Test
+    void leavesNonDingTalkHumanReplyTextUnchanged() {
+        BotTicket ticket = ticket("processing", 9L);
+        BotConversation conversation = conversation();
+        when(ticketMapper.selectOne(any(Wrapper.class))).thenReturn(ticket);
+        when(conversationMapper.selectById(3L)).thenReturn(conversation);
+        when(userMapper.selectById(9L)).thenReturn(operator());
+        when(replyDispatcher.dispatch(any(), any())).thenReturn(
+            new ChannelReplyDispatcher.DispatchResult(true, "STORED", "web", null));
+
+        service.reply(7L, 9L, "您好");
+
+        verify(replyDispatcher).dispatch(conversation, "您好");
+    }
+
+    @Test
     void rejectsReplyFromDifferentAgent() {
         when(ticketMapper.selectOne(any(Wrapper.class)))
             .thenReturn(ticket("processing", 10L));
@@ -164,5 +285,15 @@ class HumanHandoffServiceTest {
         user.setRealName("客服小李");
         user.setStatus(1);
         return user;
+    }
+
+    private BotMessage customerMessage() {
+        BotMessage message = new BotMessage();
+        message.setId(101L);
+        message.setConversationId(3L);
+        message.setRole("user");
+        message.setContentType("text");
+        message.setContent("客户问题");
+        return message;
     }
 }

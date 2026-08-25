@@ -7,6 +7,7 @@ import java.util.Date;
 public class BotConversation {
     @TableId(type = IdType.AUTO) private Long id;
     private String channelType; private String channelUserId; private String title;
+    private String contextSummary; private Long summaryMessageId; private Date summaryUpdatedAt;
     private String status; private String priority; private Date slaDeadline;
     private Integer csatScore; private String csatFeedback;
     private String emotionLabel; private Double emotionScore; private String emotionTrend;

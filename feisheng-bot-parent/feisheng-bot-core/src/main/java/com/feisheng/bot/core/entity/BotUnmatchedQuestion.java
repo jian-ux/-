@@ -15,5 +15,13 @@ public class BotUnmatchedQuestion {
     private String question;
     private Integer similarCount;
     private Integer isResolved;
+    private String triggerTypes;
+    private Long conversationId;
+    private String lastAnswerStatus;
+    private String lastSource;
+    private Double lastConfidence;
+    private Integer lastLatencyMs;
+    private Integer lastCsatScore;
     private Date createTime;
+    private Date updateTime;
 }

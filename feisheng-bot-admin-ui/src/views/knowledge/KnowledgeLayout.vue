@@ -24,7 +24,7 @@ const sections = [
   { path: '/knowledge/upload', label: '文档上传' },
   { path: '/knowledge/semantic-units', label: '结构化审核' },
   { path: '/knowledge/quality-audit', label: '质量审计' },
-  { path: '/knowledge/unmatched', label: '未命中问题' }
+  { path: '/knowledge/unmatched', label: '问题改进池' }
 ]
 
 function openSection(path) {

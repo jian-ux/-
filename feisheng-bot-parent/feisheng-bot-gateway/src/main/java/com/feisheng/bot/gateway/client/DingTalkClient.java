@@ -8,7 +8,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.stereotype.Component;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
@@ -31,6 +34,10 @@ import java.util.function.Supplier;
 public class DingTalkClient {
     private static final String SEND_URL =
         "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend";
+    private static final String GROUP_SEND_URL =
+        "https://api.dingtalk.com/v1.0/robot/groupMessages/send";
+    private static final String MEDIA_UPLOAD_URL =
+        "https://oapi.dingtalk.com/media/upload?access_token={accessToken}&type=image";
     private static final String MESSAGE_FILE_URL =
         "https://api.dingtalk.com/v1.0/robot/messageFiles/download";
     private static final String ACCESS_TOKEN_HEADER = "x-acs-dingtalk-access-token";
@@ -89,28 +96,149 @@ public class DingTalkClient {
 
     public boolean sendRobotMessage(String appKey, String appSecret, String robotCode,
                                      String userId, String content) {
-        String token = getAccessToken(appKey, appSecret);
+        if (isBlank(userId)) throw new IllegalArgumentException("userId is required");
+        Map<String, Object> body = textMessageBody(robotCode, content);
+        body.put("userIds", List.of(userId.trim()));
+        return sendText(appKey, appSecret, SEND_URL, body, "主动发送");
+    }
 
+    public boolean sendRobotMessageToGroup(String appKey, String appSecret,
+                                           String robotCode, String openConversationId,
+                                           String content) {
+        if (isBlank(openConversationId)) {
+            throw new IllegalArgumentException("openConversationId is required");
+        }
+        Map<String, Object> body = textMessageBody(robotCode, content);
+        body.put("openConversationId", openConversationId.trim());
+        return sendText(appKey, appSecret, GROUP_SEND_URL, body, "群聊主动发送");
+    }
+
+    public boolean sendRobotMarkdown(String appKey, String appSecret, String robotCode,
+                                     String userId, String title, String content) {
+        if (isBlank(userId)) throw new IllegalArgumentException("userId is required");
+        Map<String, Object> body = markdownMessageBody(robotCode, title, content);
+        body.put("userIds", List.of(userId.trim()));
+        return sendText(appKey, appSecret, SEND_URL, body, "Markdown 主动发送");
+    }
+
+    public boolean sendRobotMarkdownToGroup(String appKey, String appSecret,
+                                            String robotCode, String openConversationId,
+                                            String title, String content) {
+        if (isBlank(openConversationId)) {
+            throw new IllegalArgumentException("openConversationId is required");
+        }
+        Map<String, Object> body = markdownMessageBody(robotCode, title, content);
+        body.put("openConversationId", openConversationId.trim());
+        return sendText(appKey, appSecret, GROUP_SEND_URL, body, "群聊 Markdown 主动发送");
+    }
+
+    private Map<String, Object> textMessageBody(String robotCode, String content) {
+        if (isBlank(robotCode)) throw new IllegalArgumentException("robotCode is required");
         Map<String, Object> body = new HashMap<>();
         body.put("robotCode", robotCode);
-        body.put("userIds", List.of(userId));
         body.put("msgKey", "sampleText");
         body.put("msgParam", textMessageParam(content));
+        return body;
+    }
 
+    private Map<String, Object> markdownMessageBody(String robotCode, String title,
+                                                     String content) {
+        if (isBlank(robotCode)) throw new IllegalArgumentException("robotCode is required");
+        Map<String, Object> body = new HashMap<>();
+        body.put("robotCode", robotCode.trim());
+        body.put("msgKey", "sampleMarkdown");
+        try {
+            body.put("msgParam", objectMapper.writeValueAsString(Map.of(
+                "title", isBlank(title) ? "客服回复" : title.trim(),
+                "text", content == null ? "" : content)));
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("钉钉 Markdown 消息序列化失败", e);
+        }
+        return body;
+    }
+
+    private boolean sendText(String appKey, String appSecret, String url,
+                             Map<String, Object> body, String action) {
+        if (isBlank(appKey) || isBlank(appSecret)) {
+            throw new IllegalArgumentException("appKey and appSecret are required");
+        }
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set(ACCESS_TOKEN_HEADER, token);
+        headers.set(ACCESS_TOKEN_HEADER, getAccessToken(appKey.trim(), appSecret.trim()));
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
 
         try {
-            rest.exchange(SEND_URL, HttpMethod.POST, entity, Map.class);
+            rest.exchange(url, HttpMethod.POST, entity, Map.class);
             return true;
         } catch (HttpStatusCodeException e) {
-            throw new IllegalStateException(formatApiError(e, "主动发送"), e);
+            throw new IllegalStateException(formatApiError(e, action), e);
         } catch (RestClientException e) {
             throw new IllegalStateException(
-                "钉钉主动发送请求失败：" + truncate(e.getMessage()), e);
+                "钉钉" + action + "请求失败：" + truncate(e.getMessage()), e);
         }
+    }
+
+    public String uploadImage(String appKey, String appSecret, byte[] content,
+                              String fileName, String contentType) {
+        if (isBlank(appKey) || isBlank(appSecret) || content == null || content.length == 0) {
+            throw new IllegalArgumentException(
+                "appKey, appSecret and non-empty image content are required");
+        }
+        String token = getAccessToken(appKey.trim(), appSecret.trim());
+        ByteArrayResource resource = new ByteArrayResource(content) {
+            @Override
+            public String getFilename() {
+                return isBlank(fileName) ? "image" : fileName.trim();
+            }
+        };
+        HttpHeaders partHeaders = new HttpHeaders();
+        if (!isBlank(contentType)) {
+            try {
+                partHeaders.setContentType(MediaType.parseMediaType(contentType));
+            } catch (IllegalArgumentException ignored) {
+                partHeaders.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+            }
+        }
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("media", new HttpEntity<>(resource, partHeaders));
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+        try {
+            Map<?, ?> response = retryTransient(() -> rest.exchange(
+                MEDIA_UPLOAD_URL, HttpMethod.POST, new HttpEntity<>(body, headers),
+                Map.class, token).getBody());
+            requireSuccessfulLegacyResponse(response, "图片上传");
+            String mediaId = response == null || response.get("media_id") == null
+                ? "" : response.get("media_id").toString().trim();
+            if (mediaId.isBlank()) {
+                throw new IllegalStateException("钉钉图片上传失败：未返回 media_id");
+            }
+            return mediaId;
+        } catch (HttpStatusCodeException e) {
+            throw new IllegalStateException(formatApiError(e, "图片上传"), e);
+        } catch (RestClientException e) {
+            throw new IllegalStateException(
+                "钉钉图片上传请求失败：" + truncate(e.getMessage()), e);
+        }
+    }
+
+    public boolean sendImageToUser(String appKey, String appSecret, String robotCode,
+                                   String userId, String mediaId) {
+        if (isBlank(userId)) throw new IllegalArgumentException("userId is required");
+        Map<String, Object> body = imageMessageBody(robotCode, mediaId);
+        body.put("userIds", List.of(userId.trim()));
+        return sendImage(appKey, appSecret, SEND_URL, body, "单聊图片发送");
+    }
+
+    public boolean sendImageToGroup(String appKey, String appSecret, String robotCode,
+                                    String openConversationId, String mediaId) {
+        if (isBlank(openConversationId)) {
+            throw new IllegalArgumentException("openConversationId is required");
+        }
+        Map<String, Object> body = imageMessageBody(robotCode, mediaId);
+        body.put("openConversationId", openConversationId.trim());
+        return sendImage(appKey, appSecret, GROUP_SEND_URL, body, "群聊图片发送");
     }
 
     public DownloadedMedia downloadRobotMessageFile(
@@ -160,6 +288,60 @@ public class DingTalkClient {
             return objectMapper.writeValueAsString(Map.of("content", content));
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("钉钉文本消息序列化失败", e);
+        }
+    }
+
+    private Map<String, Object> imageMessageBody(String robotCode, String mediaId) {
+        if (isBlank(robotCode) || isBlank(mediaId)) {
+            throw new IllegalArgumentException("robotCode and mediaId are required");
+        }
+        Map<String, Object> body = new HashMap<>();
+        body.put("robotCode", robotCode.trim());
+        body.put("msgKey", "sampleImageMsg");
+        try {
+            body.put("msgParam", objectMapper.writeValueAsString(
+                Map.of("photoURL", mediaId.trim())));
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("钉钉图片消息序列化失败", e);
+        }
+        return body;
+    }
+
+    private boolean sendImage(String appKey, String appSecret, String url,
+                              Map<String, Object> body, String action) {
+        if (isBlank(appKey) || isBlank(appSecret)) {
+            throw new IllegalArgumentException("appKey and appSecret are required");
+        }
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set(ACCESS_TOKEN_HEADER, getAccessToken(appKey.trim(), appSecret.trim()));
+        try {
+            rest.exchange(url, HttpMethod.POST, new HttpEntity<>(body, headers), Map.class);
+            return true;
+        } catch (HttpStatusCodeException e) {
+            throw new IllegalStateException(formatApiError(e, action), e);
+        } catch (RestClientException e) {
+            throw new IllegalStateException(
+                "钉钉" + action + "请求失败：" + truncate(e.getMessage()), e);
+        }
+    }
+
+    private void requireSuccessfulLegacyResponse(Map<?, ?> response, String action) {
+        if (response == null) throw new IllegalStateException("钉钉" + action + "失败：空响应");
+        Object value = response.get("errcode");
+        long code = value instanceof Number number ? number.longValue() : parseLong(value);
+        if (code == 0) return;
+        String message = response.get("errmsg") == null
+            ? response.toString() : response.get("errmsg").toString();
+        throw new IllegalStateException(
+            "钉钉" + action + "失败（" + code + "）：" + truncate(message));
+    }
+
+    private long parseLong(Object value) {
+        try {
+            return value == null ? -1 : Long.parseLong(value.toString());
+        } catch (NumberFormatException e) {
+            return -1;
         }
     }
 

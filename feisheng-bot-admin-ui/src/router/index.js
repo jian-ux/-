@@ -42,7 +42,7 @@ const routes = [
           { path: 'upload', component: () => import('../views/knowledge/Upload.vue'), meta: { title: '知识库上传', permission: 'knowledge:upload:view' } },
           { path: 'semantic-units', component: () => import('../views/knowledge/SemanticUnits.vue'), meta: { title: '结构化知识审核', permission: 'knowledge:semantic:view' } },
           { path: 'quality-audit', component: () => import('../views/knowledge/QualityAudit.vue'), meta: { title: '知识质量审计', permission: 'knowledge:quality:view' } },
-          { path: 'unmatched', component: () => import('../views/knowledge/UnmatchedList.vue'), meta: { title: '未命中问题', permission: 'knowledge:unmatched:view' } }
+          { path: 'unmatched', component: () => import('../views/knowledge/UnmatchedList.vue'), meta: { title: '问题改进池', permission: 'knowledge:unmatched:view' } }
         ]
       },
       { path: 'conversation', component: () => import('../views/conversation/List.vue'), meta: { title: '对话监控', permission: 'conversation:view' } },

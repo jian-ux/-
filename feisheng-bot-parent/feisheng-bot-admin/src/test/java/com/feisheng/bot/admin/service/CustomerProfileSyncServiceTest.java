@@ -24,5 +24,7 @@ class CustomerProfileSyncServiceTest {
         assertEquals(5, result.affectedRows());
         verify(jdbcTemplate).update(contains("FROM bot_channel_user channel_user"));
         verify(jdbcTemplate).update(contains("FROM bot_conversation conversation"));
+        verify(jdbcTemplate).update(contains("channel_user.channel_type IN ('dingtalk', 'wechat')"));
+        verify(jdbcTemplate).update(contains("conversation.channel_type IN ('dingtalk', 'wechat')"));
     }
 }

@@ -8,6 +8,7 @@ import com.feisheng.bot.admin.entity.BotConversation;
 import com.feisheng.bot.admin.mapper.BotChannelConfigMapper;
 import com.feisheng.bot.gateway.client.DingTalkClient;
 import com.feisheng.bot.gateway.client.WeChatWorkClient;
+import com.feisheng.bot.gateway.service.DingTalkImageReplyDispatcher.ReplyTarget;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -39,6 +40,11 @@ public class ChannelReplyDispatcher {
     }
 
     public DispatchResult dispatch(BotConversation conversation, String content) {
+        return dispatch(conversation, content, null);
+    }
+
+    public DispatchResult dispatch(BotConversation conversation, String content,
+                                   ReplyTarget replyTarget) {
         String channel = normalize(conversation.getChannelType());
         if (channel.equals("web") || channel.equals("playground")
                 || channel.equals("evaluation")) {
@@ -50,9 +56,91 @@ public class ChannelReplyDispatcher {
                 return dispatchWeChat(conversation, content, channel);
             }
             if (channel.startsWith("dingtalk")) {
-                return dispatchDingTalk(conversation, content, channel);
+                return dispatchDingTalk(conversation, content, channel, replyTarget);
             }
             return DispatchResult.failed(channel, "渠道暂不支持主动发送，回复已保存到会话");
+        } catch (Exception e) {
+            return DispatchResult.failed(channel, safeError(e));
+        }
+    }
+
+    public DispatchResult dispatchImage(BotConversation conversation, byte[] image,
+                                        String fileName, String contentType) {
+        return dispatchImage(conversation, image, fileName, contentType, null);
+    }
+
+    public DispatchResult dispatchMarkdown(BotConversation conversation, String title,
+                                           String content, ReplyTarget replyTarget) {
+        String channel = normalize(conversation.getChannelType());
+        if (!channel.startsWith("dingtalk")) {
+            return DispatchResult.failed(channel, "当前仅支持钉钉渠道发送图文回复");
+        }
+        try {
+            Map<String, Object> config = latestConfig("dingtalk");
+            String appKey = firstText(config.get("clientId"), config.get("appKey"),
+                configuredDingTalkClientId);
+            String appSecret = firstText(config.get("clientSecret"), config.get("appSecret"),
+                configuredDingTalkClientSecret);
+            String robotCode = firstText(replyTarget == null ? null : replyTarget.robotCode(),
+                config.get("robotCode"), appKey);
+            if (!hasText(appKey) || !hasText(appSecret) || !hasText(robotCode)) {
+                return DispatchResult.failed(channel, "钉钉主动发送配置不完整");
+            }
+            boolean sent;
+            if (replyTarget != null && replyTarget.isGroup()) {
+                if (!hasText(replyTarget.conversationId())) {
+                    return DispatchResult.failed(channel, "钉钉群聊目标信息缺失，无法发送");
+                }
+                sent = dingTalkClient.sendRobotMarkdownToGroup(
+                    appKey, appSecret, robotCode, replyTarget.conversationId(), title, content);
+            } else {
+                String userId = firstText(
+                    replyTarget == null ? null : replyTarget.senderStaffId(),
+                    conversation.getChannelUserId());
+                if (!hasText(userId)) {
+                    return DispatchResult.failed(channel, "钉钉客户用户 ID 缺失，无法发送");
+                }
+                sent = dingTalkClient.sendRobotMarkdown(
+                    appKey, appSecret, robotCode, userId, title, content);
+            }
+            return sent ? DispatchResult.sent(channel)
+                : DispatchResult.failed(channel, "钉钉接口未确认图文回复发送成功");
+        } catch (Exception e) {
+            return DispatchResult.failed(channel, safeError(e));
+        }
+    }
+
+    public DispatchResult dispatchImage(BotConversation conversation, byte[] image,
+                                        String fileName, String contentType,
+                                        ReplyTarget replyTarget) {
+        String channel = normalize(conversation.getChannelType());
+        if (!channel.startsWith("dingtalk")) {
+            return DispatchResult.failed(channel, "当前仅支持钉钉渠道发送图片");
+        }
+        try {
+            Map<String, Object> config = latestConfig("dingtalk");
+            String appKey = firstText(config.get("clientId"), config.get("appKey"),
+                configuredDingTalkClientId);
+            String appSecret = firstText(config.get("clientSecret"), config.get("appSecret"),
+                configuredDingTalkClientSecret);
+            String robotCode = firstText(replyTarget == null ? null : replyTarget.robotCode(),
+                config.get("robotCode"), appKey);
+            String userId = firstText(replyTarget == null ? null : replyTarget.senderStaffId(),
+                conversation.getChannelUserId());
+            if (!hasText(appKey) || !hasText(appSecret) || !hasText(robotCode)
+                    || (replyTarget != null && replyTarget.isGroup()
+                        ? !hasText(replyTarget.conversationId()) : !hasText(userId))) {
+                return DispatchResult.failed(channel, "钉钉图片发送配置不完整");
+            }
+            String mediaId = dingTalkClient.uploadImage(
+                appKey, appSecret, image, fileName, contentType);
+            boolean sent = replyTarget != null && replyTarget.isGroup()
+                ? dingTalkClient.sendImageToGroup(
+                    appKey, appSecret, robotCode, replyTarget.conversationId(), mediaId)
+                : dingTalkClient.sendImageToUser(
+                    appKey, appSecret, robotCode, userId, mediaId);
+            return sent ? DispatchResult.sent(channel)
+                : DispatchResult.failed(channel, "钉钉接口未确认图片发送成功");
         } catch (Exception e) {
             return DispatchResult.failed(channel, safeError(e));
         }
@@ -81,18 +169,34 @@ public class ChannelReplyDispatcher {
     }
 
     private DispatchResult dispatchDingTalk(BotConversation conversation, String content,
-                                            String channel) {
+                                            String channel, ReplyTarget replyTarget) {
         Map<String, Object> config = latestConfig("dingtalk");
         String appKey = firstText(config.get("clientId"), config.get("appKey"),
             configuredDingTalkClientId);
         String appSecret = firstText(config.get("clientSecret"), config.get("appSecret"),
             configuredDingTalkClientSecret);
-        String robotCode = firstText(config.get("robotCode"), appKey);
+        String robotCode = firstText(replyTarget == null ? null : replyTarget.robotCode(),
+            config.get("robotCode"), appKey);
         if (!hasText(appKey) || !hasText(appSecret) || !hasText(robotCode)) {
             return DispatchResult.failed(channel, "钉钉主动发送配置不完整");
         }
-        boolean sent = dingTalkClient.sendRobotMessage(
-            appKey, appSecret, robotCode, conversation.getChannelUserId(), content);
+        boolean sent;
+        if (replyTarget != null && replyTarget.isGroup()) {
+            if (!hasText(replyTarget.conversationId())) {
+                return DispatchResult.failed(channel, "钉钉群聊目标信息缺失，无法发送");
+            }
+            sent = dingTalkClient.sendRobotMessageToGroup(
+                appKey, appSecret, robotCode, replyTarget.conversationId(), content);
+        } else {
+            String userId = firstText(
+                replyTarget == null ? null : replyTarget.senderStaffId(),
+                conversation.getChannelUserId());
+            if (!hasText(userId)) {
+                return DispatchResult.failed(channel, "钉钉客户用户 ID 缺失，无法发送");
+            }
+            sent = dingTalkClient.sendRobotMessage(
+                appKey, appSecret, robotCode, userId, content);
+        }
         return sent ? DispatchResult.sent(channel)
             : DispatchResult.failed(channel, "钉钉接口未确认发送成功");
     }

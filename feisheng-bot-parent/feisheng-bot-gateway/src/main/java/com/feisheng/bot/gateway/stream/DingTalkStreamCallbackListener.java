@@ -3,12 +3,16 @@ package com.feisheng.bot.gateway.stream;
 import com.dingtalk.open.app.api.callback.OpenDingTalkCallbackListener;
 import com.dingtalk.open.app.api.models.bot.ChatbotMessage;
 import com.dingtalk.open.app.api.models.bot.MessageContent;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.feisheng.bot.gateway.dto.ChannelMessageDTO;
 import com.feisheng.bot.gateway.dto.DingTalkMediaRequest;
 import com.feisheng.bot.gateway.service.DingTalkMediaProcessingException;
 import com.feisheng.bot.gateway.service.DingTalkMediaProcessor;
+import com.feisheng.bot.gateway.service.DingTalkImageReplyDispatcher;
+import com.feisheng.bot.gateway.service.DingTalkImageReplyDispatcher.ReplyTarget;
 import com.feisheng.bot.gateway.service.impl.ChannelServiceImpl;
 import com.feisheng.bot.gateway.util.ReplyAttachmentUtils;
+import com.feisheng.bot.gateway.util.DingTalkReplyTargetMetadata;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,7 +46,9 @@ public class DingTalkStreamCallbackListener
 
     private final ChannelServiceImpl channelService;
     private final DingTalkStreamReplySender replySender;
+    private final ObjectMapper objectMapper;
     private final Supplier<DingTalkMediaProcessor> mediaProcessorSupplier;
+    private final Supplier<DingTalkImageReplyDispatcher> imageReplyDispatcherSupplier;
     private final Executor processingExecutor;
     private final Executor mediaExecutor;
     private final ThreadPoolExecutor managedProcessingExecutor;
@@ -51,7 +57,10 @@ public class DingTalkStreamCallbackListener
     @Autowired
     public DingTalkStreamCallbackListener(ChannelServiceImpl channelService,
                                           DingTalkStreamReplySender replySender,
+                                          ObjectMapper objectMapper,
                                           ObjectProvider<DingTalkMediaProcessor> mediaProcessor,
+                                          ObjectProvider<DingTalkImageReplyDispatcher>
+                                          imageReplyDispatcher,
                                           @Value("${dingtalk.stream.processing-worker-threads:4}")
                                           int processingWorkerThreads,
                                           @Value("${dingtalk.stream.processing-queue-capacity:100}")
@@ -60,8 +69,10 @@ public class DingTalkStreamCallbackListener
                                           int mediaWorkerThreads,
                                           @Value("${dingtalk.media.queue-capacity:50}")
                                           int mediaQueueCapacity) {
-        this(channelService, replySender,
+        this(channelService, replySender, objectMapper,
             (Supplier<DingTalkMediaProcessor>) mediaProcessor::getIfAvailable,
+            (Supplier<DingTalkImageReplyDispatcher>)
+                imageReplyDispatcher::getIfAvailable,
             createExecutor(processingWorkerThreads, processingQueueCapacity,
                 "dingtalk-processing"),
             createExecutor(mediaWorkerThreads, mediaQueueCapacity, "dingtalk-media"));
@@ -69,30 +80,46 @@ public class DingTalkStreamCallbackListener
 
     DingTalkStreamCallbackListener(ChannelServiceImpl channelService,
                                    DingTalkStreamReplySender replySender) {
-        this(channelService, replySender, () -> null, Runnable::run, Runnable::run);
+        this(channelService, replySender, new ObjectMapper(), () -> null, () -> null,
+            Runnable::run, Runnable::run);
     }
 
     DingTalkStreamCallbackListener(ChannelServiceImpl channelService,
                                    DingTalkStreamReplySender replySender,
                                    Executor processingExecutor) {
-        this(channelService, replySender, () -> null, processingExecutor, Runnable::run);
+        this(channelService, replySender, new ObjectMapper(), () -> null, () -> null,
+            processingExecutor, Runnable::run);
     }
 
     DingTalkStreamCallbackListener(ChannelServiceImpl channelService,
                                    DingTalkStreamReplySender replySender,
                                    DingTalkMediaProcessor mediaProcessor,
                                    Executor mediaExecutor) {
-        this(channelService, replySender, () -> mediaProcessor, Runnable::run, mediaExecutor);
+        this(channelService, replySender, new ObjectMapper(), () -> mediaProcessor, () -> null,
+            Runnable::run, mediaExecutor);
+    }
+
+    DingTalkStreamCallbackListener(ChannelServiceImpl channelService,
+                                   DingTalkStreamReplySender replySender,
+                                   DingTalkImageReplyDispatcher imageReplyDispatcher) {
+        this(channelService, replySender, new ObjectMapper(), () -> null,
+            () -> imageReplyDispatcher,
+            Runnable::run, Runnable::run);
     }
 
     private DingTalkStreamCallbackListener(ChannelServiceImpl channelService,
                                            DingTalkStreamReplySender replySender,
+                                           ObjectMapper objectMapper,
                                            Supplier<DingTalkMediaProcessor> mediaProcessorSupplier,
+                                           Supplier<DingTalkImageReplyDispatcher>
+                                           imageReplyDispatcherSupplier,
                                            Executor processingExecutor,
                                            Executor mediaExecutor) {
         this.channelService = channelService;
         this.replySender = replySender;
+        this.objectMapper = objectMapper;
         this.mediaProcessorSupplier = mediaProcessorSupplier;
+        this.imageReplyDispatcherSupplier = imageReplyDispatcherSupplier;
         this.processingExecutor = processingExecutor;
         this.mediaExecutor = mediaExecutor;
         this.managedProcessingExecutor = managedExecutor(processingExecutor);
@@ -136,18 +163,31 @@ public class DingTalkStreamCallbackListener
         dto.setMsgType(firstNonBlank(msgType, "text"));
         dto.setTimestamp(message.getCreateAt() == null ? System.currentTimeMillis() : message.getCreateAt());
 
+        ReplyTarget replyTarget = new ReplyTarget(
+            firstNonBlank(message.getSenderStaffId(), message.getSenderId()),
+            value(message.getConversationId()).trim(),
+            value(message.getConversationType()).trim(), "");
+        dto.setMessageMetadata(DingTalkReplyTargetMetadata.merge(
+            objectMapper, dto.getMessageMetadata(), replyTarget));
+
         if (media != null) {
-            dispatchMedia(dto, media, sessionWebhook);
+            dispatchMedia(dto, media, sessionWebhook, replyTarget);
             return Collections.emptyMap();
         }
 
-        dispatchText(dto, sessionWebhook);
+        dispatchText(dto, sessionWebhook, replyTarget);
         return Collections.emptyMap();
     }
 
     public boolean dispatchText(ChannelMessageDTO dto, String sessionWebhook) {
+        return dispatchText(dto, sessionWebhook, defaultTarget(dto));
+    }
+
+    public boolean dispatchText(ChannelMessageDTO dto, String sessionWebhook,
+                                ReplyTarget replyTarget) {
         try {
-            processingExecutor.execute(() -> processAndReply(dto, sessionWebhook, null));
+            processingExecutor.execute(() ->
+                processAndReply(dto, sessionWebhook, null, replyTarget));
             return true;
         } catch (RuntimeException e) {
             log.warn("DingTalk processing queue rejected text message, msgId={}", dto.getMsgId());
@@ -158,9 +198,14 @@ public class DingTalkStreamCallbackListener
 
     public boolean dispatchMedia(ChannelMessageDTO dto, DingTalkMediaRequest media,
                                  String sessionWebhook) {
+        return dispatchMedia(dto, media, sessionWebhook, defaultTarget(dto));
+    }
+
+    public boolean dispatchMedia(ChannelMessageDTO dto, DingTalkMediaRequest media,
+                                 String sessionWebhook, ReplyTarget replyTarget) {
         try {
             mediaExecutor.execute(() -> processAndReply(dto, sessionWebhook,
-                () -> normalizeMedia(media)));
+                () -> normalizeMedia(dto, media), replyTarget));
             return true;
         } catch (RuntimeException e) {
             log.warn("DingTalk media queue rejected message, msgId={}", dto.getMsgId());
@@ -170,15 +215,30 @@ public class DingTalkStreamCallbackListener
     }
 
     private String normalizeMedia(DingTalkMediaRequest media) {
+        return normalizeMedia(null, media);
+    }
+
+    private String normalizeMedia(ChannelMessageDTO dto, DingTalkMediaRequest media) {
         DingTalkMediaProcessor processor = mediaProcessorSupplier.get();
         if (processor == null) {
             throw new DingTalkMediaProcessingException(MEDIA_UNAVAILABLE_REPLY);
         }
-        return processor.normalize(media);
+        DingTalkMediaProcessor.MediaResult result = processor.process(media);
+        // Test doubles and older processors may only implement normalize().
+        if (result == null) result = new DingTalkMediaProcessor.MediaResult(
+            processor.normalize(media), "text", null);
+        if (dto != null) {
+            dto.setMessageContentType(result.contentType());
+            dto.setMessageMetadata(DingTalkReplyTargetMetadata.merge(
+                objectMapper, result.metadata(),
+                DingTalkReplyTargetMetadata.readTarget(objectMapper, dto.getMessageMetadata())));
+        }
+        return result.content();
     }
 
     private void processAndReply(ChannelMessageDTO dto, String sessionWebhook,
-                                 Supplier<String> contentSupplier) {
+                                 Supplier<String> contentSupplier,
+                                 ReplyTarget replyTarget) {
         try {
             Map<String, Object> result = contentSupplier == null
                 ? channelService.processMessage(dto)
@@ -187,7 +247,10 @@ public class DingTalkStreamCallbackListener
                 log.info("DingTalk Stream duplicate delivery ignored, msgId={}", dto.getMsgId());
                 return;
             }
-            sendResult(sessionWebhook, result);
+            boolean imagesHandled = sendResult(sessionWebhook, result);
+            if (!imagesHandled) {
+                dispatchImagesSafely(result, replyTarget, dto.getMsgId());
+            }
             log.info("DingTalk Stream message processed, msgId={}", dto.getMsgId());
         } catch (DingTalkMediaProcessingException e) {
             log.warn("DingTalk media processing failed, msgId={}: {}",
@@ -199,17 +262,43 @@ public class DingTalkStreamCallbackListener
         }
     }
 
-    private void sendResult(String sessionWebhook, Map<String, Object> result) throws Exception {
+    private boolean sendResult(String sessionWebhook, Map<String, Object> result)
+            throws Exception {
+        if (result != null && Boolean.TRUE.equals(result.get("suppressReply"))) {
+            return true;
+        }
         String reply = replyFrom(result);
         String richReply = ReplyAttachmentUtils.richReply(result);
         List<ReplyAttachmentUtils.ImageAttachment> images =
+            ReplyAttachmentUtils.images(result);
+        List<ReplyAttachmentUtils.ImageAttachment> publicImages =
             ReplyAttachmentUtils.publicImages(result);
-        if (images.isEmpty() && richReply.isBlank()) {
-            replySender.replyText(sessionWebhook, reply);
-        } else {
+        if (!images.isEmpty() && publicImages.size() == images.size()) {
             replySender.replyMarkdown(sessionWebhook, "智能客服回复",
                 ReplyAttachmentUtils.markdown(
-                    richReply.isBlank() ? reply : richReply, images));
+                    richReply.isBlank() ? reply : richReply, publicImages));
+            return true;
+        }
+        if (!richReply.isBlank()) {
+            replySender.replyMarkdown(sessionWebhook, "智能客服回复", richReply);
+        } else {
+            replySender.replyText(sessionWebhook, reply);
+        }
+        return images.isEmpty();
+    }
+
+    private void dispatchImagesSafely(Map<String, Object> result, ReplyTarget target,
+                                      String msgId) {
+        if (ReplyAttachmentUtils.images(result).isEmpty()) return;
+        DingTalkImageReplyDispatcher dispatcher = imageReplyDispatcherSupplier.get();
+        if (dispatcher == null) {
+            log.warn("DingTalk image reply dispatcher is unavailable, msgId={}", msgId);
+            return;
+        }
+        try {
+            dispatcher.dispatch(result, target);
+        } catch (RuntimeException e) {
+            log.warn("DingTalk image reply failed, msgId={}: {}", msgId, e.getMessage());
         }
     }
 
@@ -321,6 +410,11 @@ public class DingTalkStreamCallbackListener
             if (value != null && !value.isBlank()) return value;
         }
         return "";
+    }
+
+    private static ReplyTarget defaultTarget(ChannelMessageDTO dto) {
+        return new ReplyTarget(dto == null ? "" : value(dto.getChannelUserId()),
+            "", "1", "");
     }
 
     private static Executor createExecutor(int workerThreads, int queueCapacity,

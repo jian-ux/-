@@ -28,6 +28,7 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/api/admin/login", "/api/health",
                     "/api/public/knowledge-images/**",
+                    "/api/public/conversation-images/**",
                     "/gateway/channel/dingtalk/**", "/gateway/channel/wechat/**"
                 ).permitAll()
                 .requestMatchers("/api/admin/user/info").authenticated()

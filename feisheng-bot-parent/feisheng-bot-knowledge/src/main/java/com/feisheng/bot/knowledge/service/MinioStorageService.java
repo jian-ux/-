@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
+import java.io.ByteArrayInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
@@ -43,6 +44,16 @@ public class MinioStorageService {
     public UploadResult upload(Path path, String originalName, String contentType) throws Exception {
         try (InputStream input = Files.newInputStream(path)) {
             return upload(input, Files.size(path), originalName, contentType);
+        }
+    }
+
+    public UploadResult upload(byte[] content, String originalName, String contentType)
+            throws Exception {
+        if (content == null || content.length == 0) {
+            throw new IllegalArgumentException("content must not be empty");
+        }
+        try (InputStream input = new ByteArrayInputStream(content)) {
+            return upload(input, content.length, originalName, contentType);
         }
     }
 

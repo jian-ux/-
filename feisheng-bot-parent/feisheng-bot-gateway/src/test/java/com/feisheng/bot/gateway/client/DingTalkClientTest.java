@@ -13,6 +13,7 @@ import org.springframework.web.client.RestTemplate;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -32,6 +33,10 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 class DingTalkClientTest {
     private static final String SEND_URL =
         "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend";
+    private static final String GROUP_SEND_URL =
+        "https://api.dingtalk.com/v1.0/robot/groupMessages/send";
+    private static final String MEDIA_UPLOAD_URL =
+        "https://oapi.dingtalk.com/media/upload?access_token=access-token&type=image";
     private static final String MESSAGE_FILE_URL =
         "https://api.dingtalk.com/v1.0/robot/messageFiles/download";
     private static final String DOWNLOAD_URL =
@@ -59,6 +64,127 @@ class DingTalkClientTest {
 
         assertTrue(client.sendRobotMessage(
             "app-key", "app-secret", "robot-code", "staff-1", "你好"));
+        server.verify();
+    }
+
+    @Test
+    void sendsTextToDingTalkGroupUsingGroupMessageSchema() {
+        RedisUtil redisUtil = mock(RedisUtil.class);
+        when(redisUtil.get(anyString())).thenReturn("access-token");
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(requestTo(GROUP_SEND_URL))
+            .andExpect(method(HttpMethod.POST))
+            .andExpect(header("x-acs-dingtalk-access-token", "access-token"))
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.robotCode").value("robot-code"))
+            .andExpect(jsonPath("$.openConversationId").value("cid-group"))
+            .andExpect(jsonPath("$.msgKey").value("sampleText"))
+            .andExpect(jsonPath("$.msgParam").value("{\"content\":\"你好\"}"))
+            .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
+        DingTalkClient client = new DingTalkClient(
+            redisUtil, new ObjectMapper(), restTemplate);
+
+        assertTrue(client.sendRobotMessageToGroup(
+            "app-key", "app-secret", "robot-code", "cid-group", "你好"));
+        server.verify();
+    }
+
+    @Test
+    void sendsMarkdownUsingDingTalkBatchMessageSchema() {
+        RedisUtil redisUtil = mock(RedisUtil.class);
+        when(redisUtil.get(anyString())).thenReturn("access-token");
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(requestTo(SEND_URL))
+            .andExpect(method(HttpMethod.POST))
+            .andExpect(jsonPath("$.robotCode").value("robot-code"))
+            .andExpect(jsonPath("$.userIds[0]").value("staff-1"))
+            .andExpect(jsonPath("$.msgKey").value("sampleMarkdown"))
+            .andExpect(jsonPath("$.msgParam",
+                containsString("\"title\":\"客服回复\"")))
+            .andExpect(jsonPath("$.msgParam",
+                containsString("\"text\":\"请参考下图\\n\\n![操作图]"
+                    + "(https://bot.example.com/image.png)\"")))
+            .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
+        DingTalkClient client = new DingTalkClient(
+            redisUtil, new ObjectMapper(), restTemplate);
+
+        assertTrue(client.sendRobotMarkdown(
+            "app-key", "app-secret", "robot-code", "staff-1", "客服回复",
+            "请参考下图\n\n![操作图](https://bot.example.com/image.png)"));
+        server.verify();
+    }
+
+    @Test
+    void uploadsImageAndReturnsMediaId() {
+        RedisUtil redisUtil = mock(RedisUtil.class);
+        when(redisUtil.get(anyString())).thenReturn("access-token");
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(requestTo(MEDIA_UPLOAD_URL))
+            .andExpect(method(HttpMethod.POST))
+            .andExpect(content().contentTypeCompatibleWith(MediaType.MULTIPART_FORM_DATA))
+            .andExpect(content().string(containsString("name=\"media\"")))
+            .andExpect(content().string(containsString("filename=\"product.png\"")))
+            .andRespond(withSuccess(
+                "{\"errcode\":0,\"errmsg\":\"ok\",\"media_id\":\"@lAL-image\"}",
+                MediaType.APPLICATION_JSON));
+
+        DingTalkClient client = new DingTalkClient(
+            redisUtil, new ObjectMapper(), restTemplate);
+
+        assertEquals("@lAL-image", client.uploadImage(
+            "app-key", "app-secret", new byte[] {1, 2, 3},
+            "product.png", "image/png"));
+        server.verify();
+    }
+
+    @Test
+    void sendsIndependentImageToUser() {
+        RedisUtil redisUtil = mock(RedisUtil.class);
+        when(redisUtil.get(anyString())).thenReturn("access-token");
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(requestTo(SEND_URL))
+            .andExpect(method(HttpMethod.POST))
+            .andExpect(header("x-acs-dingtalk-access-token", "access-token"))
+            .andExpect(jsonPath("$.robotCode").value("robot-code"))
+            .andExpect(jsonPath("$.userIds[0]").value("staff-1"))
+            .andExpect(jsonPath("$.msgKey").value("sampleImageMsg"))
+            .andExpect(jsonPath("$.msgParam").value("{\"photoURL\":\"@lAL-image\"}"))
+            .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
+        DingTalkClient client = new DingTalkClient(
+            redisUtil, new ObjectMapper(), restTemplate);
+
+        assertTrue(client.sendImageToUser(
+            "app-key", "app-secret", "robot-code", "staff-1", "@lAL-image"));
+        server.verify();
+    }
+
+    @Test
+    void sendsIndependentImageToGroup() {
+        RedisUtil redisUtil = mock(RedisUtil.class);
+        when(redisUtil.get(anyString())).thenReturn("access-token");
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(requestTo(GROUP_SEND_URL))
+            .andExpect(method(HttpMethod.POST))
+            .andExpect(header("x-acs-dingtalk-access-token", "access-token"))
+            .andExpect(jsonPath("$.robotCode").value("robot-code"))
+            .andExpect(jsonPath("$.openConversationId").value("cid-group"))
+            .andExpect(jsonPath("$.msgKey").value("sampleImageMsg"))
+            .andExpect(jsonPath("$.msgParam").value("{\"photoURL\":\"@lAL-image\"}"))
+            .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
+        DingTalkClient client = new DingTalkClient(
+            redisUtil, new ObjectMapper(), restTemplate);
+
+        assertTrue(client.sendImageToGroup(
+            "app-key", "app-secret", "robot-code", "cid-group", "@lAL-image"));
         server.verify();
     }
 

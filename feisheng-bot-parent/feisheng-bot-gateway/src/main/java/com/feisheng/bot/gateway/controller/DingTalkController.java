@@ -6,9 +6,11 @@ import com.feisheng.bot.gateway.dto.ChannelMessageDTO;
 import com.feisheng.bot.gateway.dto.DingTalkMediaRequest;
 import com.feisheng.bot.gateway.service.DingTalkMediaProcessingException;
 import com.feisheng.bot.gateway.service.DingTalkMediaProcessor;
+import com.feisheng.bot.gateway.service.DingTalkImageReplyDispatcher.ReplyTarget;
 import com.feisheng.bot.gateway.service.impl.ChannelServiceImpl;
 import com.feisheng.bot.gateway.stream.DingTalkStreamCallbackListener;
 import com.feisheng.bot.gateway.util.DingTalkCryptoUtil;
+import com.feisheng.bot.gateway.util.DingTalkReplyTargetMetadata;
 import com.feisheng.bot.gateway.util.ReplyAttachmentUtils;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -136,12 +138,20 @@ public class DingTalkController {
             "dingtalk", senderId, stringValue(body.get("senderNick")),
             msgId, text, msgType);
         String sessionWebhook = stringValue(body.get("sessionWebhook")).trim();
+        ReplyTarget replyTarget = new ReplyTarget(
+            firstNonBlank(stringValue(body.get("senderStaffId")),
+                stringValue(body.get("senderId"))),
+            conversationId, stringValue(body.get("conversationType")),
+            stringValue(body.get("robotCode")));
+        dto.setMessageMetadata(DingTalkReplyTargetMetadata.merge(
+            objectMapper, dto.getMessageMetadata(), replyTarget));
         if (media != null) {
             DingTalkMediaRequest identified = new DingTalkMediaRequest(
                 msgId, media.msgType(), media.downloadCode(), media.recognition(),
                 media.fileName(), media.robotCode(), media.caption());
             if (!sessionWebhook.isBlank() && streamCallbackListener != null) {
-                streamCallbackListener.dispatchMedia(dto, identified, sessionWebhook);
+                streamCallbackListener.dispatchMedia(
+                    dto, identified, sessionWebhook, replyTarget);
                 return ResponseEntity.ok(new LinkedHashMap<>());
             }
             try {
@@ -151,7 +161,7 @@ public class DingTalkController {
             }
         }
         if (!sessionWebhook.isBlank() && streamCallbackListener != null) {
-            streamCallbackListener.dispatchText(dto, sessionWebhook);
+            streamCallbackListener.dispatchText(dto, sessionWebhook, replyTarget);
             return ResponseEntity.ok(new LinkedHashMap<>());
         }
         return ResponseEntity.ok(replyResponse(channelService.processMessage(dto)));
@@ -194,6 +204,14 @@ public class DingTalkController {
         ChannelMessageDTO dto = channelMessage(
             "dingtalk", senderId, stringValue(message.get("senderNick")),
             msgId, content, msgType);
+        ReplyTarget replyTarget = new ReplyTarget(
+            firstNonBlank(stringValue(message.get("senderStaffId")),
+                stringValue(message.get("senderId")), senderId),
+            stringValue(message.get("conversationId")),
+            stringValue(message.get("conversationType")),
+            stringValue(message.get("robotCode")));
+        dto.setMessageMetadata(DingTalkReplyTargetMetadata.merge(
+            objectMapper, dto.getMessageMetadata(), replyTarget));
         String reply;
         try {
             Map<String, Object> result = media == null
@@ -226,7 +244,17 @@ public class DingTalkController {
             throw new DingTalkMediaProcessingException(
                 "当前未启用图片或语音识别，请改用文字发送。");
         }
-        return channelService.processMessage(dto, () -> processor.normalize(media));
+        return channelService.processMessage(dto, () -> {
+            DingTalkMediaProcessor.MediaResult result = processor.process(media);
+            // Keep compatibility with processors that only implement normalize().
+            if (result == null) result = new DingTalkMediaProcessor.MediaResult(
+                processor.normalize(media), "text", null);
+            dto.setMessageContentType(result.contentType());
+            dto.setMessageMetadata(DingTalkReplyTargetMetadata.merge(
+                objectMapper, result.metadata(),
+                DingTalkReplyTargetMetadata.readTarget(objectMapper, dto.getMessageMetadata())));
+            return result.content();
+        });
     }
 
     private DingTalkMediaRequest mediaFrom(Map<String, Object> message, String msgType) {
@@ -347,7 +375,8 @@ public class DingTalkController {
     }
 
     private static String replyFrom(Map<String, Object> result) {
-        if (result != null && Boolean.TRUE.equals(result.get("duplicate"))) return "";
+        if (result != null && (Boolean.TRUE.equals(result.get("duplicate"))
+                || Boolean.TRUE.equals(result.get("suppressReply")))) return "";
         String reply = stringValue(result.get("reply"));
         if (!reply.isBlank()) return reply;
         return "服务暂时不可用，请稍后再试。";

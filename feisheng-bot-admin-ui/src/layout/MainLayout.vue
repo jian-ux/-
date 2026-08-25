@@ -30,7 +30,7 @@
           <el-menu-item v-if="can('knowledge:upload:view')" index="/knowledge/upload"><span>知识库上传</span></el-menu-item>
           <el-menu-item v-if="can('knowledge:semantic:view')" index="/knowledge/semantic-units"><span>结构化知识审核</span></el-menu-item>
           <el-menu-item v-if="can('knowledge:quality:view')" index="/knowledge/quality-audit"><span>知识质量审计</span></el-menu-item>
-          <el-menu-item v-if="can('knowledge:unmatched:view')" index="/knowledge/unmatched"><span>未命中问题</span></el-menu-item>
+          <el-menu-item v-if="can('knowledge:unmatched:view')" index="/knowledge/unmatched"><span>问题改进池</span></el-menu-item>
         </el-sub-menu>
         <el-sub-menu v-if="canAny(systemPermissions)" index="/system">
           <template #title><el-icon><User /></el-icon><span>系统管理</span></template>

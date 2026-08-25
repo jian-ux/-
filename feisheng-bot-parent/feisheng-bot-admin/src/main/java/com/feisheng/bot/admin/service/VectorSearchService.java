@@ -139,6 +139,12 @@ public class VectorSearchService {
             for (String k : kw.split(",")) { total++; if (query.contains(k.trim().toLowerCase())) hits++; }
             if (total > 0 && hits > 0) score = Math.max(score, (double) hits / total * 0.9);
         }
+        for (String alias : KnowledgeTextUtil.questionAliases(
+                item.getAlternateQuestions(), item.getQuestion())) {
+            if (query.contains(alias.toLowerCase())) {
+                score = Math.max(score, 1.0);
+            }
+        }
         String q = item.getQuestion();
         if (q != null) {
             q = q.toLowerCase(); int overlap = 0;

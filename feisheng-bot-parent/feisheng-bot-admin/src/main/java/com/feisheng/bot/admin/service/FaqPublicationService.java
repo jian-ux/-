@@ -57,8 +57,10 @@ public class FaqPublicationService {
             throw new FaqDraftService.FaqDraftException(409, "相同问题已存在，请编辑已有FAQ");
         }
 
+        String alternateQuestions = KnowledgeTextUtil.questionAliasesJson(
+            draft.getSimilarQuestionsJson(), draft.getQuestion());
         List<KnowledgeTextUtil.FaqEmbeddingPart> parts = KnowledgeTextUtil.faqEmbeddingParts(
-            draft.getQuestion(), draft.getKeywords(), draft.getAnswer());
+            draft.getQuestion(), draft.getKeywords(), draft.getAnswer(), alternateQuestions);
         List<float[]> embeddings = embeddingService.embedBatch(
             parts.stream().map(KnowledgeTextUtil.FaqEmbeddingPart::embeddingText).toList());
         if (embeddings.size() < parts.size()
@@ -73,6 +75,7 @@ public class FaqPublicationService {
         item.setQuestion(draft.getQuestion());
         item.setAnswer(draft.getAnswer());
         item.setKeywords(blankToNull(draft.getKeywords()));
+        item.setAlternateQuestions(alternateQuestions);
         item.setStatus(1);
         item.setHitCount(0);
         item.setDirectAnswerEnabled(0);

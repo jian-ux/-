@@ -8,13 +8,17 @@ import com.feisheng.bot.admin.entity.BotConversationTag;
 import com.feisheng.bot.admin.mapper.BotConversationMapper;
 import com.feisheng.bot.admin.mapper.BotMessageMapper;
 import com.feisheng.bot.admin.mapper.BotConversationTagMapper;
+import com.feisheng.bot.admin.service.ConversationImageService;
 import com.feisheng.bot.common.vo.R;
+import com.feisheng.bot.core.service.impl.UnmatchedQuestionService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/admin/conversation")
@@ -22,11 +26,21 @@ public class ConversationAdminController {
     private final BotConversationMapper mapper;
     private final BotMessageMapper messageMapper;
     private final BotConversationTagMapper tagMapper;
+    private final ConversationImageService imageService;
+    private final UnmatchedQuestionService badCaseService;
 
-    public ConversationAdminController(BotConversationMapper m, BotMessageMapper mm, BotConversationTagMapper tm) {
+    @Value("${rag.bad-case.low-rating-threshold:2}")
+    private int badCaseLowRatingThreshold = 2;
+
+    public ConversationAdminController(BotConversationMapper m, BotMessageMapper mm,
+                                       BotConversationTagMapper tm,
+                                       ConversationImageService imageService,
+                                       UnmatchedQuestionService badCaseService) {
         mapper = m;
         messageMapper = mm;
         tagMapper = tm;
+        this.imageService = imageService;
+        this.badCaseService = badCaseService;
     }
 
     @GetMapping("/list")
@@ -56,10 +70,12 @@ public class ConversationAdminController {
 
     @GetMapping("/{id}/messages")
     public R<List<BotMessage>> messages(@PathVariable Long id) {
-        return R.ok(messageMapper.selectList(
+        List<BotMessage> messages = messageMapper.selectList(
             new LambdaQueryWrapper<BotMessage>()
                 .eq(BotMessage::getConversationId, id)
-                .orderByAsc(BotMessage::getCreateTime)));
+                .orderByAsc(BotMessage::getCreateTime));
+        messages.forEach(message -> message.setMediaUrl(imageService.url(message)));
+        return R.ok(messages);
     }
 
     @PutMapping("/{id}/priority")
@@ -86,13 +102,32 @@ public class ConversationAdminController {
     public R<Void> updateCsat(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         BotConversation cv = mapper.selectById(id);
         if (cv != null) {
-            if (body.get("csatScore") != null)
-                cv.setCsatScore(((Number) body.get("csatScore")).intValue());
+            Integer previousScore = cv.getCsatScore();
+            Integer score = body.get("csatScore") instanceof Number value
+                ? value.intValue() : null;
+            if (score != null) cv.setCsatScore(score);
             if (body.get("csatFeedback") != null)
                 cv.setCsatFeedback((String) body.get("csatFeedback"));
             mapper.updateById(cv);
+            if (score != null && score <= badCaseLowRatingThreshold
+                    && (previousScore == null || previousScore > badCaseLowRatingThreshold)) {
+                recordLowRating(id, score);
+            }
         }
         return R.ok();
+    }
+
+    private void recordLowRating(Long conversationId, int score) {
+        BotMessage latestQuestion = messageMapper.selectOne(
+            new LambdaQueryWrapper<BotMessage>()
+                .eq(BotMessage::getConversationId, conversationId)
+                .eq(BotMessage::getRole, "user")
+                .orderByDesc(BotMessage::getCreateTime)
+                .last("LIMIT 1"));
+        if (latestQuestion == null || !StringUtils.hasText(latestQuestion.getContent())) return;
+        badCaseService.recordBadCase(latestQuestion.getContent(), Set.of("LOW_RATING"),
+            new UnmatchedQuestionService.BadCaseContext(
+                conversationId, "rated", "csat", null, null, score));
     }
 
     // ================== Tags ==================

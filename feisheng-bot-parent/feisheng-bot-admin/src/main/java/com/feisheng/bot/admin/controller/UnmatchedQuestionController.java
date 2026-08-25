@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.feisheng.bot.admin.entity.BotUnmatchedQuestion;
 import com.feisheng.bot.admin.mapper.BotUnmatchedQuestionMapper;
+import com.feisheng.bot.admin.service.BadCaseImprovementAdvisor;
+import com.feisheng.bot.admin.service.BadCaseQualityService;
 import com.feisheng.bot.admin.service.QuestionClusteringService;
 import com.feisheng.bot.common.vo.R;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,28 +16,40 @@ import org.springframework.web.bind.annotation.*;
 public class UnmatchedQuestionController {
     private final BotUnmatchedQuestionMapper mapper;
     private final QuestionClusteringService clusteringService;
+    private final BadCaseQualityService qualityService;
 
     @Autowired
     public UnmatchedQuestionController(BotUnmatchedQuestionMapper m,
-                                       QuestionClusteringService service) {
+                                       QuestionClusteringService service,
+                                       BadCaseQualityService qualityService) {
         mapper = m;
         clusteringService = service;
+        this.qualityService = qualityService;
     }
 
     /** Compatibility constructor for callers that only use the original list/resolve APIs. */
     public UnmatchedQuestionController(BotUnmatchedQuestionMapper m) {
         mapper = m;
         clusteringService = null;
+        qualityService = null;
+    }
+
+    @GetMapping("/quality")
+    public R<BadCaseQualityService.QualitySummary> quality() {
+        return R.ok(qualityService.summarize());
     }
 
     @GetMapping("/list")
     public R<Page<BotUnmatchedQuestion>> list(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size) {
-        return R.ok(mapper.selectPage(new Page<>(page, size),
+        Page<BotUnmatchedQuestion> result = mapper.selectPage(new Page<>(page, size),
             new LambdaQueryWrapper<BotUnmatchedQuestion>()
                 .orderByDesc(BotUnmatchedQuestion::getSimilarCount)
-                .orderByDesc(BotUnmatchedQuestion::getCreateTime)));
+                .orderByDesc(BotUnmatchedQuestion::getCreateTime));
+        result.getRecords().forEach(question -> question.setImprovementAdvice(
+            BadCaseImprovementAdvisor.advise(question.getTriggerTypes())));
+        return R.ok(result);
     }
 
     @PutMapping("/{id}/resolve")

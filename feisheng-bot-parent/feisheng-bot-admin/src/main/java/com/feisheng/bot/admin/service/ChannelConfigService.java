@@ -11,6 +11,8 @@ import com.feisheng.bot.admin.dto.ChannelConnectionTestResult;
 import com.feisheng.bot.admin.entity.BotChannelConfig;
 import com.feisheng.bot.admin.mapper.BotChannelConfigMapper;
 import com.feisheng.bot.common.exception.BusinessException;
+import com.feisheng.bot.gateway.client.WeChatWorkClient;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -29,12 +31,21 @@ public class ChannelConfigService {
     private final BotChannelConfigMapper mapper;
     private final ObjectMapper objectMapper;
     private final DingTalkStreamManager dingTalkStreamManager;
+    private final WeChatWorkClient weChatWorkClient;
 
     public ChannelConfigService(BotChannelConfigMapper mapper, ObjectMapper objectMapper,
                                 DingTalkStreamManager dingTalkStreamManager) {
+        this(mapper, objectMapper, dingTalkStreamManager, null);
+    }
+
+    @Autowired
+    public ChannelConfigService(BotChannelConfigMapper mapper, ObjectMapper objectMapper,
+                                DingTalkStreamManager dingTalkStreamManager,
+                                WeChatWorkClient weChatWorkClient) {
         this.mapper = mapper;
         this.objectMapper = objectMapper;
         this.dingTalkStreamManager = dingTalkStreamManager;
+        this.weChatWorkClient = weChatWorkClient;
     }
 
     @Transactional
@@ -46,15 +57,19 @@ public class ChannelConfigService {
         if (existing != null && !channelType.equals(existing.getChannelType())) {
             throw new BusinessException(400, "渠道类型不允许修改");
         }
+        int effectiveStatus = request.getStatus() == null ? 1 : request.getStatus();
 
         Map<String, Object> values = existing == null
             ? new LinkedHashMap<>() : new LinkedHashMap<>(parse(existing.getConfigJson()));
         applyStructuredValues(channelType, request, values);
+        if ("wechat".equals(channelType) && effectiveStatus == 1) {
+            validateActiveWeChat(values);
+        }
 
         BotChannelConfig entity = existing == null ? new BotChannelConfig() : existing;
         entity.setChannelType(channelType);
         entity.setChannelName(request.getChannelName().trim());
-        entity.setStatus(request.getStatus() == null ? 1 : request.getStatus());
+        entity.setStatus(effectiveStatus);
         entity.setConfigJson(write(values));
 
         if (existing == null) mapper.insert(entity);
@@ -62,6 +77,13 @@ public class ChannelConfigService {
 
         if ("dingtalk".equals(channelType)) {
             applyDingTalkRuntime(entity, values);
+        } else if ("wechat".equals(channelType)
+                && Integer.valueOf(1).equals(entity.getStatus())) {
+            mapper.update(null, new UpdateWrapper<BotChannelConfig>()
+                .eq("channel_type", "wechat")
+                .ne("id", entity.getId())
+                .eq("status", 1)
+                .set("status", 0));
         }
         return toView(entity);
     }
@@ -96,9 +118,31 @@ public class ChannelConfigService {
 
     public ChannelConnectionTestResult test(Long id) {
         BotChannelConfig config = requireConfig(id);
+        if ("wechat".equals(config.getChannelType())) {
+            Map<String, Object> values = parse(config.getConfigJson());
+            String corpId = firstText(values.get("corpId"));
+            String corpSecret = firstText(values.get("corpSecret"));
+            String agentId = firstText(values.get("agentId"));
+            if (!hasText(corpId) || !hasText(corpSecret) || !hasText(agentId)) {
+                return new ChannelConnectionTestResult(
+                    false, "INVALID", "企业微信 CorpId、应用密钥和应用标识必须完整");
+            }
+            try {
+                Long.parseLong(agentId);
+            } catch (NumberFormatException e) {
+                return new ChannelConnectionTestResult(
+                    false, "INVALID", "企业微信应用标识必须是数字");
+            }
+            weChatWorkClient.testConnection(corpId, corpSecret);
+            boolean callbackReady = hasText(firstText(values.get("callbackToken")))
+                && hasText(firstText(values.get("callbackAesKey")));
+            return new ChannelConnectionTestResult(true, "CONNECTED",
+                callbackReady ? "企业微信凭证和回调配置验证成功"
+                    : "企业微信 API 凭证验证成功，但回调 Token/AESKey 尚未配置");
+        }
         if (!"dingtalk".equals(config.getChannelType())) {
             return new ChannelConnectionTestResult(
-                true, "CONFIGURED", "该渠道配置已保存，无需建立 Stream 连接");
+                true, "CONFIGURED", "该渠道配置已保存，无需建立连接");
         }
         Map<String, Object> values = parse(config.getConfigJson());
         String clientId = firstText(values.get("clientId"), values.get("appKey"));
@@ -157,12 +201,31 @@ public class ChannelConfigService {
                 putText(values, "corpId", request.getCorpId(), false);
                 putText(values, "corpSecret", request.getCorpSecret(), true);
                 putText(values, "agentId", request.getAgentId(), false);
+                putText(values, "callbackToken", request.getCallbackToken(), true);
+                putText(values, "callbackAesKey", request.getCallbackAesKey(), true);
             }
             case "other" -> {
                 putText(values, "endpoint", request.getEndpoint(), false);
                 putText(values, "accessToken", request.getAccessToken(), true);
             }
             default -> values.clear();
+        }
+    }
+
+    private void validateActiveWeChat(Map<String, Object> values) {
+        if (!hasText(firstText(values.get("corpId")))
+                || !hasText(firstText(values.get("corpSecret")))
+                || !hasText(firstText(values.get("agentId")))) {
+            throw new BusinessException(400, "企业微信 CorpId、应用密钥和应用标识不能为空");
+        }
+        if (!hasText(firstText(values.get("callbackToken")))
+                || !hasText(firstText(values.get("callbackAesKey")))) {
+            throw new BusinessException(400, "企业微信回调 Token 和 EncodingAESKey 不能为空");
+        }
+        try {
+            Long.parseLong(firstText(values.get("agentId")));
+        } catch (NumberFormatException e) {
+            throw new BusinessException(400, "企业微信应用标识必须是数字");
         }
     }
 
@@ -184,6 +247,8 @@ public class ChannelConfigService {
         view.setCorpId(firstText(values.get("corpId")));
         view.setAgentId(firstText(values.get("agentId")));
         view.setCorpSecretConfigured(hasText(firstText(values.get("corpSecret"))));
+        view.setCallbackTokenConfigured(hasText(firstText(values.get("callbackToken"))));
+        view.setCallbackAesKeyConfigured(hasText(firstText(values.get("callbackAesKey"))));
         view.setEndpoint(firstText(values.get("endpoint")));
         view.setAccessTokenConfigured(hasText(firstText(values.get("accessToken"))));
         view.setConfigSummary(summary(config.getChannelType(), view));
@@ -202,7 +267,9 @@ public class ChannelConfigService {
             case "dingtalk" -> view.isClientSecretConfigured()
                 ? "Stream 模式 · 应用凭证已配置" : "Stream 模式 · 待补充应用凭证";
             case "wechat" -> view.isCorpSecretConfigured()
-                ? "企业凭证已配置" : "待补充企业凭证";
+                ? (view.isCallbackTokenConfigured() && view.isCallbackAesKeyConfigured()
+                    ? "企业凭证和回调配置已配置" : "企业凭证已配置，待补充回调配置")
+                : "待补充企业凭证";
             case "other" -> hasText(view.getEndpoint())
                 ? "服务地址已配置" : "未配置服务地址";
             default -> "无需额外配置";

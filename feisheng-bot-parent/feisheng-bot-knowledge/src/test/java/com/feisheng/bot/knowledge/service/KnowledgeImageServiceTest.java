@@ -62,6 +62,25 @@ class KnowledgeImageServiceTest {
         assertTrue(service.attachment(42L, "fallback").isEmpty());
     }
 
+    @Test
+    void findsLatestAvailableImageByExactTitle() {
+        BotKnowledgeDocumentMapper mapper = mock(BotKnowledgeDocumentMapper.class);
+        MinioStorageService storage = mock(MinioStorageService.class);
+        BotKnowledgeDocument document = imageDocument();
+        when(mapper.selectLatestAvailableImageByTitle("点签产品版本功能.png"))
+            .thenReturn(document);
+        when(mapper.selectById(42L)).thenReturn(document);
+        KnowledgeImageService service = new KnowledgeImageService(
+            mapper, storage, "test-secret", 3600, 1024, "");
+
+        KnowledgeImageService.ImageAttachment attachment = service
+            .attachmentByTitle("点签产品版本功能.png")
+            .orElseThrow();
+
+        assertEquals(42L, attachment.documentId());
+        assertEquals("点签产品图", attachment.title());
+    }
+
     private static BotKnowledgeDocument imageDocument() {
         BotKnowledgeDocument document = new BotKnowledgeDocument();
         document.setId(42L);

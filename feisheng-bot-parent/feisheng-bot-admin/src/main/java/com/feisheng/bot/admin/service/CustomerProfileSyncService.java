@@ -30,8 +30,7 @@ public class CustomerProfileSyncService {
         ) conversation_stats
           ON conversation_stats.channel_type = channel_user.channel_type
          AND conversation_stats.channel_user_id = channel_user.channel_user_id
-        WHERE channel_user.channel_type IS NOT NULL
-          AND channel_user.channel_type != ''
+        WHERE channel_user.channel_type IN ('dingtalk', 'wechat')
           AND channel_user.channel_user_id IS NOT NULL
           AND channel_user.channel_user_id != ''
         ON DUPLICATE KEY UPDATE
@@ -60,8 +59,7 @@ public class CustomerProfileSyncService {
           ON channel_user.channel_type = conversation.channel_type
          AND channel_user.channel_user_id = conversation.channel_user_id
         WHERE conversation.deleted = 0
-          AND conversation.channel_type IS NOT NULL
-          AND conversation.channel_type != ''
+          AND conversation.channel_type IN ('dingtalk', 'wechat')
           AND conversation.channel_user_id IS NOT NULL
           AND conversation.channel_user_id != ''
         GROUP BY conversation.channel_type, conversation.channel_user_id

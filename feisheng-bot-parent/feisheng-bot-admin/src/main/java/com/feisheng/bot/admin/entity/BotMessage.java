@@ -2,6 +2,7 @@ package com.feisheng.bot.admin.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
@@ -17,5 +18,7 @@ public class BotMessage {
     private String contentType;
     private String content;
     private String metadata;
+    @TableField(exist = false)
+    private String mediaUrl;
     private Date createTime;
 }

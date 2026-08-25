@@ -1,8 +1,10 @@
 package com.feisheng.bot.gateway.client;
 
 import com.feisheng.bot.common.util.RedisUtil;
+import com.feisheng.bot.gateway.config.WeChatWorkConfigProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
@@ -27,6 +29,21 @@ public class WeChatWorkClient {
     private final String configuredCorpSecret;
     private final String configuredAgentId;
     private final String apiBase;
+    private final ObjectProvider<WeChatWorkConfigProvider> configProvider;
+
+    public WeChatWorkClient(
+            RedisUtil redisUtil,
+            @Value("${wecom.corp-id:}") String corpId,
+            @Value("${wecom.corp-secret:}") String corpSecret,
+            @Value("${wecom.agent-id:}") String agentId,
+            @Value("${wecom.api-base:https://qyapi.weixin.qq.com}") String apiBase) {
+        this(redisUtil, corpId, corpSecret, agentId, apiBase, new RestTemplate(), null);
+    }
+
+    WeChatWorkClient(RedisUtil redisUtil, String corpId, String corpSecret,
+                     String agentId, String apiBase, RestTemplate rest) {
+        this(redisUtil, corpId, corpSecret, agentId, apiBase, rest, null);
+    }
 
     @Autowired
     public WeChatWorkClient(
@@ -34,18 +51,22 @@ public class WeChatWorkClient {
             @Value("${wecom.corp-id:}") String corpId,
             @Value("${wecom.corp-secret:}") String corpSecret,
             @Value("${wecom.agent-id:}") String agentId,
-            @Value("${wecom.api-base:https://qyapi.weixin.qq.com}") String apiBase) {
-        this(redisUtil, corpId, corpSecret, agentId, apiBase, new RestTemplate());
+            @Value("${wecom.api-base:https://qyapi.weixin.qq.com}") String apiBase,
+            ObjectProvider<WeChatWorkConfigProvider> configProvider) {
+        this(redisUtil, corpId, corpSecret, agentId, apiBase,
+            new RestTemplate(), configProvider);
     }
 
-    WeChatWorkClient(RedisUtil redisUtil, String corpId, String corpSecret,
-                     String agentId, String apiBase, RestTemplate rest) {
+    private WeChatWorkClient(RedisUtil redisUtil, String corpId, String corpSecret,
+                             String agentId, String apiBase, RestTemplate rest,
+                             ObjectProvider<WeChatWorkConfigProvider> configProvider) {
         this.redisUtil = redisUtil;
         this.configuredCorpId = corpId;
         this.configuredCorpSecret = corpSecret;
         this.configuredAgentId = agentId;
         this.apiBase = apiBase.endsWith("/") ? apiBase.substring(0, apiBase.length() - 1) : apiBase;
         this.rest = rest;
+        this.configProvider = configProvider;
     }
 
     public String getAccessToken(String corpId, String corpSecret) {
@@ -66,13 +87,14 @@ public class WeChatWorkClient {
     }
 
     public boolean sendMessage(String userId, String content) {
-        if (isBlank(configuredCorpId) || isBlank(configuredCorpSecret) || isBlank(configuredAgentId)) {
+        WeChatWorkConfigProvider.Config config = activeOrEnvironmentConfig();
+        if (!config.hasApiCredentials()) {
             throw new IllegalStateException(
                 "WECOM_CORP_ID, WECOM_CORP_SECRET and WECOM_AGENT_ID are required");
         }
         try {
-            return sendMessage(configuredCorpId, configuredCorpSecret,
-                Long.parseLong(configuredAgentId), userId, content);
+            return sendMessage(config.corpId(), config.corpSecret(),
+                Long.parseLong(config.agentId()), userId, content);
         } catch (NumberFormatException e) {
             throw new IllegalStateException("WECOM_AGENT_ID must be a number", e);
         }
@@ -100,13 +122,14 @@ public class WeChatWorkClient {
     }
 
     public boolean sendImage(String userId, byte[] image, String fileName, String contentType) {
-        if (isBlank(configuredCorpId) || isBlank(configuredCorpSecret) || isBlank(configuredAgentId)) {
+        WeChatWorkConfigProvider.Config config = activeOrEnvironmentConfig();
+        if (!config.hasApiCredentials()) {
             throw new IllegalStateException(
                 "WECOM_CORP_ID, WECOM_CORP_SECRET and WECOM_AGENT_ID are required");
         }
         try {
-            return sendImage(configuredCorpId, configuredCorpSecret,
-                Long.parseLong(configuredAgentId), userId, image, fileName, contentType);
+            return sendImage(config.corpId(), config.corpSecret(),
+                Long.parseLong(config.agentId()), userId, image, fileName, contentType);
         } catch (NumberFormatException e) {
             throw new IllegalStateException("WECOM_AGENT_ID must be a number", e);
         }
@@ -167,6 +190,26 @@ public class WeChatWorkClient {
 
     private static String safeFileName(String value) {
         return value.replace("\r", "_").replace("\n", "_").replace("\"", "_");
+    }
+
+    public boolean testConnection(String corpId, String corpSecret) {
+        if (isBlank(corpId) || isBlank(corpSecret)) {
+            throw new IllegalArgumentException("企业微信 CorpId 和应用密钥不能为空");
+        }
+        getAccessToken(corpId.trim(), corpSecret.trim());
+        return true;
+    }
+
+    private WeChatWorkConfigProvider.Config activeOrEnvironmentConfig() {
+        if (configProvider != null) {
+            WeChatWorkConfigProvider provider = configProvider.getIfAvailable();
+            if (provider != null) {
+                WeChatWorkConfigProvider.Config active = provider.activeConfig().orElse(null);
+                if (active != null && active.hasApiCredentials()) return active;
+            }
+        }
+        return new WeChatWorkConfigProvider.Config(
+            configuredCorpId, configuredCorpSecret, configuredAgentId, "", "");
     }
 
     private static boolean isBlank(String value) {

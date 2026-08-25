@@ -50,6 +50,17 @@ public class ReplyAttachmentService {
         return List.copyOf(attachments);
     }
 
+    public List<KnowledgeImageService.ImageAttachment> fromKnowledgeImageTitle(String title) {
+        if (maxImages == 0 || title == null || title.isBlank()) return List.of();
+        try {
+            return imageService.attachmentByTitle(title).map(List::of).orElseGet(List::of);
+        } catch (RuntimeException e) {
+            log.warn("Could not prepare knowledge image attachment '{}': {}",
+                title, e.getMessage());
+            return List.of();
+        }
+    }
+
     private static Long longValue(Object value) {
         if (value instanceof Number number) return number.longValue();
         if (value == null) return null;

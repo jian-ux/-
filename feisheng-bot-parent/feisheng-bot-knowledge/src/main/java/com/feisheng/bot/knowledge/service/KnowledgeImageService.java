@@ -56,6 +56,13 @@ public class KnowledgeImageService {
             "image", documentId, title, publicBaseUrl + path));
     }
 
+    public Optional<ImageAttachment> attachmentByTitle(String title) {
+        if (title == null || title.isBlank()) return Optional.empty();
+        BotKnowledgeDocument document = documentMapper
+            .selectLatestAvailableImageByTitle(title.trim());
+        return document == null ? Optional.empty() : attachment(document.getId(), title);
+    }
+
     public boolean verify(Long documentId, long expires, String signature) {
         if (documentId == null || signature == null || signature.isBlank()) return false;
         if (expires < Instant.now().getEpochSecond()) return false;

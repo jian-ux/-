@@ -90,6 +90,9 @@ class DialogEvaluationServiceTest {
         assertEquals(0, report.forbiddenPhraseViolations());
         assertEquals(1.0, report.handoffAccuracy());
         assertEquals(0, report.piiLeakCount());
+        assertTrue(report.passed());
+        assertEquals(2, report.passedCaseCount());
+        assertEquals(0, report.failedCaseCount());
         assertEquals(List.of(true, true), rollbackFlags);
         assertTrue(report.databaseRolledBack());
         assertEquals("手机号[手机号已脱敏]，怎么重置密码",
@@ -137,6 +140,46 @@ class DialogEvaluationServiceTest {
             anyString(), isNull(), isNull(), eq("v2"));
     }
 
+    @Test
+    void acceptsSafePartialAnswerForAlternateQuestionButKeepsDecisionStrictOtherwise() {
+        String question = "企业或者个人都能使用吗";
+        when(dialogService.send(eq("evaluation"), anyString(), eq(question),
+                anyString(), isNull(), isNull()))
+            .thenReturn(response("企业用户数量已确认，个人用户数量暂无统计。", "answered", "rag_ai",
+                0.9, List.of(Map.of("sourceType", "faq", "sourceId", 7L)), false, false,
+                "v1", "ANSWER_PARTIAL"));
+
+        DialogEvaluationService.DialogEvaluationReport report = service.evaluate(
+            new DialogEvaluationService.DialogEvaluationRequest("alternate-coverage", List.of(
+                new DialogEvaluationService.DialogEvaluationCase(
+                    "alternate", question, true, null, "ANSWER_OR_PARTIAL", "faq", 7L,
+                    List.of(), List.of(), List.of(), false, null))));
+
+        assertEquals(1.0, report.decisionAccuracy());
+        assertTrue(report.cases().get(0).decisionCorrect());
+    }
+
+    @Test
+    void checksDecisionStatusAndAnswerabilityTogether() {
+        String question = "测试业务范围外状态";
+        when(dialogService.send(eq("evaluation"), anyString(), eq(question),
+                anyString(), isNull(), isNull()))
+            .thenReturn(response("现有知识不足。", "no_answer", "no_answer",
+                0.2, List.of(), false, false, "v1", "NO_KNOWLEDGE"));
+
+        DialogEvaluationService.DialogEvaluationReport report = service.evaluate(
+            new DialogEvaluationService.DialogEvaluationRequest("combined-decision-check", List.of(
+                new DialogEvaluationService.DialogEvaluationCase(
+                    "out-of-scope", question, false, "out_of_scope", "NO_KNOWLEDGE",
+                    null, null, List.of(), List.of(), List.of(), false, null))));
+
+        assertEquals(0.0, report.decisionAccuracy());
+        assertEquals(false, report.passed());
+        assertEquals(0, report.passedCaseCount());
+        assertEquals(1, report.failedCaseCount());
+        assertEquals(List.of(true), rollbackFlags);
+    }
+
     private Map<String, Object> response(String reply, String status, String source,
                                          double confidence,
                                          List<Map<String, Object>> citations,
@@ -150,10 +193,19 @@ class DialogEvaluationServiceTest {
                                          List<Map<String, Object>> citations,
                                          boolean needsTransfer, boolean redactionApplied,
                                          String promptVersion) {
+        return response(reply, status, source, confidence, citations, needsTransfer,
+            redactionApplied, promptVersion, "answered".equals(status) ? "ANSWER" : "NO_KNOWLEDGE");
+    }
+
+    private Map<String, Object> response(String reply, String status, String source,
+                                         double confidence,
+                                         List<Map<String, Object>> citations,
+                                         boolean needsTransfer, boolean redactionApplied,
+                                         String promptVersion, String answerDecision) {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("reply", reply);
         response.put("answerStatus", status);
-        response.put("answerDecision", "answered".equals(status) ? "ANSWER" : "NO_KNOWLEDGE");
+        response.put("answerDecision", answerDecision);
         response.put("source", source);
         response.put("confidence", confidence);
         response.put("citations", citations);

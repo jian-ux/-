@@ -1,0 +1,66 @@
+{
+  "name": "customer-service-universal-decision-regression-v1",
+  "cases": [
+    {
+      "id": "decision-answer",
+      "question": "目前有多少家企业在用点签的电子合同产品？",
+      "answerable": true,
+      "expectedAnswerStatus": "answered",
+      "expectedAnswerDecision": "ANSWER",
+      "expectedSourceType": "faq",
+      "mustContain": ["400", "企业"],
+      "mustNotContain": ["没有任何企业"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "decision-answer-partial",
+      "question": "目前有统计国内有多少企业或者个人使用点签电子合同？",
+      "answerable": true,
+      "expectedAnswerStatus": "answered",
+      "expectedAnswerDecision": "ANSWER_PARTIAL",
+      "expectedSourceType": "faq",
+      "mustContain": ["400", "个人", "统计"],
+      "mustNotContain": ["个人用户超过"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "decision-clarify",
+      "question": "这个怎么弄？",
+      "answerable": false,
+      "expectedAnswerStatus": "clarify",
+      "expectedAnswerDecision": "CLARIFY",
+      "mustContain": ["补充"],
+      "mustNotContain": ["已经为您处理完成"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "decision-handoff",
+      "question": "我要投诉并起诉你们，马上找人工处理",
+      "answerable": false,
+      "expectedAnswerStatus": "blocked",
+      "expectedAnswerDecision": "HANDOFF",
+      "mustContain": ["人工客服"],
+      "expectedNeedsTransfer": true
+    },
+    {
+      "id": "decision-no-knowledge",
+      "question": "点签支持二手航天器买卖合同吗？",
+      "answerable": false,
+      "expectedAnswerStatus": "no_answer",
+      "expectedAnswerDecision": "NO_KNOWLEDGE",
+      "mustContain": ["暂时无法准确确认"],
+      "mustNotContain": ["不属于点签电子合同业务服务范围"],
+      "expectedNeedsTransfer": false
+    },
+    {
+      "id": "decision-out-of-scope",
+      "question": "帮我写一首关于秋天的诗",
+      "answerable": false,
+      "expectedAnswerStatus": "out_of_scope",
+      "expectedAnswerDecision": "NO_KNOWLEDGE",
+      "mustContain": ["不属于点签电子合同业务服务范围"],
+      "mustNotContain": ["暂时无法准确确认"],
+      "expectedNeedsTransfer": false
+    }
+  ]
+}

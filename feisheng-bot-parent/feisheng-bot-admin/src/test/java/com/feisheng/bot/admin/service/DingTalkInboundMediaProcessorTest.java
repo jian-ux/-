@@ -7,6 +7,7 @@ import com.feisheng.bot.admin.mapper.BotChannelConfigMapper;
 import com.feisheng.bot.gateway.client.DingTalkClient;
 import com.feisheng.bot.gateway.dto.DingTalkMediaRequest;
 import com.feisheng.bot.gateway.service.DingTalkMediaProcessingException;
+import com.feisheng.bot.knowledge.service.MinioStorageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,6 +37,7 @@ class DingTalkInboundMediaProcessorTest {
     @Mock private BotChannelConfigMapper channelConfigMapper;
     @Mock private ImageOcrService imageOcrService;
     @Mock private SpeechTranscriptionService speechTranscriptionService;
+    @Mock private MinioStorageService storageService;
 
     private DingTalkInboundMediaProcessor processor;
 
@@ -43,7 +45,7 @@ class DingTalkInboundMediaProcessorTest {
     void setUp() {
         processor = new DingTalkInboundMediaProcessor(
             dingTalkClient, channelConfigMapper, new ObjectMapper(), imageOcrService,
-            speechTranscriptionService, "", "", "", 1024 * 1024,
+            speechTranscriptionService, storageService, "", "", "", 1024 * 1024,
             2 * 1024 * 1024, 8000, "ffmpeg", 10);
     }
 

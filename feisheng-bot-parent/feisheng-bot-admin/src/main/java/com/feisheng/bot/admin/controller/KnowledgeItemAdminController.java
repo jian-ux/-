@@ -89,7 +89,8 @@ public class KnowledgeItemAdminController {
         LambdaQueryWrapper<BotKnowledgeItem> q = new LambdaQueryWrapper<>();
         if (StringUtils.hasText(keyword)) {
             q.and(w -> w.like(BotKnowledgeItem::getQuestion, keyword)
-                    .or().like(BotKnowledgeItem::getKeywords, keyword));
+                    .or().like(BotKnowledgeItem::getKeywords, keyword)
+                    .or().like(BotKnowledgeItem::getAlternateQuestions, keyword));
         }
         q.orderByDesc(BotKnowledgeItem::getHitCount)
             .orderByDesc(BotKnowledgeItem::getId);
@@ -112,6 +113,8 @@ public class KnowledgeItemAdminController {
         created.setQuestion(question);
         created.setAnswer(item.getAnswer().trim());
         created.setKeywords(trimToNull(item.getKeywords()));
+        created.setAlternateQuestions(
+            KnowledgeTextUtil.questionAliasesJson(item.getAlternateQuestions(), question));
         created.setHitCount(0);
         created.setStatus(1);
         created.setDirectAnswerEnabled(
@@ -135,6 +138,8 @@ public class KnowledgeItemAdminController {
             .set(BotKnowledgeItem::getQuestion, question)
             .set(BotKnowledgeItem::getAnswer, item.getAnswer().trim())
             .set(BotKnowledgeItem::getKeywords, trimToNull(item.getKeywords()))
+            .set(BotKnowledgeItem::getAlternateQuestions,
+                KnowledgeTextUtil.questionAliasesJson(item.getAlternateQuestions(), question))
             .set(BotKnowledgeItem::getDirectAnswerEnabled,
                 Integer.valueOf(1).equals(item.getDirectAnswerEnabled()) ? 1 : 0)
             .set(BotKnowledgeItem::getEmbedding, null)
@@ -239,7 +244,8 @@ public class KnowledgeItemAdminController {
 
     private int embedFaqItem(BotKnowledgeItem snapshot, boolean syncIndex) {
         List<KnowledgeTextUtil.FaqEmbeddingPart> parts = KnowledgeTextUtil.faqEmbeddingParts(
-            snapshot.getQuestion(), snapshot.getKeywords(), snapshot.getAnswer());
+            snapshot.getQuestion(), snapshot.getKeywords(), snapshot.getAnswer(),
+            snapshot.getAlternateQuestions());
         List<float[]> embeddings = embeddingService.embedBatch(
             parts.stream().map(KnowledgeTextUtil.FaqEmbeddingPart::embeddingText).toList());
         if (embeddings == null || embeddings.size() < parts.size()
@@ -291,6 +297,7 @@ public class KnowledgeItemAdminController {
         return String.join("\u0000",
             Objects.toString(item.getQuestion(), ""),
             Objects.toString(item.getKeywords(), ""),
+            Objects.toString(item.getAlternateQuestions(), ""),
             Objects.toString(item.getAnswer(), ""));
     }
 

@@ -8,6 +8,7 @@ import com.feisheng.bot.knowledge.mapper.BotKnowledgeItemMapper;
 import com.feisheng.bot.knowledge.mapper.BotKnowledgeChunkMapper;
 import com.feisheng.bot.knowledge.service.KnowledgeIndexService;
 import com.feisheng.bot.knowledge.service.PayloadFilters;
+import com.feisheng.bot.common.util.KnowledgeTextUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.feisheng.bot.common.vo.R;
 import org.springframework.util.StringUtils;
@@ -61,7 +62,8 @@ public class KnowledgeItemController {
         LambdaQueryWrapper<BotKnowledgeItem> q = new LambdaQueryWrapper<>();
         if (StringUtils.hasText(keyword))
             q.and(w -> w.like(BotKnowledgeItem::getQuestion, keyword)
-                         .or().like(BotKnowledgeItem::getKeywords, keyword));
+                         .or().like(BotKnowledgeItem::getKeywords, keyword)
+                         .or().like(BotKnowledgeItem::getAlternateQuestions, keyword));
         q.eq(BotKnowledgeItem::getStatus, 1).orderByDesc(BotKnowledgeItem::getHitCount);
         return R.ok(mapper.selectPage(new Page<>(page, size), q));
     }
@@ -165,7 +167,8 @@ public class KnowledgeItemController {
         String kw = item.getKeywords();
         boolean exactStandardQuestion = !normalizedText.isEmpty()
             && normalizedText.equals(normalizedQuestion);
-        boolean exactAlias = matchesExplicitQuestionAlias(normalizedText, kw);
+        boolean exactAlias = matchesExplicitQuestionAlias(normalizedText, kw)
+            || matchesAlternateQuestion(normalizedText, item);
         boolean exactQuestion = exactStandardQuestion || exactAlias;
         if (exactStandardQuestion) {
             score = 1.0;
@@ -265,6 +268,11 @@ public class KnowledgeItemController {
             if (normalizedText.equals(normalizeQuestion(alias))) return true;
         }
         return false;
+    }
+
+    private boolean matchesAlternateQuestion(String normalizedText, BotKnowledgeItem item) {
+        return KnowledgeTextUtil.questionAliases(item.getAlternateQuestions(), item.getQuestion())
+            .stream().anyMatch(alias -> normalizedText.equals(normalizeQuestion(alias)));
     }
 
     private String[] splitKeywords(String value) {

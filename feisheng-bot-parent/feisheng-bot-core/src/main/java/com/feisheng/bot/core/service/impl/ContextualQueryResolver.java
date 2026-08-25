@@ -84,7 +84,7 @@ public class ContextualQueryResolver {
     private static final List<String> CONTEXTUAL_BUSINESS_MARKERS = List.of(
         "点签", "电子合同", "合同", "签署", "签约", "签名", "签章", "印章", "用印",
         "认证", "实名", "账号", "账户", "模板", "附件", "发起", "撤回", "审批",
-        "归档", "存证", "证书", "发票", "套餐", "验证码", "管理员", "接收方",
+        "归档", "存证", "证书", "发票", "套餐", "会员", "验证码", "管理员", "接收方",
         "发起方", "签署方", "手机号", "企业", "公司", "法人");
     private static final List<String> CONTEXT_CARRY_TERMS = List.of(
         "改", "修改", "更换", "换", "撤回", "重发", "重新发起", "补充", "添加",
@@ -478,6 +478,34 @@ public class ContextualQueryResolver {
                 || inheritedProduct != null
                 || previousQuestionMerged
                 || clarificationResolved();
+        }
+
+        public boolean unresolved() {
+            if (!contextDependent || rewritten()) return false;
+            String normalized = query == null ? "" : query.toLowerCase()
+                .replaceAll("[\\p{P}\\p{S}\\s]+", "");
+            List<String> matchedBusinessSignals = CONTEXTUAL_BUSINESS_MARKERS.stream()
+                .filter(normalized::contains)
+                .toList();
+            long explicitBusinessSignals = matchedBusinessSignals.stream()
+                .filter(marker -> matchedBusinessSignals.stream().noneMatch(other ->
+                    other.length() > marker.length() && other.contains(marker)))
+                .limit(2)
+                .count();
+            int scenarioBoundary = Math.max(query == null ? -1 : query.lastIndexOf('，'),
+                query == null ? -1 : query.lastIndexOf(','));
+            String scenario = scenarioBoundary > 0
+                ? query.substring(0, scenarioBoundary).toLowerCase()
+                    .replaceAll("[\\p{P}\\p{S}\\s]+", "")
+                : "";
+            int longestScenarioSignal = CONTEXTUAL_BUSINESS_MARKERS.stream()
+                .filter(scenario::contains)
+                .mapToInt(String::length)
+                .max()
+                .orElse(0);
+            boolean explicitScenario = longestScenarioSignal > 0
+                && scenario.length() > longestScenarioSignal + 1;
+            return explicitBusinessSignals < 2 && !explicitScenario;
         }
     }
 

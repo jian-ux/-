@@ -17,4 +17,11 @@ public class CoreClient {
     public Map<String, Object> sendMessage(String channelType, String channelUserId, String text, String title) {
         return dialogService.send(channelType, channelUserId, text, title);
     }
+
+    public Map<String, Object> sendMessage(String channelType, String channelUserId,
+                                           String text, String title,
+                                           String contentType, String metadata) {
+        return dialogService.sendWithMessageMetadata(
+            channelType, channelUserId, text, title, contentType, metadata);
+    }
 }

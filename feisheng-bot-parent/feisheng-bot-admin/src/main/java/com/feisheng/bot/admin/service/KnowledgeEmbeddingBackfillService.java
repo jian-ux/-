@@ -114,7 +114,8 @@ public class KnowledgeEmbeddingBackfillService {
             }
             try {
                 List<KnowledgeTextUtil.FaqEmbeddingPart> parts = KnowledgeTextUtil.faqEmbeddingParts(
-                    item.getQuestion(), item.getKeywords(), item.getAnswer());
+                    item.getQuestion(), item.getKeywords(), item.getAnswer(),
+                    item.getAlternateQuestions());
                 List<float[]> childEmbeddings = parts.size() <= 1
                     ? List.of()
                     : embeddingService.embedBatch(parts.subList(1, parts.size()).stream()
@@ -176,7 +177,8 @@ public class KnowledgeEmbeddingBackfillService {
 
     private String faqEmbeddingText(BotKnowledgeItem item) {
         return KnowledgeTextUtil.faqEmbeddingText(
-            item.getQuestion(), item.getKeywords(), item.getAnswer());
+            item.getQuestion(), item.getKeywords(), item.getAnswer(),
+            item.getAlternateQuestions());
     }
 
     private String chunkEmbeddingText(BotKnowledgeChunk chunk) {

@@ -15,6 +15,9 @@ public class BotConversation extends BaseEntity {
     @TableField(exist = false)
     private String customerName;
     private String title;
+    private String contextSummary;
+    private Long summaryMessageId;
+    private Date summaryUpdatedAt;
     private String status;
     private String priority;
     private Date slaDeadline;

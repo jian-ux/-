@@ -5,6 +5,7 @@ import com.dingtalk.open.app.api.models.bot.MessageContent;
 import com.feisheng.bot.gateway.dto.ChannelMessageDTO;
 import com.feisheng.bot.gateway.dto.DingTalkMediaRequest;
 import com.feisheng.bot.gateway.service.DingTalkMediaProcessor;
+import com.feisheng.bot.gateway.service.DingTalkImageReplyDispatcher;
 import com.feisheng.bot.gateway.service.impl.ChannelServiceImpl;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -46,6 +47,21 @@ class DingTalkStreamCallbackListenerTest {
         assertEquals("张三", dto.getValue().getSenderName());
         assertEquals("msg-1", dto.getValue().getMsgId());
         assertEquals("你好", dto.getValue().getContent());
+    }
+
+    @Test
+    void doesNotSendWhenCoreSuppressesHumanHandlingReply() throws Exception {
+        ChannelServiceImpl channelService = mock(ChannelServiceImpl.class);
+        DingTalkStreamReplySender replySender = mock(DingTalkStreamReplySender.class);
+        when(channelService.processMessage(any())).thenReturn(
+            Map.of("reply", "", "suppressReply", true));
+        DingTalkStreamCallbackListener listener = new DingTalkStreamCallbackListener(
+            channelService, replySender);
+
+        listener.execute(message("人工接管后的补充消息"));
+
+        verify(replySender, never()).replyText(any(), any());
+        verify(replySender, never()).replyMarkdown(any(), any(), any());
     }
 
     @Test
@@ -260,20 +276,25 @@ class DingTalkStreamCallbackListenerTest {
     }
 
     @Test
-    void sendsMarkdownWhenReplyContainsPublicKnowledgeImage() throws Exception {
+    void embedsPublicKnowledgeImageInMarkdownWithoutSecondDispatch() throws Exception {
         ChannelServiceImpl channelService = mock(ChannelServiceImpl.class);
         DingTalkStreamReplySender replySender = mock(DingTalkStreamReplySender.class);
-        when(channelService.processMessage(any())).thenReturn(Map.of(
+        DingTalkImageReplyDispatcher imageDispatcher =
+            mock(DingTalkImageReplyDispatcher.class);
+        Map<String, Object> result = Map.of(
             "reply", "这是点签产品介绍。",
             "attachments", List.of(Map.of(
                 "type", "image",
                 "documentId", 42L,
                 "title", "点签产品图",
-                "url", "https://bot.example.com/api/public/knowledge-images/42?signature=test"))));
+                "url", "https://bot.example.com/api/public/knowledge-images/42?signature=test")));
+        when(channelService.processMessage(any())).thenReturn(result);
         DingTalkStreamCallbackListener listener = new DingTalkStreamCallbackListener(
-            channelService, replySender);
+            channelService, replySender, imageDispatcher);
+        ChatbotMessage message = message("介绍一下产品");
+        message.setConversationType("2");
 
-        listener.execute(message("介绍一下产品"));
+        listener.execute(message);
 
         verify(replySender).replyMarkdown(
             "https://oapi.dingtalk.com/robot/sendBySession",
@@ -281,6 +302,7 @@ class DingTalkStreamCallbackListenerTest {
             "这是点签产品介绍。\n\n![点签产品图]"
                 + "(https://bot.example.com/api/public/knowledge-images/42?signature=test)");
         verify(replySender, never()).replyText(any(), any());
+        verifyNoInteractions(imageDispatcher);
     }
 
     @Test

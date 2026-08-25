@@ -64,7 +64,20 @@ public class LlmHttpClient {
                               String systemPrompt, String userPrompt,
                               String providerCode) {
         return call(rest, apiUrl, apiKey, model, systemPrompt, userPrompt,
-            providerCode, maxRetries);
+            providerCode, maxRetries, null);
+    }
+
+    /** Requests provider-enforced structured JSON for callers that validate its shape. */
+    public ChatResponse callJsonSchema(String apiUrl, String apiKey, String model,
+                                       String systemPrompt, String userPrompt,
+                                       String providerCode, Map<String, Object> schema) {
+        return call(rest, apiUrl, apiKey, model, systemPrompt, userPrompt,
+            providerCode, maxRetries, Map.of(
+                "type", "json_schema",
+                "json_schema", Map.of(
+                    "name", "structured_response",
+                    "strict", true,
+                    "schema", schema)));
     }
 
     /** Uses an isolated policy for offline jobs without slowing interactive chat calls. */
@@ -79,6 +92,14 @@ public class LlmHttpClient {
     private ChatResponse call(RestTemplate client, String apiUrl, String apiKey,
                               String model, String systemPrompt, String userPrompt,
                               String providerCode, int retries) {
+        return call(client, apiUrl, apiKey, model, systemPrompt, userPrompt,
+            providerCode, retries, null);
+    }
+
+    private ChatResponse call(RestTemplate client, String apiUrl, String apiKey,
+                              String model, String systemPrompt, String userPrompt,
+                              String providerCode, int retries,
+                              Map<String, Object> responseFormat) {
         String m = model != null ? model : "gpt-4o-mini";
         String sp = systemPrompt != null ? systemPrompt : defaultSystemPrompt;
 
@@ -88,6 +109,7 @@ public class LlmHttpClient {
                 Map<String, Object> body = new HashMap<>();
                 body.put("model", m);
                 body.put("temperature", temperature);
+                if (responseFormat != null) body.put("response_format", responseFormat);
                 body.put("messages", Arrays.asList(
                     Map.of("role", "system", "content", sp),
                     Map.of("role", "user", "content", userPrompt)

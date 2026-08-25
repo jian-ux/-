@@ -1,9 +1,11 @@
 package com.feisheng.bot.gateway.controller;
 
+import com.feisheng.bot.gateway.config.WeChatWorkConfigProvider;
 import com.feisheng.bot.gateway.dto.ChannelMessageDTO;
 import com.feisheng.bot.gateway.service.impl.ChannelServiceImpl;
 import com.feisheng.bot.gateway.service.WeChatImageReplyDispatcher;
 import com.feisheng.bot.gateway.util.WeChatWorkCryptoUtil;
+import org.springframework.beans.factory.ObjectProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,17 +30,29 @@ public class WeChatWorkController {
 
     private final ChannelServiceImpl channelService;
     private final WeChatImageReplyDispatcher imageReplyDispatcher;
-    private final WeChatWorkCryptoUtil crypto;
+    private final WeChatWorkCryptoUtil environmentCrypto;
+    private final ObjectProvider<WeChatWorkConfigProvider> configProvider;
 
     public WeChatWorkController(ChannelServiceImpl channelService,
                                 WeChatImageReplyDispatcher imageReplyDispatcher,
                                 @Value("${wecom.corp-id:}") String corpId,
                                 @Value("${wecom.callback-token:}") String token,
                                 @Value("${wecom.callback-aes-key:}") String aesKey) {
+        this(channelService, imageReplyDispatcher, null, corpId, token, aesKey);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    WeChatWorkController(ChannelServiceImpl channelService,
+                         WeChatImageReplyDispatcher imageReplyDispatcher,
+                         ObjectProvider<WeChatWorkConfigProvider> configProvider,
+                         @Value("${wecom.corp-id:}") String corpId,
+                         @Value("${wecom.callback-token:}") String token,
+                         @Value("${wecom.callback-aes-key:}") String aesKey) {
         this.channelService = channelService;
         this.imageReplyDispatcher = imageReplyDispatcher;
-        this.crypto = isBlank(corpId) || isBlank(token) || isBlank(aesKey)
+        this.environmentCrypto = isBlank(corpId) || isBlank(token) || isBlank(aesKey)
             ? null : new WeChatWorkCryptoUtil(aesKey, token, corpId);
+        this.configProvider = configProvider;
     }
 
     @GetMapping(value = {"/message", "/verify"}, produces = MediaType.TEXT_PLAIN_VALUE)
@@ -47,6 +61,7 @@ public class WeChatWorkController {
             @RequestParam String timestamp,
             @RequestParam String nonce,
             @RequestParam String echostr) {
+        WeChatWorkCryptoUtil crypto = callbackCrypto();
         if (crypto == null) return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
         if (!crypto.verifySignature(msgSignature, timestamp, nonce, echostr)) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("error");
@@ -66,6 +81,7 @@ public class WeChatWorkController {
             @RequestParam("msg_signature") String msgSignature,
             @RequestParam String timestamp,
             @RequestParam String nonce) {
+        WeChatWorkCryptoUtil crypto = callbackCrypto();
         if (crypto == null) return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
         try {
             String encrypted = xmlValue(parseXml(requestXml), "Encrypt");
@@ -143,5 +159,20 @@ public class WeChatWorkController {
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private WeChatWorkCryptoUtil callbackCrypto() {
+        if (configProvider != null) {
+            WeChatWorkConfigProvider provider = configProvider.getIfAvailable();
+            if (provider != null) {
+                WeChatWorkConfigProvider.Config active = provider.activeConfig().orElse(null);
+                if (active != null) {
+                    if (!active.hasCallbackCredentials()) return null;
+                    return new WeChatWorkCryptoUtil(
+                        active.callbackAesKey(), active.callbackToken(), active.corpId());
+                }
+            }
+        }
+        return environmentCrypto;
     }
 }

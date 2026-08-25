@@ -17,6 +17,8 @@ public class ChannelConfigRequest {
     private String corpId;
     private String corpSecret;
     private String agentId;
+    private String callbackToken;
+    private String callbackAesKey;
 
     private String endpoint;
     private String accessToken;

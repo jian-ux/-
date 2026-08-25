@@ -9,6 +9,7 @@ import com.feisheng.bot.gateway.client.DingTalkClient;
 import com.feisheng.bot.gateway.dto.DingTalkMediaRequest;
 import com.feisheng.bot.gateway.service.DingTalkMediaProcessingException;
 import com.feisheng.bot.gateway.service.DingTalkMediaProcessor;
+import com.feisheng.bot.knowledge.service.MinioStorageService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
@@ -18,6 +19,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -33,6 +35,7 @@ public class DingTalkInboundMediaProcessor implements DingTalkMediaProcessor {
     private final ObjectMapper objectMapper;
     private final ImageOcrService imageOcrService;
     private final SpeechTranscriptionService speechTranscriptionService;
+    private final MinioStorageService storageService;
     private final String environmentClientId;
     private final String environmentClientSecret;
     private final String environmentRobotCode;
@@ -48,6 +51,7 @@ public class DingTalkInboundMediaProcessor implements DingTalkMediaProcessor {
             ObjectMapper objectMapper,
             ImageOcrService imageOcrService,
             SpeechTranscriptionService speechTranscriptionService,
+            MinioStorageService storageService,
             @Value("${dingtalk.stream.client-id:}") String environmentClientId,
             @Value("${dingtalk.stream.client-secret:${dingtalk.app-secret:}}") String environmentClientSecret,
             @Value("${dingtalk.robot-code:}") String environmentRobotCode,
@@ -61,6 +65,7 @@ public class DingTalkInboundMediaProcessor implements DingTalkMediaProcessor {
         this.objectMapper = objectMapper;
         this.imageOcrService = imageOcrService;
         this.speechTranscriptionService = speechTranscriptionService;
+        this.storageService = storageService;
         this.environmentClientId = environmentClientId;
         this.environmentClientSecret = environmentClientSecret;
         this.environmentRobotCode = environmentRobotCode;
@@ -81,6 +86,66 @@ public class DingTalkInboundMediaProcessor implements DingTalkMediaProcessor {
             case "audio", "voice" -> normalizeAudio(request);
             default -> throw new DingTalkMediaProcessingException("暂不支持该类型的媒体消息");
         };
+    }
+
+    @Override
+    public MediaResult process(DingTalkMediaRequest request) {
+        if (request == null) throw new DingTalkMediaProcessingException("未收到可处理的媒体消息");
+        String type = normalizeType(request.msgType());
+        if ("picture".equals(type) || "image".equals(type)) {
+            return processImage(request);
+        }
+        return new MediaResult(normalize(request), "text", null);
+    }
+
+    private MediaResult processImage(DingTalkMediaRequest request) {
+        DingTalkClient.DownloadedMedia media = download(request, maxImageBytes);
+        String extension = imageExtension(firstText(request.fileName(), media.fileName()),
+            media.contentType(), media.content());
+        Path image = null;
+        try {
+            image = Files.createTempFile("feisheng-dingtalk-image-", "." + extension);
+            Files.write(image, media.content());
+            String metadata = storeImage(request, media, image, extension);
+            ImageOcrService.OcrResult result = imageOcrService.extract(
+                image, "dingtalk-image." + extension);
+            return new MediaResult(withCaption(request,
+                marked("客户发送了一张图片，以下为图片中的文字", result.text())),
+                "image", metadata);
+        } catch (DingTalkMediaProcessingException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new DingTalkMediaProcessingException(
+                "暂时无法识别这张图片，请发送包含清晰文字的图片或补充文字说明", e);
+        } finally {
+            deleteQuietly(image);
+        }
+    }
+
+    private String storeImage(DingTalkMediaRequest request,
+                              DingTalkClient.DownloadedMedia media,
+                              Path image, String extension) {
+        String fileName = firstText(request.fileName(), media.fileName(),
+            "dingtalk-image." + extension);
+        String contentType = imageContentType(extension, media.contentType());
+        try {
+            MinioStorageService.UploadResult stored = storageService.upload(
+                image, fileName, contentType);
+            Map<String, Object> metadata = new LinkedHashMap<>();
+            metadata.put("source", "dingtalk");
+            metadata.put("mediaType", "image");
+            metadata.put("bucket", stored.bucketName());
+            metadata.put("objectKey", stored.objectKey());
+            metadata.put("fileName", fileName);
+            metadata.put("contentType", contentType);
+            metadata.put("size", stored.fileSize());
+            metadata.put("msgId", request.msgId());
+            return objectMapper.writeValueAsString(metadata);
+        } catch (Exception e) {
+            log.warn("Could not persist DingTalk inbound image, msgId={}: {}",
+                request.msgId(), e.getMessage());
+            return null;
+        }
     }
 
     private String normalizeImage(DingTalkMediaRequest request) {
@@ -295,6 +360,18 @@ public class DingTalkInboundMediaProcessor implements DingTalkMediaProcessor {
 
     private String normalizeContentType(String value) {
         return value == null ? "" : value.toLowerCase(Locale.ROOT);
+    }
+
+    private String imageContentType(String extension, String detected) {
+        String type = normalizeContentType(detected);
+        if (type.startsWith("image/")) return type;
+        return switch (extension) {
+            case "png" -> "image/png";
+            case "jpg", "jpeg" -> "image/jpeg";
+            case "bmp" -> "image/bmp";
+            case "tif", "tiff" -> "image/tiff";
+            default -> "image/jpeg";
+        };
     }
 
     private String clean(String value) {

@@ -114,6 +114,42 @@ class NlpIntentClassifierTest {
     }
 
     @Test
+    void distinguishesDianqianFeaturesFromProductVersionFeatures() {
+        NlpIntentClassifier.IntentAnalysis dianqian =
+            classifier.classify("点签的产品功能");
+        NlpIntentClassifier.IntentAnalysis versions = classifier.classify("版本功能");
+        NlpIntentClassifier.IntentAnalysis professional =
+            classifier.classify("专业版有哪些功能？");
+
+        assertEquals(NlpIntentClassifier.IntentCode.PRODUCT_FEATURES,
+            dianqian.intentCode());
+        assertEquals("点签电子合同主要包含的7大功能", dianqian.retrievalQuery());
+        assertEquals(NlpIntentClassifier.IntentCode.PRODUCT_VERSION_FEATURES,
+            versions.intentCode());
+        assertEquals("点签不同产品版本有什么区别？", versions.retrievalQuery());
+        assertEquals(NlpIntentClassifier.IntentCode.PRODUCT_VERSION_FEATURES,
+            professional.intentCode());
+        assertEquals("专业版", professional.subject());
+    }
+
+    @Test
+    void recognizesMenuSigningFlowAndLegalComplianceWithoutClarification() {
+        NlpIntentClassifier.IntentAnalysis signing =
+            classifier.classify("合同签署流程");
+        NlpIntentClassifier.IntentAnalysis legal =
+            classifier.classify("法律合规性");
+
+        assertEquals(NlpIntentClassifier.IntentCode.CONTRACT_SIGNING_OPERATION,
+            signing.intentCode());
+        assertEquals("签署的流程是怎么样的？", signing.retrievalQuery());
+        assertFalse(signing.needsClarification());
+        assertEquals(NlpIntentClassifier.IntentCode.CONTRACT_LEGAL_RISK,
+            legal.intentCode());
+        assertEquals("电子合同法律合规性", legal.retrievalQuery());
+        assertFalse(legal.needsClarification());
+    }
+
+    @Test
     void broadEntityWordsAloneDoNotBecomeHighRiskIntents() {
         for (String question : new String[] {"平台", "产品", "功能", "支持", "你们的"}) {
             NlpIntentClassifier.IntentAnalysis result = classifier.classify(question);

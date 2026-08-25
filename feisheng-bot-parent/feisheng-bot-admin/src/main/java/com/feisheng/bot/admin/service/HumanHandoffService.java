@@ -15,8 +15,15 @@ import com.feisheng.bot.admin.mapper.BotTicketRecordMapper;
 import com.feisheng.bot.admin.mapper.SysUserMapper;
 import com.feisheng.bot.common.exception.BusinessException;
 import com.feisheng.bot.core.service.SensitiveDataService;
+import com.feisheng.bot.gateway.service.DingTalkImageReplyDispatcher.ReplyTarget;
+import com.feisheng.bot.gateway.util.DingTalkReplyTargetMetadata;
+import com.feisheng.bot.gateway.util.ReplyAttachmentUtils;
+import com.feisheng.bot.knowledge.service.MinioStorageService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Collections;
 import java.util.Date;
@@ -29,8 +36,10 @@ import java.util.stream.Collectors;
 
 @Service
 public class HumanHandoffService {
+    private static final Logger log = LoggerFactory.getLogger(HumanHandoffService.class);
     private static final Set<String> TERMINAL_STATUSES = Set.of("resolved", "closed");
     private static final int MAX_REPLY_CHARS = 4000;
+    private static final long MAX_IMAGE_BYTES = 10 * 1024 * 1024L;
 
     private final BotTicketMapper ticketMapper;
     private final BotTicketRecordMapper recordMapper;
@@ -40,6 +49,8 @@ public class HumanHandoffService {
     private final ChannelReplyDispatcher replyDispatcher;
     private final SensitiveDataService sensitiveDataService;
     private final ObjectMapper objectMapper;
+    private final MinioStorageService storageService;
+    private final ConversationImageService imageService;
 
     public HumanHandoffService(
             BotTicketMapper ticketMapper,
@@ -49,7 +60,9 @@ public class HumanHandoffService {
             SysUserMapper userMapper,
             ChannelReplyDispatcher replyDispatcher,
             SensitiveDataService sensitiveDataService,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            MinioStorageService storageService,
+            ConversationImageService imageService) {
         this.ticketMapper = ticketMapper;
         this.recordMapper = recordMapper;
         this.conversationMapper = conversationMapper;
@@ -58,6 +71,8 @@ public class HumanHandoffService {
         this.replyDispatcher = replyDispatcher;
         this.sensitiveDataService = sensitiveDataService;
         this.objectMapper = objectMapper;
+        this.storageService = storageService;
+        this.imageService = imageService;
     }
 
     public Page<BotTicket> list(int page, int size, String status, Long assigneeId,
@@ -120,6 +135,12 @@ public class HumanHandoffService {
 
     @Transactional
     public ReplyResult reply(Long ticketId, Long operatorId, String content) {
+        return reply(ticketId, operatorId, content, null);
+    }
+
+    @Transactional
+    public ReplyResult reply(Long ticketId, Long operatorId, String content,
+                             Long replyToMessageId) {
         if (!hasText(content)) throw new BusinessException(400, "回复内容不能为空");
         String normalized = content.trim();
         if (normalized.length() > MAX_REPLY_CHARS) {
@@ -130,16 +151,22 @@ public class HumanHandoffService {
         SysUser operator = requireOperator(operatorId);
         boolean firstClaim = claimIfNeeded(ticket, operator);
         BotConversation conversation = requireConversation(ticket.getConversationId());
+        BotMessage customerMessage = requireUnansweredCustomerMessage(
+            conversation.getId(), replyToMessageId);
 
         SensitiveDataService.RedactionResult redaction = sensitiveDataService.redact(normalized);
         String safeContent = redaction.text();
-        ChannelReplyDispatcher.DispatchResult dispatch =
-            replyDispatcher.dispatch(conversation, safeContent);
+        String agentName = displayName(operator);
+        ReplyTarget replyTarget = dingTalkTarget(conversation, customerMessage);
+        ChannelReplyDispatcher.DispatchResult dispatch = replyTarget == null
+            ? replyDispatcher.dispatch(conversation, safeContent)
+            : replyDispatcher.dispatch(conversation, safeContent, replyTarget);
         Date now = new Date();
 
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("agentId", operatorId);
-        metadata.put("agentName", displayName(operator));
+        metadata.put("agentName", agentName);
+        metadata.put("replyToMessageId", customerMessage.getId());
         metadata.put("deliveryStatus", dispatch.status());
         metadata.put("deliveryChannel", dispatch.channel());
         metadata.put("deliveryError", dispatch.error());
@@ -166,6 +193,115 @@ public class HumanHandoffService {
         if (firstClaim) addRecord(ticketId, operatorId, "CLAIM", displayName(operator) + " 接管工单");
         addRecord(ticketId, operatorId, dispatch.delivered() ? "REPLY" : "REPLY_FAILED",
             dispatch.delivered() ? safeContent : safeContent + "\n发送失败：" + dispatch.error());
+        return new ReplyResult(dispatch.delivered(), dispatch.status(), dispatch.channel(),
+            dispatch.error(), message.getId());
+    }
+
+    @Transactional
+    public ReplyResult replyImage(Long ticketId, Long operatorId, MultipartFile file) {
+        return replyImage(ticketId, operatorId, null, null, file);
+    }
+
+    @Transactional
+    public ReplyResult replyImage(Long ticketId, Long operatorId, String content,
+                                  Long replyToMessageId, MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException(400, "请选择要发送的图片");
+        }
+        if (file.getSize() > MAX_IMAGE_BYTES) {
+            throw new BusinessException(400, "图片不能超过 10MB");
+        }
+        String contentType = file.getContentType();
+        if (contentType == null || !contentType.toLowerCase().startsWith("image/")) {
+            throw new BusinessException(400, "只支持发送图片文件");
+        }
+        String normalizedContent = hasText(content) ? content.trim() : null;
+        if (normalizedContent != null && normalizedContent.length() > MAX_REPLY_CHARS) {
+            throw new BusinessException(400, "回复内容不能超过 " + MAX_REPLY_CHARS + " 个字符");
+        }
+
+        BotTicket ticket = requireTicket(ticketId, true);
+        ensureOpen(ticket);
+        SysUser operator = requireOperator(operatorId);
+        boolean firstClaim = claimIfNeeded(ticket, operator);
+        BotConversation conversation = requireConversation(ticket.getConversationId());
+        if (!"dingtalk".equalsIgnoreCase(normalized(conversation.getChannelType(), true))) {
+            throw new BusinessException(400, "当前仅支持钉钉渠道发送图片");
+        }
+        BotMessage customerMessage = requireUnansweredCustomerMessage(
+            conversation.getId(), replyToMessageId);
+
+        byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (Exception e) {
+            throw new BusinessException(400, "图片读取失败，请重新选择");
+        }
+        if (bytes.length == 0 || bytes.length > MAX_IMAGE_BYTES) {
+            throw new BusinessException(400, "图片不能超过 10MB");
+        }
+        String fileName = imageFileName(file.getOriginalFilename());
+        MinioStorageService.UploadResult storedImage = storeImage(
+            bytes, fileName, contentType);
+        SensitiveDataService.RedactionResult redaction =
+            sensitiveDataService.redact(normalizedContent);
+        String safeContent = redaction.text();
+        String agentName = displayName(operator);
+        Date now = new Date();
+
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("agentId", operatorId);
+        metadata.put("agentName", agentName);
+        metadata.put("replyToMessageId", customerMessage.getId());
+        metadata.put("redactionApplied", !redaction.types().isEmpty());
+        metadata.put("fileName", fileName);
+        metadata.put("contentType", contentType);
+        metadata.put("size", bytes.length);
+        if (storedImage != null) {
+            metadata.put("source", "human");
+            metadata.put("mediaType", "image");
+            metadata.put("bucket", storedImage.bucketName());
+            metadata.put("objectKey", storedImage.objectKey());
+            metadata.put("previewAvailable", true);
+        } else {
+            metadata.put("previewAvailable", false);
+        }
+
+        BotMessage message = new BotMessage();
+        message.setConversationId(conversation.getId());
+        message.setRole("human");
+        message.setContentType(hasText(safeContent) ? "mixed" : "image");
+        message.setContent(hasText(safeContent) ? safeContent : fileName);
+        message.setMetadata(toJson(metadata));
+        messageMapper.insert(message);
+
+        String imageUrl = storedImage == null ? null : imageService.url(message);
+        ReplyTarget replyTarget = dingTalkTarget(conversation, customerMessage);
+        ChannelReplyDispatcher.DispatchResult dispatch = dispatchImageReply(
+            conversation, replyTarget, safeContent, imageUrl,
+            bytes, fileName, contentType, message.getId());
+        metadata.put("deliveryStatus", dispatch.status());
+        metadata.put("deliveryChannel", dispatch.channel());
+        metadata.put("deliveryError", dispatch.error());
+        message.setMetadata(toJson(metadata));
+        messageMapper.updateById(message);
+
+        ticket.setStatus("processing");
+        ticket.setLastReplyTime(now);
+        ticketMapper.updateById(ticket);
+        conversation.setStatus("transferred");
+        conversation.setHandoffStatus("PROCESSING");
+        conversation.setAssignedAgentId(operatorId);
+        conversation.setAssignedAgentName(agentName);
+        conversation.setLastHumanReplyTime(now);
+        if (conversation.getAcceptedTime() == null) conversation.setAcceptedTime(now);
+        conversationMapper.updateById(conversation);
+        if (firstClaim) addRecord(ticketId, operatorId, "CLAIM", agentName + " 接管工单");
+        String recordContent = hasText(safeContent)
+            ? safeContent + "\n图片：" + fileName : "图片：" + fileName;
+        addRecord(ticketId, operatorId, dispatch.delivered() ? "REPLY" : "REPLY_FAILED",
+            dispatch.delivered() ? recordContent
+                : recordContent + "\n发送失败：" + dispatch.error());
         return new ReplyResult(dispatch.delivered(), dispatch.status(), dispatch.channel(),
             dispatch.error(), message.getId());
     }
@@ -269,8 +405,104 @@ public class HumanHandoffService {
         tickets.forEach(ticket -> ticket.setAssigneeName(names.get(ticket.getAssigneeId())));
     }
 
+    private BotMessage requireUnansweredCustomerMessage(Long conversationId,
+                                                         Long requestedMessageId) {
+        LambdaQueryWrapper<BotMessage> customerQuery = new LambdaQueryWrapper<BotMessage>()
+            .eq(BotMessage::getConversationId, conversationId)
+            .eq(BotMessage::getRole, "user");
+        if (requestedMessageId == null) {
+            customerQuery.orderByDesc(BotMessage::getId).last("LIMIT 1");
+        } else {
+            customerQuery.eq(BotMessage::getId, requestedMessageId);
+        }
+        BotMessage customerMessage = messageMapper.selectOne(customerQuery);
+        if (customerMessage == null) {
+            throw new BusinessException(409, "当前没有待回复的客户消息");
+        }
+        BotMessage existingReply = messageMapper.selectOne(
+            new LambdaQueryWrapper<BotMessage>()
+                .eq(BotMessage::getConversationId, conversationId)
+                .gt(BotMessage::getId, customerMessage.getId())
+                .in(BotMessage::getRole, "ai", "assistant", "human")
+                .orderByAsc(BotMessage::getId)
+                .last("LIMIT 1"));
+        if (existingReply != null) {
+            throw new BusinessException(409, "该客户消息已经回复，请等待客户发送新消息");
+        }
+        return customerMessage;
+    }
+
     private String displayName(SysUser user) {
         return hasText(user.getRealName()) ? user.getRealName().trim() : user.getUsername();
+    }
+
+    private String imageFileName(String originalName) {
+        String value = hasText(originalName) ? originalName.replace('\\', '/') : "image";
+        int slash = value.lastIndexOf('/');
+        if (slash >= 0) value = value.substring(slash + 1);
+        return hasText(value) ? value : "image";
+    }
+
+    private ReplyTarget dingTalkTarget(BotConversation conversation,
+                                       BotMessage customerMessage) {
+        if (conversation == null || !"dingtalk".equalsIgnoreCase(
+                normalized(conversation.getChannelType(), true))) {
+            return null;
+        }
+        if (customerMessage == null || !hasText(customerMessage.getMetadata())) return null;
+        ReplyTarget target = DingTalkReplyTargetMetadata.readTarget(
+            objectMapper, customerMessage.getMetadata());
+        return DingTalkReplyTargetMetadata.hasTarget(target) ? target : null;
+    }
+
+    private ChannelReplyDispatcher.DispatchResult dispatchImageReply(
+            BotConversation conversation, ReplyTarget replyTarget,
+            String content, String imageUrl, byte[] image,
+            String fileName, String contentType, Long messageId) {
+        if (hasText(content) && isPublicHttpUrl(imageUrl)) {
+            String markdown = ReplyAttachmentUtils.markdown(content, List.of(
+                new ReplyAttachmentUtils.ImageAttachment(messageId, fileName, imageUrl)));
+            return replyDispatcher.dispatchMarkdown(
+                conversation, "客服回复", markdown, replyTarget);
+        }
+
+        ChannelReplyDispatcher.DispatchResult textDispatch = hasText(content)
+            ? dispatchText(conversation, content, replyTarget) : null;
+        ChannelReplyDispatcher.DispatchResult imageDispatch = replyTarget == null
+            ? replyDispatcher.dispatchImage(conversation, image, fileName, contentType)
+            : replyDispatcher.dispatchImage(
+                conversation, image, fileName, contentType, replyTarget);
+        if (textDispatch == null || textDispatch.delivered()) {
+            return imageDispatch;
+        }
+        if (imageDispatch.delivered()) {
+            return new ChannelReplyDispatcher.DispatchResult(false, "FAILED",
+                imageDispatch.channel(), textDispatch.error());
+        }
+        return new ChannelReplyDispatcher.DispatchResult(false, "FAILED",
+            imageDispatch.channel(), textDispatch.error() + "；" + imageDispatch.error());
+    }
+
+    private ChannelReplyDispatcher.DispatchResult dispatchText(
+            BotConversation conversation, String content, ReplyTarget replyTarget) {
+        return replyTarget == null
+            ? replyDispatcher.dispatch(conversation, content)
+            : replyDispatcher.dispatch(conversation, content, replyTarget);
+    }
+
+    private boolean isPublicHttpUrl(String value) {
+        return hasText(value) && (value.startsWith("https://") || value.startsWith("http://"));
+    }
+
+    private MinioStorageService.UploadResult storeImage(byte[] bytes,
+                                                         String fileName,
+                                                         String contentType) {
+        try {
+            return storageService.upload(bytes, fileName, contentType);
+        } catch (Exception e) {
+            log.warn("Could not persist human reply image {}: {}", fileName, e.getMessage());
+            return null;
+        }
     }
 
     private String toJson(Object value) {

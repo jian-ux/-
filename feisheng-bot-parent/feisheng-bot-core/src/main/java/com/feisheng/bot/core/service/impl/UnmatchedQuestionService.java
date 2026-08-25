@@ -7,6 +7,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Date;
+import java.util.LinkedHashSet;
+import java.util.Locale;
+import java.util.Set;
+
 @Service
 public class UnmatchedQuestionService {
     private static final Logger log = LoggerFactory.getLogger(UnmatchedQuestionService.class);
@@ -18,8 +25,14 @@ public class UnmatchedQuestionService {
     }
 
     public void record(String question) {
+        recordBadCase(question, Set.of("NO_ANSWER"), BadCaseContext.empty());
+    }
+
+    public void recordBadCase(String question, Collection<String> triggerTypes,
+                              BadCaseContext context) {
         String normalized = normalize(question);
-        if (normalized.length() < 2) return;
+        Set<String> normalizedTriggers = normalizeTriggers(triggerTypes);
+        if (normalized.length() < 2 || normalizedTriggers.isEmpty()) return;
         try {
             BotUnmatchedQuestion existing = mapper.selectOne(
                 new LambdaQueryWrapper<BotUnmatchedQuestion>()
@@ -31,19 +44,65 @@ public class UnmatchedQuestionService {
                 created.setQuestion(normalized);
                 created.setSimilarCount(1);
                 created.setIsResolved(0);
+                created.setTriggerTypes(String.join(",", normalizedTriggers));
+                applyContext(created, context);
                 mapper.insert(created);
             } else {
                 existing.setSimilarCount(existing.getSimilarCount() == null
                     ? 1 : existing.getSimilarCount() + 1);
+                existing.setTriggerTypes(mergeTriggers(
+                    existing.getTriggerTypes(), normalizedTriggers));
+                applyContext(existing, context);
+                existing.setUpdateTime(new Date());
                 mapper.updateById(existing);
             }
         } catch (Exception e) {
-            log.warn("Failed to record unmatched question: {}", e.getMessage());
+            log.warn("Failed to record bad case: {}", e.getMessage());
         }
+    }
+
+    private void applyContext(BotUnmatchedQuestion target, BadCaseContext context) {
+        if (context == null) return;
+        target.setConversationId(context.conversationId());
+        target.setLastAnswerStatus(context.answerStatus());
+        target.setLastSource(context.source());
+        target.setLastConfidence(context.confidence());
+        target.setLastLatencyMs(context.latencyMs());
+        target.setLastCsatScore(context.csatScore());
+    }
+
+    private Set<String> normalizeTriggers(Collection<String> triggerTypes) {
+        Set<String> result = new LinkedHashSet<>();
+        if (triggerTypes == null) return result;
+        triggerTypes.stream()
+            .map(value -> value == null ? "" : value.trim().toUpperCase(Locale.ROOT))
+            .filter(value -> value.matches("[A-Z][A-Z0-9_]{1,49}"))
+            .forEach(result::add);
+        return result;
+    }
+
+    private String mergeTriggers(String existing, Set<String> additions) {
+        Set<String> merged = new LinkedHashSet<>();
+        if (existing != null && !existing.isBlank()) {
+            Arrays.stream(existing.split(","))
+                .map(String::trim)
+                .filter(value -> !value.isBlank())
+                .forEach(merged::add);
+        }
+        merged.addAll(additions);
+        return String.join(",", merged);
     }
 
     private String normalize(String value) {
         if (value == null) return "";
         return value.trim().replaceAll("\\s+", " ");
+    }
+
+    public record BadCaseContext(Long conversationId, String answerStatus,
+                                 String source, Double confidence,
+                                 Integer latencyMs, Integer csatScore) {
+        public static BadCaseContext empty() {
+            return new BadCaseContext(null, null, null, null, null, null);
+        }
     }
 }

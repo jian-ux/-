@@ -1,25 +1,45 @@
 package com.feisheng.bot.common.util;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 public final class KnowledgeTextUtil {
     private static final int FAQ_EMBEDDING_MAX_CHARS = 2000;
     private static final int CHUNK_EMBEDDING_MAX_CHARS = 4000;
     private static final Pattern SENTENCE_BOUNDARY_RE = Pattern.compile("(?<=[。！？!?；;])|\\n+");
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private KnowledgeTextUtil() {}
 
     public static String faqEmbeddingText(String question, String keywords, String answer) {
-        return faqEmbeddingParts(question, keywords, answer).get(0).embeddingText();
+        return faqEmbeddingText(question, keywords, answer, null);
+    }
+
+    public static String faqEmbeddingText(String question, String keywords, String answer,
+                                          String alternateQuestions) {
+        return faqEmbeddingParts(question, keywords, answer, alternateQuestions).get(0).embeddingText();
     }
 
     public static List<FaqEmbeddingPart> faqEmbeddingParts(
             String question, String keywords, String answer) {
+        return faqEmbeddingParts(question, keywords, answer, null);
+    }
+
+    public static List<FaqEmbeddingPart> faqEmbeddingParts(
+            String question, String keywords, String answer, String alternateQuestions) {
         StringBuilder prefixBuilder = new StringBuilder();
         append(prefixBuilder, question);
         append(prefixBuilder, keywords);
+        for (String alias : questionAliases(alternateQuestions, question)) {
+            append(prefixBuilder, alias);
+        }
         String prefix = prefixBuilder.toString();
         String cleanAnswer = answer == null ? "" : answer.trim();
         String combined = join(prefix, cleanAnswer);
@@ -36,6 +56,33 @@ public final class KnowledgeTextUtil {
                 truncate(join(prefix, answerPart), FAQ_EMBEDDING_MAX_CHARS)));
         }
         return List.copyOf(parts);
+    }
+
+    /** Returns valid, distinct aliases without repeating the canonical question. */
+    public static List<String> questionAliases(String json, String canonicalQuestion) {
+        if (json == null || json.isBlank()) return Collections.emptyList();
+        Set<String> values = new LinkedHashSet<>();
+        try {
+            List<String> parsed = OBJECT_MAPPER.readValue(json, new TypeReference<List<String>>() {});
+            if (parsed != null) values.addAll(parsed);
+        } catch (Exception ignored) {
+            // Keep old/manual data searchable if it was saved as a delimited string.
+            Collections.addAll(values, json.split("[,，;；\\r\\n]+"));
+        }
+        String canonical = canonicalQuestion(canonicalQuestion);
+        return values.stream()
+            .filter(value -> value != null && !value.isBlank())
+            .map(String::trim)
+            .filter(value -> !canonical.equals(canonicalQuestion(value)))
+            .toList();
+    }
+
+    public static String questionAliasesJson(String json, String canonicalQuestion) {
+        try {
+            return OBJECT_MAPPER.writeValueAsString(questionAliases(json, canonicalQuestion));
+        } catch (Exception ignored) {
+            return "[]";
+        }
     }
 
     public static String chunkEmbeddingText(String sectionPath, String content) {
@@ -103,6 +150,11 @@ public final class KnowledgeTextUtil {
         if (left == null || left.isBlank()) return right == null ? "" : right.trim();
         if (right == null || right.isBlank()) return left.trim();
         return left.trim() + "\n" + right.trim();
+    }
+
+    private static String canonicalQuestion(String value) {
+        if (value == null) return "";
+        return value.replaceAll("[\\p{P}\\p{S}\\s]+", "").toLowerCase();
     }
 
     public record FaqEmbeddingPart(int index, String answerPart, String embeddingText) {}

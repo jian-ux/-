@@ -14,6 +14,7 @@ public class BotKnowledgeItem extends BaseEntity {
     private String question;
     private String answer;
     private String keywords;
+    private String alternateQuestions;
     private Integer status;
     private Integer hitCount;
     private Integer directAnswerEnabled;

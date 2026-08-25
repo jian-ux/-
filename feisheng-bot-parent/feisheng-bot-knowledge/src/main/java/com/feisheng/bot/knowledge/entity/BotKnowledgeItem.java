@@ -10,6 +10,7 @@ public class BotKnowledgeItem {
     private String question;
     private String answer;
     private String keywords;
+    private String alternateQuestions;
     private String embedding;
     private String embeddingModel;
     private String embeddingVersion;

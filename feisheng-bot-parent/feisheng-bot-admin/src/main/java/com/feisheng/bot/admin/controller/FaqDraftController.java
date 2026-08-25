@@ -1,6 +1,7 @@
 package com.feisheng.bot.admin.controller;
 
 import com.feisheng.bot.admin.service.FaqDraftService;
+import com.feisheng.bot.admin.service.FaqRegressionService;
 import com.feisheng.bot.common.vo.R;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,9 +19,12 @@ import java.util.List;
 @RequestMapping("/api/admin/unmatched")
 public class FaqDraftController {
     private final FaqDraftService draftService;
+    private final FaqRegressionService regressionService;
 
-    public FaqDraftController(FaqDraftService draftService) {
+    public FaqDraftController(FaqDraftService draftService,
+                              FaqRegressionService regressionService) {
         this.draftService = draftService;
+        this.regressionService = regressionService;
     }
 
     @GetMapping("/faq-draft/list")
@@ -60,6 +64,14 @@ public class FaqDraftController {
         return execute(() -> draftService.publish(id, operatorId(authentication)));
     }
 
+    @PostMapping("/faq-draft/regression")
+    public R<FaqRegressionService.RegressionReport> regression(
+            @RequestBody(required = false) RegressionRequest request) {
+        List<Long> draftIds = request == null ? null : request.draftIds();
+        String promptVersion = request == null ? null : request.promptVersion();
+        return execute(() -> regressionService.evaluate(draftIds, promptVersion));
+    }
+
     private <T> R<T> execute(java.util.function.Supplier<T> action) {
         try {
             return R.ok(action.get());
@@ -74,4 +86,5 @@ public class FaqDraftController {
 
     public record DraftRequest(String question, String answer, String keywords) {}
     public record ReviewRequest(String reason) {}
+    public record RegressionRequest(List<Long> draftIds, String promptVersion) {}
 }

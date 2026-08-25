@@ -98,6 +98,16 @@ rag:
     max-retrieval-history-messages: ${RAG_CONTEXT_MAX_RETRIEVAL_HISTORY_MESSAGES:4}
     max-retrieval-history-chars: ${RAG_CONTEXT_MAX_RETRIEVAL_HISTORY_CHARS:1200}
     max-prompt-tokens: ${RAG_CONTEXT_MAX_PROMPT_TOKENS:4000}
+    summary:
+      enabled: ${RAG_CONTEXT_SUMMARY_ENABLED:true}
+      trigger-ratio: ${RAG_CONTEXT_SUMMARY_TRIGGER_RATIO:0.80}
+      target-ratio: ${RAG_CONTEXT_SUMMARY_TARGET_RATIO:0.50}
+      keep-messages: ${RAG_CONTEXT_SUMMARY_KEEP_MESSAGES:4}
+      max-chars: ${RAG_CONTEXT_SUMMARY_MAX_CHARS:4000}
+      model-id: ${RAG_CONTEXT_SUMMARY_MODEL_ID:0}
+  profile-extraction:
+    enabled: ${RAG_PROFILE_EXTRACTION_ENABLED:true}
+    model-id: ${RAG_PROFILE_EXTRACTION_MODEL_ID:0}
   retrieval:
     pipeline-version: ${RAG_PIPELINE_VERSION:rag-corrective-evidence-v2}
     top-k: ${RAG_TOP_K:3}
@@ -184,6 +194,9 @@ rag:
     price-keywords: ${RAG_HANDOFF_PRICE_KEYWORDS:定制报价,专属报价,商务报价,最终报价,折扣,优惠,议价,最低价,底价,便宜点,打折}
     price-reply: ${RAG_HANDOFF_PRICE_REPLY:您咨询的是价格相关信息。价格、报价和优惠需要由客服根据实际情况确认，已为您提交人工核实。您可以继续补充套餐类型或使用人数，我会一并同步。}
     price-failed-reply: ${RAG_HANDOFF_PRICE_FAILED_REPLY:价格、报价和优惠需要由客服确认，但当前未能成功提交人工请求。请稍后重试或联系人工客服。}
+  bad-case:
+    slow-response-ms: ${RAG_BAD_CASE_SLOW_RESPONSE_MS:5000}
+    low-rating-threshold: ${RAG_BAD_CASE_LOW_RATING_THRESHOLD:2}
   index:
     sync-interval-ms: ${RAG_INDEX_SYNC_INTERVAL_MS:30000}
     require-consistent-embedding-version: ${RAG_REQUIRE_CONSISTENT_EMBEDDING_VERSION:false}

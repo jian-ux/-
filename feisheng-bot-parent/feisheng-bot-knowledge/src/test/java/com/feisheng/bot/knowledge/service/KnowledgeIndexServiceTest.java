@@ -273,6 +273,29 @@ class KnowledgeIndexServiceTest {
     }
 
     @Test
+    void indexesFaqAliasesAcrossLexicalAndBm25Retrieval() {
+        BotKnowledgeItemMapper itemMapper = mock(BotKnowledgeItemMapper.class);
+        BotKnowledgeChunkMapper chunkMapper = mock(BotKnowledgeChunkMapper.class);
+        BotKnowledgeDocumentMapper documentMapper = mock(BotKnowledgeDocumentMapper.class);
+        BotKnowledgeItem faq = item(41L, "点签套餐怎么收费？", "根据套餐份数收费。", "套餐价格", "[1,0]");
+        faq.setAlternateQuestions("[\"电子合同多少钱一份？\"]");
+        when(itemMapper.selectList(any())).thenReturn(List.of(faq));
+        when(chunkMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(documentMapper.selectList(null)).thenReturn(Collections.emptyList());
+        KnowledgeIndexService service = new KnowledgeIndexService(
+            itemMapper, chunkMapper, documentMapper, new ObjectMapper(), disabledQdrant());
+        service.sync();
+
+        List<Map<String, Object>> lexical = service.searchLexical(
+            "电子合同多少钱一份？", 1, 0.72);
+        List<Map<String, Object>> bm25 = service.searchBm25(
+            "电子合同多少钱一份？", 1, 0.0);
+
+        assertEquals(41L, lexical.get(0).get("itemId"));
+        assertEquals(41L, bm25.get(0).get("itemId"));
+    }
+
+    @Test
     void ranksExactQuestionInChunkAboveGenericCompetitorFaq() {
         String query = "e签宝说你们是小平台";
         BotKnowledgeItemMapper itemMapper = mock(BotKnowledgeItemMapper.class);
@@ -442,10 +465,16 @@ class KnowledgeIndexServiceTest {
     }
 
     private BotKnowledgeItem item(Long id, String question, String answer, String embedding) {
+        return item(id, question, answer, null, embedding);
+    }
+
+    private BotKnowledgeItem item(Long id, String question, String answer,
+                                  String keywords, String embedding) {
         BotKnowledgeItem item = new BotKnowledgeItem();
         item.setId(id);
         item.setQuestion(question);
         item.setAnswer(answer);
+        item.setKeywords(keywords);
         item.setEmbedding(embedding);
         item.setStatus(1);
         return item;

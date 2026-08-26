@@ -5,6 +5,12 @@
         <span>问题改进池</span>
         <div class="header-actions">
           <el-tag type="info">自动收集无答案、护栏、低置信度、慢响应和低评分问题</el-tag>
+          <el-button
+            type="warning"
+            plain
+            :loading="loading"
+            @click="toggleReviewOnly"
+          >{{ reviewOnly ? '查看全部问题' : '查看待人工复核' }}</el-button>
           <el-button :loading="regressionRunning" @click="runRegression">回归验证</el-button>
           <el-button type="primary" :loading="clustering" @click="runClustering">聚类分析</el-button>
         </div>
@@ -28,7 +34,34 @@
           <dt>最近回归通过率</dt>
           <dd>{{ latestRegression ? percentage(latestRegression.passRate) : '-' }}</dd>
         </div>
+        <div>
+          <dt>待人工复核</dt>
+          <dd>{{ quality.pendingReviewQuestionCount || 0 }}</dd>
+        </div>
+        <div>
+          <dt>决策准确率</dt>
+          <dd>{{ quality.reviewedQuestionCount ? percentage(quality.decisionAccuracy) : '-' }}</dd>
+        </div>
       </dl>
+      <el-alert
+        v-if="quality.pendingReviewQuestionCount"
+        class="review-entry"
+        type="warning"
+        :closable="false"
+        show-icon
+      >
+        <template #title>
+          <span>有 {{ quality.pendingReviewQuestionCount }} 条问题等待人工复核</span>
+          <el-button
+            class="review-entry-button"
+            size="small"
+            type="warning"
+            plain
+            :loading="loading"
+            @click="showPendingReviews"
+          >立即查看待复核</el-button>
+        </template>
+      </el-alert>
       <div class="quality-details">
         <div class="quality-block">
           <div class="quality-block-heading">
@@ -66,6 +99,18 @@
             <el-table-column prop="failedCaseCount" label="失败" width="64" />
           </el-table>
           <el-empty v-else description="暂无回归记录" :image-size="44" />
+        </div>
+      </div>
+      <div v-if="quality.decisionCounts?.length" class="decision-distribution">
+        <div class="quality-block-heading">
+          <strong>系统决策分布</strong>
+          <span>按问题出现次数统计</span>
+        </div>
+        <div class="decision-list">
+          <div v-for="item in quality.decisionCounts" :key="item.decision" class="decision-row">
+            <span>{{ decisionLabel(item.decision) }}</span>
+            <el-tag size="small" :type="decisionTagType(item.decision)">{{ item.count }}</el-tag>
+          </div>
         </div>
       </div>
       <div v-if="quality.repeatedFailures?.length" class="repeated-failures">
@@ -138,6 +183,17 @@
       <el-table-column prop="isResolved" label="状态" width="100">
         <template #default="{row}">
           <el-tag size="small" :type="row.isResolved===1?'success':'danger'">{{ row.isResolved===1?'已处理':'待处理' }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="人工复核" min-width="150">
+        <template #default="{row}">
+          <template v-if="row.reviewStatus === 'REVIEWED'">
+            <el-tag size="small" :type="row.reviewCorrect === 1 ? 'success' : 'danger'">
+              {{ row.reviewCorrect === 1 ? '判断正确' : '需要改进' }}
+            </el-tag>
+            <span class="review-decision">{{ decisionLabel(row.reviewDecision) }}</span>
+          </template>
+          <el-button v-else size="small" type="primary" plain @click="openReview(row)">人工复核</el-button>
         </template>
       </el-table-column>
       <el-table-column prop="updateTime" label="最近发生" width="180">
@@ -381,6 +437,38 @@
       >审核并发布</el-button>
     </template>
   </el-dialog>
+  <el-dialog v-model="reviewDialogVisible" title="人工复核" width="480px">
+    <div v-if="reviewQuestion" class="review-question">{{ reviewQuestion.question }}</div>
+    <el-form label-width="112px">
+      <el-form-item label="系统决策">
+        <el-tag type="info">{{ decisionLabel(reviewQuestion?.lastAnswerDecision) }}</el-tag>
+        <span class="review-hint">{{ reviewQuestion?.lastReasonCode || '未记录原因' }}</span>
+      </el-form-item>
+      <el-form-item label="判断是否正确" required>
+        <el-radio-group v-model="reviewForm.correct">
+          <el-radio-button :value="true">正确</el-radio-button>
+          <el-radio-button :value="false">错误</el-radio-button>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item label="正确决策" required>
+        <el-select v-model="reviewForm.decision" placeholder="请选择正确决策" style="width:100%">
+          <el-option v-for="item in reviewDecisions" :key="item.value" :label="item.label" :value="item.value" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="错误类型">
+        <el-select v-model="reviewForm.category" clearable placeholder="可选" style="width:100%">
+          <el-option v-for="item in reviewCategories" :key="item" :label="item" :value="item" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="复核备注">
+        <el-input v-model="reviewForm.note" type="textarea" :rows="3" maxlength="1000" show-word-limit placeholder="简要说明需要补知识、改规则还是调整追问" />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="reviewDialogVisible = false">取消</el-button>
+      <el-button type="primary" :loading="reviewSaving" @click="submitReview">保存复核</el-button>
+    </template>
+  </el-dialog>
 </template>
 <script setup>
 import { ref, onMounted, computed } from 'vue'
@@ -389,6 +477,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { formatDateTime } from '../../utils/displayText.js'
 const questions = ref([])
 const loading = ref(false)
+const reviewOnly = ref(false)
 const qualityLoading = ref(false)
 const quality = ref({})
 const total = ref(0)
@@ -408,8 +497,19 @@ const activeDraftCluster = ref(null)
 const draftForm = ref({ question: '', answer: '', keywords: '' })
 const draftSaving = ref(false)
 const draftPublishing = ref(false)
+const reviewDialogVisible = ref(false)
+const reviewSaving = ref(false)
+const reviewQuestion = ref(null)
+const reviewForm = ref({ correct: null, decision: '', category: '', note: '' })
 const faqDraftTimeout = 180000
 const regressionTimeout = 1800000
+const reviewDecisions = [
+  { value: 'ANSWER', label: '直接回答' },
+  { value: 'CLARIFY', label: '先追问' },
+  { value: 'NO_ANSWER', label: '暂时无法回答' },
+  { value: 'HANDOFF', label: '转人工' }
+]
+const reviewCategories = ['意图识别错误', '知识库缺失', '知识库过期', '检索错误', '追问错误', '应该转人工', '不应转人工', '模型编造', '其他']
 const canPublishDraft = computed(() => activeDraft.value?.status === 'DRAFT'
   && activeDraft.value?.evidenceStatus === 'SUPPORTED'
   && draftForm.value.question.trim()
@@ -419,7 +519,13 @@ const latestRegression = computed(() => quality.value.regressionHistory?.[0] || 
 async function fetch() {
   loading.value = true
   try {
-    const r = await request.get('/admin/unmatched/list', { params: { page: page.value, size: pageSize } })
+    const r = await request.get('/admin/unmatched/list', {
+      params: {
+        page: page.value,
+        size: pageSize,
+        reviewStatus: reviewOnly.value ? 'PENDING' : undefined
+      }
+    })
     questions.value = r.data?.records || []
     total.value = r.data?.total || 0
   } catch {
@@ -428,6 +534,19 @@ async function fetch() {
   } finally {
     loading.value = false
   }
+}
+
+async function toggleReviewOnly() {
+  reviewOnly.value = !reviewOnly.value
+  page.value = 1
+  await fetch()
+}
+
+async function showPendingReviews() {
+  reviewOnly.value = true
+  page.value = 1
+  await fetch()
+  window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 async function loadQuality() {
@@ -446,6 +565,33 @@ async function resolve(id) {
   await request.put('/admin/unmatched/' + id + '/resolve')
   ElMessage.success('已标记')
   await Promise.all([fetch(), loadQuality()])
+}
+
+function openReview(row) {
+  reviewQuestion.value = row
+  reviewForm.value = {
+    correct: null,
+    decision: normalizeDecision(row.lastAnswerDecision) || decisionFromStatus(row.lastAnswerStatus),
+    category: '',
+    note: ''
+  }
+  reviewDialogVisible.value = true
+}
+
+async function submitReview() {
+  if (!reviewQuestion.value || reviewForm.value.correct === null || !reviewForm.value.decision) {
+    ElMessage.warning('请填写判断结果和正确决策')
+    return
+  }
+  reviewSaving.value = true
+  try {
+    await request.put(`/admin/unmatched/${reviewQuestion.value.id}/review`, reviewForm.value)
+    reviewDialogVisible.value = false
+    ElMessage.success('复核已保存')
+    await Promise.all([fetch(), loadQuality()])
+  } finally {
+    reviewSaving.value = false
+  }
 }
 
 async function runClustering() {
@@ -510,6 +656,22 @@ function badCaseTypeLabel(type) {
     SLOW_RESPONSE: '响应过慢',
     LOW_RATING: '低评分'
   }[type] || type
+}
+
+function decisionLabel(value) {
+  return ({ ANSWER: '直接回答', ANSWER_PARTIAL: '直接回答（部分）', CLARIFY: '先追问', NO_ANSWER: '暂时无法回答', NO_KNOWLEDGE: '暂时无法回答', HANDOFF: '转人工' })[value] || '未记录'
+}
+
+function decisionTagType(value) {
+  return ({ ANSWER: 'success', CLARIFY: 'warning', NO_ANSWER: 'danger', HANDOFF: 'info' })[value] || 'info'
+}
+
+function normalizeDecision(value) {
+  return ({ ANSWER: 'ANSWER', ANSWER_PARTIAL: 'ANSWER', CLARIFY: 'CLARIFY', NO_ANSWER: 'NO_ANSWER', NO_KNOWLEDGE: 'NO_ANSWER', HANDOFF: 'HANDOFF' })[value] || ''
+}
+
+function decisionFromStatus(value) {
+  return ({ answered: 'ANSWER', clarify: 'CLARIFY', no_answer: 'NO_ANSWER', error: 'NO_ANSWER', handoff_requested: 'HANDOFF' })[value] || ''
 }
 
 function badCaseTagType(type) {
@@ -791,14 +953,20 @@ onMounted(() => {
 })
 </script>
 <style scoped>
-.header-actions { display:flex; align-items:center; gap:10px; }
+.header-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:10px; }
 .quality-overview { margin-bottom:16px; padding:16px 0 0; border-bottom:1px solid #ebeef5; }
-.quality-metrics { display:grid; grid-template-columns:repeat(4, minmax(130px, 1fr)); margin:0; border:1px solid #ebeef5; border-radius:6px; }
+.review-entry { margin:14px 0 16px; }
+.review-entry :deep(.el-alert__title) { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.review-entry-button { margin-left:4px; }
+.quality-metrics { display:grid; grid-template-columns:repeat(6, minmax(130px, 1fr)); margin:0; border:1px solid #ebeef5; border-radius:6px; }
 .quality-metrics div { min-width:0; padding:14px 16px; border-right:1px solid #ebeef5; }
 .quality-metrics div:last-child { border-right:0; }
 .quality-metrics dt { color:#7b8494; font-size:13px; }
 .quality-metrics dd { margin:6px 0 0; color:#202938; font-size:24px; font-weight:700; font-variant-numeric:tabular-nums; }
 .quality-details { display:grid; grid-template-columns:minmax(220px, .7fr) minmax(420px, 1.3fr); gap:24px; margin-top:16px; }
+.decision-distribution { margin-top:16px; padding-top:14px; border-top:1px solid #ebeef5; }
+.decision-list { display:flex; flex-wrap:wrap; gap:8px 20px; }
+.decision-row { display:flex; align-items:center; justify-content:space-between; gap:12px; min-width:150px; color:#606266; font-size:13px; }
 .quality-block { min-width:0; }
 .quality-block-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:28px; margin-bottom:8px; }
 .quality-block-heading strong { color:#303133; }
@@ -814,6 +982,9 @@ onMounted(() => {
 .reason-tag { margin:2px 6px 2px 0; }
 .advice-item + .advice-item { margin-top:6px; }
 .advice-title { color:#303133; font-weight:600; }
+.review-decision { display:block; margin-top:3px; color:#7b8494; font-size:12px; }
+.review-question { padding:10px 12px; margin-bottom:18px; color:#303133; line-height:1.6; background:#f5f7fa; border-radius:4px; }
+.review-hint { margin-left:10px; color:#909399; font-size:12px; }
 .regression-result { margin-bottom:16px; }
 .regression-metrics { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; }
 .pagination-wrap { display:flex; justify-content:flex-end; margin-top:16px; overflow-x:auto; }
@@ -836,8 +1007,8 @@ onMounted(() => {
 .question-tag { margin:0 8px 8px 0; max-width:100%; white-space:normal; height:auto; }
 @media (max-width: 720px) {
   .quality-metrics { grid-template-columns:repeat(2, minmax(0, 1fr)); }
-  .quality-metrics div:nth-child(2) { border-right:0; }
-  .quality-metrics div:nth-child(-n+2) { border-bottom:1px solid #ebeef5; }
+  .quality-metrics div:nth-child(even) { border-right:0; }
+  .quality-metrics div:nth-child(-n+4) { border-bottom:1px solid #ebeef5; }
   .quality-details, .repeated-list { grid-template-columns:minmax(0, 1fr); }
   .header-actions, .cluster-summary { align-items:flex-start; flex-direction:column; }
   .summary-items { justify-content:flex-start; }

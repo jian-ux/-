@@ -9,7 +9,12 @@ import com.feisheng.bot.admin.service.BadCaseQualityService;
 import com.feisheng.bot.admin.service.QuestionClusteringService;
 import com.feisheng.bot.common.vo.R;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.Authentication;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Locale;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/admin/unmatched")
@@ -39,13 +44,24 @@ public class UnmatchedQuestionController {
         return R.ok(qualityService.summarize());
     }
 
+    /** Compatibility overload for callers that do not need a review filter. */
+    public R<Page<BotUnmatchedQuestion>> list(int page, int size) {
+        return list(page, size, null);
+    }
+
     @GetMapping("/list")
     public R<Page<BotUnmatchedQuestion>> list(
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "10") int size) {
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) String reviewStatus) {
+        LambdaQueryWrapper<BotUnmatchedQuestion> query = new LambdaQueryWrapper<>();
+        if ("PENDING".equalsIgnoreCase(reviewStatus)
+                || "REVIEWED".equalsIgnoreCase(reviewStatus)) {
+            query.eq(BotUnmatchedQuestion::getReviewStatus,
+                reviewStatus.trim().toUpperCase(Locale.ROOT));
+        }
         Page<BotUnmatchedQuestion> result = mapper.selectPage(new Page<>(page, size),
-            new LambdaQueryWrapper<BotUnmatchedQuestion>()
-                .orderByDesc(BotUnmatchedQuestion::getSimilarCount)
+            query.orderByDesc(BotUnmatchedQuestion::getSimilarCount)
                 .orderByDesc(BotUnmatchedQuestion::getCreateTime));
         result.getRecords().forEach(question -> question.setImprovementAdvice(
             BadCaseImprovementAdvisor.advise(question.getTriggerTypes())));
@@ -57,6 +73,37 @@ public class UnmatchedQuestionController {
         BotUnmatchedQuestion q = mapper.selectById(id);
         if (q != null) { q.setIsResolved(1); mapper.updateById(q); }
         return R.ok();
+    }
+
+    @PutMapping("/{id}/review")
+    public R<BotUnmatchedQuestion> review(@PathVariable Long id,
+                                          @RequestBody ReviewRequest request,
+                                          Authentication authentication) {
+        if (request == null || request.correct() == null
+                || !StringUtils.hasText(request.decision())) {
+            return R.fail(400, "请填写复核结果和正确决策");
+        }
+        String decision = request.decision().trim().toUpperCase(Locale.ROOT);
+        if (!Set.of("ANSWER", "CLARIFY", "NO_ANSWER", "HANDOFF").contains(decision)) {
+            return R.fail(400, "正确决策只能是回答、追问、无答案或转人工");
+        }
+        if (request.category() != null && request.category().trim().length() > 40) {
+            return R.fail(400, "错误类型不能超过40个字符");
+        }
+        if (request.note() != null && request.note().trim().length() > 1000) {
+            return R.fail(400, "复核备注不能超过1000个字符");
+        }
+        BotUnmatchedQuestion question = mapper.selectById(id);
+        if (question == null) return R.fail(404, "问题不存在");
+        question.setReviewStatus("REVIEWED");
+        question.setReviewDecision(decision);
+        question.setReviewCorrect(request.correct() ? 1 : 0);
+        question.setReviewCategory(trimToNull(request.category()));
+        question.setReviewNote(trimToNull(request.note()));
+        question.setReviewedBy(operatorId(authentication));
+        question.setReviewedAt(new java.util.Date());
+        mapper.updateById(question);
+        return R.ok(question);
     }
 
     @PostMapping("/cluster")
@@ -132,4 +179,14 @@ public class UnmatchedQuestionController {
     public record TitleRequest(String title) {}
     public record MergeRequest(Long targetId, java.util.List<Long> sourceIds) {}
     public record SplitRequest(java.util.List<Long> questionIds, String title) {}
+    public record ReviewRequest(String decision, Boolean correct, String category, String note) {}
+
+    private Long operatorId(Authentication authentication) {
+        return authentication == null ? null : (Long) authentication.getPrincipal();
+    }
+
+    private String trimToNull(String value) {
+        if (!StringUtils.hasText(value)) return null;
+        return value.trim();
+    }
 }

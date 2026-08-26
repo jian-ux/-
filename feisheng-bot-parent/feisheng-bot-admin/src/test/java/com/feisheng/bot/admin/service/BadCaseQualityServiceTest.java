@@ -22,8 +22,8 @@ class BadCaseQualityServiceTest {
         BotFaqRegressionRunMapper runMapper = mock(BotFaqRegressionRunMapper.class);
         ObjectMapper objectMapper = new ObjectMapper();
         when(unmatchedMapper.selectList(any())).thenReturn(List.of(
-            question(3, 0, "NO_ANSWER,NEW_TRIGGER"),
-            question(2, 1, "LOW_RATING")));
+            question(3, 0, "NO_ANSWER,NEW_TRIGGER", "REVIEWED", 1, "NO_ANSWER"),
+            question(2, 1, "LOW_RATING", "PENDING", null, "CLARIFY")));
         when(runMapper.selectList(any())).thenReturn(List.of(
             run(2L, 8, 10, objectMapper.writeValueAsString(List.of(
                 new FaqRegressionService.FailureSnapshot("case-1", "怎么重置密码", List.of("FAQ引用不正确"))))),
@@ -43,13 +43,25 @@ class BadCaseQualityServiceTest {
         assertThat(result.passRateDelta()).isEqualTo(0.2);
         assertThat(result.repeatedFailures())
             .containsExactly(new BadCaseQualityService.RepeatedFailure("怎么重置密码", 2));
+        assertThat(result.reviewedQuestionCount()).isEqualTo(1);
+        assertThat(result.reviewedCorrectCount()).isEqualTo(1);
+        assertThat(result.decisionAccuracy()).isEqualTo(1.0);
+        assertThat(result.pendingReviewQuestionCount()).isEqualTo(1);
+        assertThat(result.decisionCounts())
+            .containsExactly(new BadCaseQualityService.DecisionMetric("NO_ANSWER", 3),
+                new BadCaseQualityService.DecisionMetric("CLARIFY", 2));
     }
 
-    private BotUnmatchedQuestion question(int count, int resolved, String triggers) {
+    private BotUnmatchedQuestion question(int count, int resolved, String triggers,
+                                          String reviewStatus, Integer reviewCorrect,
+                                          String answerDecision) {
         BotUnmatchedQuestion question = new BotUnmatchedQuestion();
         question.setSimilarCount(count);
         question.setIsResolved(resolved);
         question.setTriggerTypes(triggers);
+        question.setReviewStatus(reviewStatus);
+        question.setReviewCorrect(reviewCorrect);
+        question.setLastAnswerDecision(answerDecision);
         return question;
     }
 

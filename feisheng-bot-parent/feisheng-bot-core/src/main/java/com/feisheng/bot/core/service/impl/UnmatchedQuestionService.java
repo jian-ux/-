@@ -37,7 +37,6 @@ public class UnmatchedQuestionService {
             BotUnmatchedQuestion existing = mapper.selectOne(
                 new LambdaQueryWrapper<BotUnmatchedQuestion>()
                     .eq(BotUnmatchedQuestion::getQuestion, normalized)
-                    .eq(BotUnmatchedQuestion::getIsResolved, 0)
                     .last("LIMIT 1"));
             if (existing == null) {
                 BotUnmatchedQuestion created = new BotUnmatchedQuestion();
@@ -45,13 +44,19 @@ public class UnmatchedQuestionService {
                 created.setSimilarCount(1);
                 created.setIsResolved(0);
                 created.setTriggerTypes(String.join(",", normalizedTriggers));
+                created.setReviewStatus("PENDING");
                 applyContext(created, context);
                 mapper.insert(created);
             } else {
                 existing.setSimilarCount(existing.getSimilarCount() == null
                     ? 1 : existing.getSimilarCount() + 1);
+                // A resolved question that appears again is a reopened bad case,
+                // not a new question. Keep its history and start a fresh review.
+                existing.setIsResolved(0);
                 existing.setTriggerTypes(mergeTriggers(
                     existing.getTriggerTypes(), normalizedTriggers));
+                // A new occurrence must be reviewed against the latest decision.
+                existing.setReviewStatus("PENDING");
                 applyContext(existing, context);
                 existing.setUpdateTime(new Date());
                 mapper.updateById(existing);
@@ -65,6 +70,12 @@ public class UnmatchedQuestionService {
         if (context == null) return;
         target.setConversationId(context.conversationId());
         target.setLastAnswerStatus(context.answerStatus());
+        if (context.answerDecision() != null) {
+            target.setLastAnswerDecision(context.answerDecision());
+        }
+        if (context.reasonCode() != null) {
+            target.setLastReasonCode(context.reasonCode());
+        }
         target.setLastSource(context.source());
         target.setLastConfidence(context.confidence());
         target.setLastLatencyMs(context.latencyMs());
@@ -100,9 +111,17 @@ public class UnmatchedQuestionService {
 
     public record BadCaseContext(Long conversationId, String answerStatus,
                                  String source, Double confidence,
-                                 Integer latencyMs, Integer csatScore) {
+                                 Integer latencyMs, Integer csatScore,
+                                 String answerDecision, String reasonCode) {
+        public BadCaseContext(Long conversationId, String answerStatus,
+                              String source, Double confidence,
+                              Integer latencyMs, Integer csatScore) {
+            this(conversationId, answerStatus, source, confidence, latencyMs,
+                csatScore, null, null);
+        }
+
         public static BadCaseContext empty() {
-            return new BadCaseContext(null, null, null, null, null, null);
+            return new BadCaseContext(null, null, null, null, null, null, null, null);
         }
     }
 }

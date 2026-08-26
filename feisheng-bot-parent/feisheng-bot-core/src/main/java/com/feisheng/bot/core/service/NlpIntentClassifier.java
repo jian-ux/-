@@ -30,6 +30,9 @@ public class NlpIntentClassifier {
     private static final List<String> FEATURE_TERMS = List.of(
         "有哪些功能", "有什么功能", "什么功能", "点签功能", "产品功能", "有哪些能力", "有什么能力",
         "能做什么", "支持什么", "产品介绍", "平台介绍");
+    private static final List<String> PRODUCT_OVERVIEW_TERMS = List.of(
+        "了解一下", "了解下", "介绍一下", "介绍下", "简介", "概况", "是什么",
+        "做什么的", "干什么的", "主营业务", "有什么优势", "优势", "适用场景");
     private static final List<String> VERSION_FEATURE_TERMS = List.of(
         "版本功能", "版本区别", "版本差异", "版本对比", "不同版本", "各版本");
     private static final List<String> VERSION_NAMES = List.of(
@@ -140,6 +143,15 @@ public class NlpIntentClassifier {
             return result(IntentCode.PRODUCT_FEATURES, "product", RiskLevel.LOW,
                 entities, actions, false, "点签电子合同主要包含的7大功能", signals,
                 null, false);
+        }
+
+        String overviewSignal = firstMatch(normalized, PRODUCT_OVERVIEW_TERMS);
+        if (productSignal != null && overviewSignal != null) {
+            addSignal(signals, actions, "overview", overviewSignal);
+            return result(IntentCode.PRODUCT_OVERVIEW, "product", RiskLevel.LOW,
+                entities, actions, false,
+                "点签电子合同产品介绍 定位 核心功能 安全合规 使用入口 适用场景 产品优势",
+                signals, null, false);
         }
 
         String usageSignal = firstMatch(normalized, USAGE_TERMS);
@@ -255,6 +267,7 @@ public class NlpIntentClassifier {
         CONTRACT_TYPE_CAPABILITY,
         CONTRACT_LEGAL_RISK,
         PRODUCT_FEATURES,
+        PRODUCT_OVERVIEW,
         PRODUCT_VERSION_FEATURES,
         PRODUCT_USAGE,
         ACCOUNT_OPERATION,

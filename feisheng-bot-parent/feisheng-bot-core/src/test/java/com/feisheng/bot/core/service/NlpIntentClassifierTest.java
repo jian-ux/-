@@ -114,6 +114,19 @@ class NlpIntentClassifierTest {
     }
 
     @Test
+    void recognizesOpenEndedProductOverviewSeparatelyFromFeatureAndUsageQuestions() {
+        for (String question : new String[] {
+                "我想了解一下你们点签", "介绍一下点签", "点签是什么", "点签有什么优势"
+        }) {
+            NlpIntentClassifier.IntentAnalysis result = classifier.classify(question);
+            assertEquals(NlpIntentClassifier.IntentCode.PRODUCT_OVERVIEW,
+                result.intentCode(), question);
+            assertTrue(result.retrievalQuery().contains("产品介绍"));
+            assertTrue(result.retrievalQuery().contains("产品优势"));
+        }
+    }
+
+    @Test
     void distinguishesDianqianFeaturesFromProductVersionFeatures() {
         NlpIntentClassifier.IntentAnalysis dianqian =
             classifier.classify("点签的产品功能");

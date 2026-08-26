@@ -165,7 +165,7 @@ rag:
   error:
     reply: ${RAG_ERROR_REPLY:当前查询出现异常，暂时无法完成回答，请稍后重试。}
   native-fallback:
-    enabled: ${RAG_NATIVE_FALLBACK_ENABLED:false}
+    enabled: ${RAG_NATIVE_FALLBACK_ENABLED:true}
     high-risk-keywords: ${RAG_NATIVE_FALLBACK_HIGH_RISK_KEYWORDS:合同条款,法律效力,违约责任,赔偿责任,合规承诺,保证结果,隐私泄露,个人信息泄露}
     clarification-keywords: ${RAG_NATIVE_FALLBACK_CLARIFICATION_KEYWORDS:这个,那个,它,这款,那款,然后呢}
     clarification-reply: ${RAG_NATIVE_FALLBACK_CLARIFICATION_REPLY:您好，为了准确帮您处理，请补充要咨询的产品、功能或具体使用场景；如有页面提示或截图，也可以一并发送。}
@@ -194,6 +194,8 @@ rag:
     price-keywords: ${RAG_HANDOFF_PRICE_KEYWORDS:定制报价,专属报价,商务报价,最终报价,折扣,优惠,议价,最低价,底价,便宜点,打折}
     price-reply: ${RAG_HANDOFF_PRICE_REPLY:您咨询的是价格相关信息。价格、报价和优惠需要由客服根据实际情况确认，已为您提交人工核实。您可以继续补充套餐类型或使用人数，我会一并同步。}
     price-failed-reply: ${RAG_HANDOFF_PRICE_FAILED_REPLY:价格、报价和优惠需要由客服确认，但当前未能成功提交人工请求。请稍后重试或联系人工客服。}
+  answerability-gate:
+    min-model-confidence: ${RAG_ANSWERABILITY_GATE_MIN_MODEL_CONFIDENCE:0.40}
   bad-case:
     slow-response-ms: ${RAG_BAD_CASE_SLOW_RESPONSE_MS:5000}
     low-rating-threshold: ${RAG_BAD_CASE_LOW_RATING_THRESHOLD:2}

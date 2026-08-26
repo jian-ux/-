@@ -18,10 +18,19 @@ public class BotUnmatchedQuestion {
     private String triggerTypes;
     private Long conversationId;
     private String lastAnswerStatus;
+    private String lastAnswerDecision;
+    private String lastReasonCode;
     private String lastSource;
     private Double lastConfidence;
     private Integer lastLatencyMs;
     private Integer lastCsatScore;
+    private String reviewStatus;
+    private String reviewDecision;
+    private Integer reviewCorrect;
+    private String reviewCategory;
+    private String reviewNote;
+    private Long reviewedBy;
+    private Date reviewedAt;
     private Date createTime;
     private Date updateTime;
 }

@@ -329,6 +329,63 @@ class DialogServiceImplTest {
     }
 
     @Test
+    void routesOpenEndedDianqianQuestionToProductOverviewRetrievalAndPrompt() {
+        String question = "我想了解一下你们点签";
+        String overviewQuery = "点签电子合同产品介绍 定位 核心功能 安全合规 使用入口 适用场景 产品优势";
+        when(retrievalService.retrieve(overviewQuery)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                true, false, null,
+                "点签是电子合同平台，支持电子签名、合同模板和合同管理；"
+                    + "支持微信公众号、微信小程序、PC网页版和钉钉；"
+                    + "提供实名认证、存证和时间戳，适用于销售合同和劳动合同。",
+                0.93, "answered", false,
+                List.of(citation("chunk:overview", "document", 9L, "点签产品介绍")),
+                Collections.emptyList()));
+        when(aiModelService.chatWithModel(anyString(), anyString(), any()))
+            .thenReturn(new ChatResponse(
+                "点签是电子合同平台，支持电子签名、合同模板和合同管理。"
+                    + "可通过微信公众号、微信小程序、PC网页版和钉钉使用，"
+                    + "并提供实名认证、存证和时间戳，适用于销售、劳动等合同场景。",
+                true, "test-model", "test", 30, 45));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "product-overview-user", question, "咨询");
+
+        assertEquals("PRODUCT_OVERVIEW",
+            ((Map<?, ?>) result.get("nlpIntent")).get("intentCode"));
+        assertEquals(overviewQuery, result.get("retrievalPrimaryQuery"));
+        assertTrue(((List<?>) result.get("retrievalVariants")).stream()
+            .anyMatch(value -> value.toString().contains("核心功能和产品优势")));
+        assertEquals("rag_ai", result.get("source"));
+        ArgumentCaptor<String> systemPrompt = ArgumentCaptor.forClass(String.class);
+        verify(aiModelService).chatWithModel(anyString(), systemPrompt.capture(), any());
+        assertTrue(systemPrompt.getValue().contains("客户当前是在了解点签产品"));
+    }
+
+    @Test
+    void marksProductOverviewPartialWhenEvidenceCoversOnlyOneArea() {
+        String overviewQuery = "点签电子合同产品介绍 定位 核心功能 安全合规 使用入口 适用场景 产品优势";
+        when(retrievalService.retrieve(overviewQuery)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                true, false, null, "点签可以通过微信小程序使用。", 0.92,
+                "answered", false,
+                List.of(citation("chunk:channel-only", "document", 10L, "使用入口")),
+                Collections.emptyList()));
+        when(aiModelService.chatWithModel(anyString(), anyString(), any()))
+            .thenReturn(new ChatResponse(
+                "__ANSWER_PARTIAL__\n目前可确认点签可以通过微信小程序使用。"
+                    + "您更想了解核心功能、安全合规还是适用场景？",
+                true, "test-model", "test", 20, 30));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "product-overview-partial", "介绍一下点签", "咨询");
+
+        assertEquals("ANSWER_PARTIAL", result.get("answerDecision"));
+        assertEquals("partial", result.get("answerMode"));
+        assertTrue(((String) result.get("reply")).contains("更想了解"));
+    }
+
+    @Test
     void answersBroadProductUsageWithVerifiedEntriesInsteadOfInventedSteps() {
         String question = "怎么使用？";
         String verifiedAnswer = "点签支持通过钉钉、微信公众号、微信小程序、PC 网页版、"
@@ -357,6 +414,10 @@ class DialogServiceImplTest {
         assertTrue(((String) result.get("reply")).contains("微信小程序"));
         assertTrue(((String) result.get("reply")).contains("具体想进行发起合同"));
         assertFalse(((String) result.get("reply")).contains("应用商店"));
+        assertEquals("operation",
+            ((Map<?, ?>) result.get("pendingClarification")).get("missingSlot"));
+        assertEquals("CLARIFY",
+            ((Map<?, ?>) result.get("serviceDecision")).get("decision"));
         verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
     }
 
@@ -1095,6 +1156,8 @@ class DialogServiceImplTest {
         assertEquals("CLARIFY", ((Map<?, ?>) result.get("understanding")).get("decision"));
         assertEquals("unresolved_reference",
             ((Map<?, ?>) result.get("understanding")).get("reason"));
+        assertEquals("context",
+            ((Map<?, ?>) result.get("pendingClarification")).get("missingSlot"));
         verify(retrievalService, never()).retrieve(anyString());
         verify(businessToolOrchestrator, never()).route(
             any(), anyString(), anyString(), anyString(), anyList());
@@ -1658,6 +1721,50 @@ class DialogServiceImplTest {
     }
 
     @Test
+    void treatsGreetingWithNaturalSuffixAsGreeting() {
+        Map<String, Object> result = dialogService.send(
+            "web", "greeting-suffix", "你好我是件", "咨询");
+
+        assertEquals("basic_conversation", result.get("source"));
+        assertEquals("basic_greeting", result.get("fallbackDecision"));
+        assertTrue(((String) result.get("reply")).contains("我是点签智能客服"));
+        verify(retrievalService, never()).retrieve(anyString());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
+    void resolvesBareWebpageLinkRequestToOfficialSite() {
+        Map<String, Object> result = dialogService.send(
+            "web", "bare-web-link", "给我一个网页链接", "咨询");
+
+        assertEquals("basic_conversation", result.get("source"));
+        assertEquals("basic_official_website", result.get("fallbackDecision"));
+        assertTrue(((String) result.get("reply")).contains("https://www.fs-signature.com/"));
+        verify(retrievalService, never()).retrieve(anyString());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
+    void clarifiesUnknownLowConfidenceQuestionInsteadOfMarkingItOutOfScope() {
+        ReflectionTestUtils.setField(dialogService, "nativeFallbackEnabled", true);
+        when(retrievalService.retrieve("我姓王")).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                false, false, null, null, 0.0, "no_answer", true,
+                Collections.emptyList(), Collections.emptyList()));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "unknown-low-confidence", "我姓王", "咨询");
+
+        assertEquals("clarify", result.get("source"));
+        assertEquals("clarify", result.get("answerStatus"));
+        assertEquals("CLARIFY", result.get("answerDecision"));
+        assertEquals("clarify", result.get("fallbackDecision"));
+        assertTrue(((Map<?, ?>) result.get("pendingClarification")).containsKey("attempt"));
+        assertEquals(false, result.get("needsTransfer"));
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
     void answersCompoundRenewalQuestionFromMergedEvidenceWithoutModelGuessing() {
         String question = "明年不买套餐了，账号和以前签完的合同还能看吗？还能继续发新合同吗？";
         String accountContext = "套餐到期不续费后，点签账号依旧可以正常登录使用。";
@@ -1932,6 +2039,10 @@ class DialogServiceImplTest {
         assertEquals(false, result.get("needsTransfer"));
         assertEquals("CONTRACT_DRAFTING",
             ((Map<?, ?>) result.get("nlpIntent")).get("intentCode"));
+        assertEquals("draftingGoal",
+            ((Map<?, ?>) result.get("pendingClarification")).get("missingSlot"));
+        assertEquals("CLARIFY",
+            ((Map<?, ?>) result.get("serviceDecision")).get("decision"));
         verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
     }
 
@@ -1980,6 +2091,32 @@ class DialogServiceImplTest {
             ((Map<?, ?>) result.get("nlpIntent")).get("intentCode"));
         verify(handoffCoordinator).handoff(
             10L, "高风险业务问题缺少可核实依据", "P1");
+    }
+
+    @Test
+    void handsOffHighRiskQuestionWhenNativeFallbackIsDisabled() {
+        ReflectionTestUtils.setField(dialogService, "nativeFallbackEnabled", false);
+        ReflectionTestUtils.setField(dialogService, "transferOnNoAnswer", false);
+        String question = "电子合同有法律效力吗？";
+        when(retrievalService.retrieve(question)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                false, false, null, null, 0.0, "no_answer", true,
+                Collections.emptyList(), Collections.emptyList()));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "contract-legal-risk-disabled-fallback", question, "合同咨询");
+
+        assertEquals("answerability_gate_high_risk_no_evidence",
+            result.get("fallbackDecision"));
+        assertEquals("HANDOFF", result.get("answerDecision"));
+        assertEquals(true, result.get("needsTransfer"));
+        assertEquals("HANDOFF",
+            ((Map<?, ?>) result.get("answerabilityGate")).get("decision"));
+        assertEquals("high_risk_no_evidence",
+            ((Map<?, ?>) result.get("answerabilityGate")).get("reasonCode"));
+        verify(handoffCoordinator).handoff(
+            10L, "高风险业务问题缺少可核实依据", "P1");
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
     }
 
     @Test
@@ -2666,6 +2803,28 @@ class DialogServiceImplTest {
     }
 
     @Test
+    void blocksLowConfidenceRagBeforeCallingTheModel() {
+        String question = "企业怎么登录？";
+        when(retrievalService.retrieve(question)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                true, false, null, "企业登录需要完成认证。", 0.35, "rag", true,
+                List.of(citation("chunk:login", "document", 9L, "企业登录")),
+                Collections.emptyList()));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "user-gated-low-confidence", question, "账号咨询");
+
+        assertEquals("handoff", result.get("source"));
+        assertEquals("HANDOFF", result.get("answerDecision"));
+        assertEquals("answerability_gate_low_confidence",
+            result.get("fallbackDecision"));
+        assertEquals(true, result.get("needsTransfer"));
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+        verify(handoffCoordinator).handoff(
+            10L, "回答依据置信度低于模型调用阈值", "P1");
+    }
+
+    @Test
     void recordsSlowResponseWithoutChangingTheAnswer() throws InterruptedException {
         String question = "点签支持电子骑缝章吗";
         ReflectionTestUtils.setField(dialogService, "badCaseSlowResponseMs", 1L);
@@ -2903,6 +3062,108 @@ class DialogServiceImplTest {
         assertTrue((Boolean) ReflectionTestUtils.invokeMethod(result, "applied"));
         verify(aiModelService).chatWithModel(anyString(),
             argThat(prompt -> prompt.contains("客服对话摘要器")), eq(77L));
+    }
+
+    @Test
+    void asksForMissingContractTypeBeforeKnowledgeRetrieval() {
+        Map<String, Object> result = dialogService.send(
+            "web", "missing-contract-type", "点签支持签合同吗？", "合同咨询");
+
+        assertEquals("decision", result.get("source"));
+        assertEquals("clarify", result.get("answerStatus"));
+        assertEquals("CLARIFY", result.get("answerDecision"));
+        assertEquals("CLARIFY",
+            ((Map<?, ?>) result.get("serviceDecision")).get("decision"));
+        assertEquals(List.of("contractType"),
+            ((Map<?, ?>) result.get("serviceDecision")).get("missingSlots"));
+        assertEquals(1,
+            ((Map<?, ?>) result.get("pendingClarification")).get("attempt"));
+        assertEquals(2,
+            ((Map<?, ?>) result.get("pendingClarification")).get("maxAttempts"));
+        verify(retrievalService, never()).retrieve(anyString());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
+    void asksWhichAccountOperationBeforeKnowledgeRetrieval() {
+        Map<String, Object> result = dialogService.send(
+            "web", "missing-account-action", "账号怎么弄？", "账号咨询");
+
+        assertEquals("decision", result.get("source"));
+        assertEquals("missing_account_action", result.get("fallbackDecision"));
+        assertTrue(((String) result.get("reply")).contains("注册、登录、实名认证"));
+        assertEquals("accountAction",
+            ((Map<?, ?>) result.get("pendingClarification")).get("missingSlot"));
+        verify(retrievalService, never()).retrieve(anyString());
+    }
+
+    @Test
+    void keepsConfiguredIntentPriorityForAHighFrequencyQuestion() {
+        when(intentService.match("账号怎么弄？")).thenReturn(Optional.of(
+            new IntentService.IntentMatch(
+                9L, "账号帮助", "账号", "请从登录页进入账号帮助。")));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "configured-account-intent", "账号怎么弄？", "账号咨询");
+
+        assertEquals("intent", result.get("source"));
+        assertEquals("请从登录页进入账号帮助。", result.get("reply"));
+        verify(retrievalService, never()).retrieve(anyString());
+    }
+
+    @Test
+    void resumesTheOriginalIntentAfterTheCustomerSuppliesAContractType()
+            throws Exception {
+        String resolvedQuery = "点签 是否支持签署 劳动合同";
+        BotMessage clarification = message("ai", "请问您具体想签署哪一种合同？");
+        clarification.setMetadata(new ObjectMapper().writeValueAsString(Map.of(
+            "pendingClarification", Map.of(
+                "intentCode", "CONTRACT_TYPE_CAPABILITY",
+                "missingSlot", "contractType",
+                "queryTemplate", "点签 是否支持签署 {contractType}",
+                "question", "请问您具体想签署哪一种合同？",
+                "attempt", 1,
+                "maxAttempts", 2))));
+        when(messageService.getByConversation(10L)).thenReturn(List.of(
+            message("user", "点签支持签合同吗？"), clarification,
+            message("user", "劳动合同")));
+        ReflectionTestUtils.setField(dialogService, "transferOnNoAnswer", false);
+        when(retrievalService.retrieve(resolvedQuery)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                false, false, null, null, 0.0, "no_answer", true,
+                Collections.emptyList(), Collections.emptyList()));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "contract-type-follow-up", "劳动合同", "合同咨询");
+
+        assertEquals(resolvedQuery, result.get("retrievalQuery"));
+        assertEquals(true, result.get("clarificationStateConsumed"));
+        assertEquals("decision_metadata", result.get("clarificationResolutionSource"));
+        verify(retrievalService).retrieve(resolvedQuery);
+    }
+
+    @Test
+    void repeatsAClarificationOnlyOnceForAnInvalidReply() throws Exception {
+        BotMessage clarification = message("ai", "请问您具体想签署哪一种合同？");
+        clarification.setMetadata(new ObjectMapper().writeValueAsString(Map.of(
+            "pendingClarification", Map.of(
+                "intentCode", "CONTRACT_TYPE_CAPABILITY",
+                "missingSlot", "contractType",
+                "queryTemplate", "点签 是否支持签署 {contractType}",
+                "question", "请问您具体想签署哪一种合同？",
+                "attempt", 1,
+                "maxAttempts", 2))));
+        when(messageService.getByConversation(10L)).thenReturn(List.of(
+            message("user", "点签支持签合同吗？"), clarification,
+            message("user", "不知道")));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "contract-type-retry", "不知道", "合同咨询");
+
+        assertEquals("CLARIFY", result.get("answerDecision"));
+        assertEquals(2,
+            ((Map<?, ?>) result.get("pendingClarification")).get("attempt"));
+        verify(retrievalService, never()).retrieve(anyString());
     }
 
     private Map<String, Object> citation(String id, String type, Long sourceId, String title) {

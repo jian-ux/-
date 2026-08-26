@@ -15,6 +15,7 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -38,7 +39,9 @@ public class BadCaseQualityService {
     public QualitySummary summarize() {
         List<BotUnmatchedQuestion> questions = unmatchedMapper.selectList(
             new QueryWrapper<BotUnmatchedQuestion>()
-                .select("similar_count", "is_resolved", "trigger_types"));
+                .select("similar_count", "is_resolved", "trigger_types",
+                    "last_answer_status", "last_answer_decision",
+                    "review_status", "review_correct"));
         List<BotFaqRegressionRun> runs = regressionRunMapper.selectList(
             new QueryWrapper<BotFaqRegressionRun>()
                 .orderByDesc("create_time")
@@ -47,15 +50,25 @@ public class BadCaseQualityService {
 
         int totalOccurrences = 0;
         int pending = 0;
+        int reviewed = 0;
+        int reviewedCorrect = 0;
         Map<String, Integer> triggerCounts = new LinkedHashMap<>();
+        Map<String, Integer> decisionCounts = new LinkedHashMap<>();
         for (BotUnmatchedQuestion question : questions) {
             int occurrences = Math.max(question.getSimilarCount() == null
                 ? 1 : question.getSimilarCount(), 1);
             totalOccurrences += occurrences;
             if (!Integer.valueOf(1).equals(question.getIsResolved())) pending++;
+            if ("REVIEWED".equalsIgnoreCase(question.getReviewStatus())) {
+                reviewed++;
+                if (Integer.valueOf(1).equals(question.getReviewCorrect())) {
+                    reviewedCorrect++;
+                }
+            }
             for (String trigger : triggers(question.getTriggerTypes())) {
                 triggerCounts.merge(trigger, occurrences, Integer::sum);
             }
+            decisionCounts.merge(decision(question), occurrences, Integer::sum);
         }
 
         List<TriggerMetric> triggers = triggerCounts.entrySet().stream()
@@ -63,12 +76,32 @@ public class BadCaseQualityService {
                 .thenComparing(Map.Entry.comparingByKey()))
             .map(entry -> new TriggerMetric(entry.getKey(), entry.getValue()))
             .toList();
+        List<DecisionMetric> decisions = decisionCounts.entrySet().stream()
+            .sorted(Map.Entry.<String, Integer>comparingByValue().reversed()
+                .thenComparing(Map.Entry.comparingByKey()))
+            .map(entry -> new DecisionMetric(entry.getKey(), entry.getValue()))
+            .toList();
         List<RegressionRunView> history = runs.stream().map(this::toView).toList();
         Double passRateDelta = history.size() < 2 ? null
             : rate((int) Math.round((history.get(0).passRate() - history.get(1).passRate()) * 1000), 1000);
         return new QualitySummary(questions.size(), pending, questions.size() - pending,
             totalOccurrences, rate(questions.size() - pending, questions.size()), triggers,
-            history, passRateDelta, repeatedFailures(runs));
+            history, passRateDelta, repeatedFailures(runs), reviewed,
+            reviewedCorrect, rate(reviewedCorrect, reviewed), questions.size() - reviewed,
+            decisions);
+    }
+
+    private String decision(BotUnmatchedQuestion question) {
+        String raw = question.getLastAnswerDecision();
+        if (raw == null || raw.isBlank()) raw = question.getLastAnswerStatus();
+        if (raw == null || raw.isBlank()) return "UNKNOWN";
+        return switch (raw.trim().toUpperCase(Locale.ROOT)) {
+            case "ANSWER", "ANSWER_PARTIAL", "ANSWERED" -> "ANSWER";
+            case "CLARIFY", "CLARIFICATION" -> "CLARIFY";
+            case "HANDOFF", "HANDOFF_REQUESTED", "HUMAN_HANDLING", "BLOCKED" -> "HANDOFF";
+            case "NO_ANSWER", "NO_KNOWLEDGE", "ERROR", "OUT_OF_SCOPE" -> "NO_ANSWER";
+            default -> "UNKNOWN";
+        };
     }
 
     private List<String> triggers(String value) {
@@ -129,10 +162,14 @@ public class BadCaseQualityService {
     public record QualitySummary(int questionCount, int pendingQuestionCount,
                                  int resolvedQuestionCount, int totalOccurrenceCount,
                                  double resolutionRate, List<TriggerMetric> triggerCounts,
-                                 List<RegressionRunView> regressionHistory,
-                                 Double passRateDelta,
-                                 List<RepeatedFailure> repeatedFailures) {}
+                                  List<RegressionRunView> regressionHistory,
+                                  Double passRateDelta,
+                                  List<RepeatedFailure> repeatedFailures,
+                                  int reviewedQuestionCount, int reviewedCorrectCount,
+                                  double decisionAccuracy, int pendingReviewQuestionCount,
+                                  List<DecisionMetric> decisionCounts) {}
     public record TriggerMetric(String triggerType, int count) {}
+    public record DecisionMetric(String decision, int count) {}
     public record RegressionRunView(Long id, boolean passed, int publishedDraftCount,
                                     int datasetCaseCount, int executedCaseCount,
                                     int passedCaseCount, int failedCaseCount,

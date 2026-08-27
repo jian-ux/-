@@ -92,6 +92,14 @@ minio:
   access-key: ${MINIO_ACCESS_KEY}
   secret-key: ${MINIO_SECRET_KEY}
   bucket: ${MINIO_BUCKET:feisheng-docs}
+customer-service:
+  tools-enabled: ${CUSTOMER_SERVICE_TOOLS_ENABLED:false}
+  intent-static-replies-enabled: ${CUSTOMER_SERVICE_INTENT_STATIC_REPLIES_ENABLED:false}
+  intent-understanding:
+    enabled: ${CUSTOMER_SERVICE_INTENT_UNDERSTANDING_ENABLED:true}
+    min-confidence: ${CUSTOMER_SERVICE_INTENT_UNDERSTANDING_MIN_CONFIDENCE:0.75}
+    max-history-messages: ${CUSTOMER_SERVICE_INTENT_UNDERSTANDING_MAX_HISTORY_MESSAGES:4}
+    model-id: ${CUSTOMER_SERVICE_INTENT_MODEL_ID:0}
 rag:
   context:
     max-history-messages: ${RAG_CONTEXT_MAX_HISTORY_MESSAGES:6}

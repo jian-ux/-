@@ -47,6 +47,9 @@ public class NlpIntentClassifier {
         "账号", "账户", "注册", "登录", "认证", "实名", "密码");
     private static final List<String> ACCOUNT_ACTION_TERMS = List.of(
         "怎么", "如何", "怎样", "申请", "创建", "开通", "重置", "修改", "找回", "无法", "失败");
+    private static final List<String> INTEGRATION_TERMS = List.of(
+        "openapi", "api", "sdk", "接入", "集成", "嵌入", "内嵌", "对接", "打通",
+        "可以用吗", "能用吗", "是否可用", "支持吗");
     private static final List<String> SUBJECT_MARKERS = List.of(
         "是否支持签署", "支持签署", "是否可以签", "可不可以签", "能不能签", "是否能签",
         "支持签", "可以签", "能否签", "能签",
@@ -77,6 +80,16 @@ public class NlpIntentClassifier {
         String legalSignal = firstMatch(normalized, LEGAL_RISK_TERMS);
         String productSignal = firstMatch(normalized, PRODUCT_TERMS);
         String subject = extractContractSubject(normalized);
+        String businessSystem = businessSystem(normalized);
+        String integrationSignal = firstMatch(normalized, INTEGRATION_TERMS);
+
+        if (businessSystem != null && integrationSignal != null) {
+            addSignal(signals, entities, "business_system", businessSystem);
+            addSignal(signals, actions, "integration", integrationSignal);
+            return result(IntentCode.SYSTEM_INTEGRATION, "integration", RiskLevel.LOW,
+                entities, actions, false, integrationQuery(businessSystem), signals,
+                businessSystem, false);
+        }
 
         if (LEGAL_COMPLIANCE_MENU_QUESTIONS.contains(normalized)) {
             addSignal(signals, actions, "legal", legalSignal);
@@ -146,7 +159,7 @@ public class NlpIntentClassifier {
         }
 
         String overviewSignal = firstMatch(normalized, PRODUCT_OVERVIEW_TERMS);
-        if (productSignal != null && overviewSignal != null) {
+        if ((productSignal != null || refersToProvider(normalized)) && overviewSignal != null) {
             addSignal(signals, actions, "overview", overviewSignal);
             return result(IntentCode.PRODUCT_OVERVIEW, "product", RiskLevel.LOW,
                 entities, actions, false,
@@ -255,6 +268,26 @@ public class NlpIntentClassifier {
             || text.contains("有一份合同");
     }
 
+    private String businessSystem(String text) {
+        if (text.contains("crm") || text.contains("客户管理系统")) return "CRM";
+        if (text.contains("erp")) return "ERP";
+        if (text.contains("hrm") || text.contains("人力资源系统")) return "HRM";
+        if (text.contains("oa") || text.contains("办公系统")) return "OA";
+        if (text.contains("采购系统")) return "采购系统";
+        if (text.contains("销售系统")) return "销售系统";
+        if (text.contains("自研系统") || text.contains("自主开发系统")) return "自研系统";
+        return null;
+    }
+
+    private String integrationQuery(String businessSystem) {
+        return "点签电子签章是否支持通过API集成到" + businessSystem + "系统？";
+    }
+
+    private boolean refersToProvider(String text) {
+        return text.startsWith("你们") || text.startsWith("贵公司")
+            || text.startsWith("贵司") || text.startsWith("你们公司");
+    }
+
     private String normalize(String value) {
         return Normalizer.normalize(value, Normalizer.Form.NFKC)
             .toLowerCase(Locale.ROOT)
@@ -266,6 +299,7 @@ public class NlpIntentClassifier {
         CONTRACT_SIGNING_OPERATION,
         CONTRACT_TYPE_CAPABILITY,
         CONTRACT_LEGAL_RISK,
+        SYSTEM_INTEGRATION,
         PRODUCT_FEATURES,
         PRODUCT_OVERVIEW,
         PRODUCT_VERSION_FEATURES,

@@ -127,6 +127,23 @@ class NlpIntentClassifierTest {
     }
 
     @Test
+    void recognizesBusinessSystemIntegrationAndProviderOverview() {
+        for (String question : new String[] {
+                "CRM客户管理系统可以用吗？", "点签可以嵌入ERP系统吗？",
+                "点签是否支持通过OpenAPI对接OA？"
+        }) {
+            NlpIntentClassifier.IntentAnalysis result = classifier.classify(question);
+            assertEquals(NlpIntentClassifier.IntentCode.SYSTEM_INTEGRATION,
+                result.intentCode(), question);
+            assertTrue(result.retrievalQuery().contains("API"), question);
+            assertFalse(result.needsClarification(), question);
+        }
+
+        assertEquals(NlpIntentClassifier.IntentCode.PRODUCT_OVERVIEW,
+            classifier.classify("你们是干什么的？").intentCode());
+    }
+
+    @Test
     void distinguishesDianqianFeaturesFromProductVersionFeatures() {
         NlpIntentClassifier.IntentAnalysis dianqian =
             classifier.classify("点签的产品功能");

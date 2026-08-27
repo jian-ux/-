@@ -14,6 +14,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
@@ -42,5 +44,25 @@ class ConversationServiceImplTest {
         verify(mapper).selectOne(captor.capture());
         assertTrue(captor.getValue().getSqlSegment().contains("status IN"));
         verifyNoMoreInteractions(mapper);
+    }
+
+    @Test
+    void updatesDialogStateWithOptimisticVersion() {
+        BotConversation conversation = new BotConversation();
+        conversation.setId(15L);
+        conversation.setDialogStateVersion(3L);
+        ConversationServiceImpl service = new ConversationServiceImpl(mapper);
+        when(mapper.updateDialogState(15L, "{\"status\":\"ACTIVE\"}", 3L))
+            .thenReturn(1);
+
+        assertTrue(service.updateDialogState(
+            conversation, "{\"status\":\"ACTIVE\"}", 3L));
+        assertEquals(4L, conversation.getDialogStateVersion());
+
+        when(mapper.updateDialogState(15L, "{\"status\":\"IDLE\"}", 3L))
+            .thenReturn(0);
+        assertFalse(service.updateDialogState(
+            conversation, "{\"status\":\"IDLE\"}", 3L));
+        assertEquals(4L, conversation.getDialogStateVersion());
     }
 }

@@ -7,7 +7,10 @@ import com.feisheng.bot.core.entity.BotConversation;
 import com.feisheng.bot.core.entity.BotMessage;
 import com.feisheng.bot.core.mapper.BotAiReplyLogMapper;
 import com.feisheng.bot.core.service.BusinessSafetyBoundaryService;
+import com.feisheng.bot.core.service.ConversationContextAssembler;
 import com.feisheng.bot.core.service.ConversationServiceImpl;
+import com.feisheng.bot.core.service.ConversationStateService;
+import com.feisheng.bot.core.service.ConversationSummaryFormat;
 import com.feisheng.bot.core.service.CustomerServiceDecisionEngine;
 import com.feisheng.bot.core.service.CustomerServicePromptProvider;
 import com.feisheng.bot.core.service.CustomerProfileService;
@@ -487,9 +490,12 @@ public class DialogServiceImpl {
     private final ReplyAttachmentService replyAttachmentService;
     private final ContextualQueryResolver contextualQueryResolver;
     private final IntentUnderstandingService intentUnderstandingService;
+    private final ConversationStateService conversationStateService;
     private final CustomerServiceDecisionEngine decisionEngine;
     private final ObjectMapper objectMapper;
     private final CustomerProfileService customerProfileService;
+    private final ConversationContextAssembler conversationContextAssembler;
+    private final ConversationSummaryFormat conversationSummaryFormat;
 
     @Autowired
     public DialogServiceImpl(ConversationServiceImpl conversationService,
@@ -510,9 +516,12 @@ public class DialogServiceImpl {
                              ReplyAttachmentService replyAttachmentService,
                              ContextualQueryResolver contextualQueryResolver,
                              IntentUnderstandingService intentUnderstandingService,
+                             ConversationStateService conversationStateService,
                              CustomerServiceDecisionEngine decisionEngine,
                              ObjectMapper objectMapper,
-                             CustomerProfileService customerProfileService) {
+                             CustomerProfileService customerProfileService,
+                             ConversationContextAssembler conversationContextAssembler,
+                             ConversationSummaryFormat conversationSummaryFormat) {
         this.conversationService = conversationService;
         this.messageService = messageService;
         this.aiModelService = aiModelService;
@@ -531,9 +540,12 @@ public class DialogServiceImpl {
         this.replyAttachmentService = replyAttachmentService;
         this.contextualQueryResolver = contextualQueryResolver;
         this.intentUnderstandingService = intentUnderstandingService;
+        this.conversationStateService = conversationStateService;
         this.decisionEngine = decisionEngine;
         this.objectMapper = objectMapper;
         this.customerProfileService = customerProfileService;
+        this.conversationContextAssembler = conversationContextAssembler;
+        this.conversationSummaryFormat = conversationSummaryFormat;
     }
 
     public DialogServiceImpl(ConversationServiceImpl conversationService,
@@ -561,7 +573,10 @@ public class DialogServiceImpl {
             intentService, nlpIntentClassifier, sensitiveDataService,
             handoffCoordinator, emotionService, replyAttachmentService,
             contextualQueryResolver, intentUnderstandingService,
-            new CustomerServiceDecisionEngine(objectMapper), objectMapper, null);
+            new ConversationStateService(conversationService, objectMapper),
+            new CustomerServiceDecisionEngine(objectMapper), objectMapper, null,
+            new ConversationContextAssembler(objectMapper, new ConversationSummaryFormat()),
+            new ConversationSummaryFormat());
     }
 
     public Map<String, Object> send(String channelType, String channelUserId, String text, String title) {
@@ -648,6 +663,8 @@ public class DialogServiceImpl {
             providedCitations, modalityContext, mergeGlobalRetrieval, preferredModelId,
             requestedPromptVersion, userMessageMetadata, userMessageContentType);
         decisionEngine.enrich(response);
+        conversationStateService.synchronizeResponse(
+            response, redact(text, new LinkedHashSet<>()));
         collectBadCase(text, response, System.currentTimeMillis() - started);
         return response;
     }
@@ -676,6 +693,8 @@ public class DialogServiceImpl {
         BotMessage userMessage = saveMessage(conversation.getId(), "user", safeText,
             userMessageMetadata, normalizedContentType(userMessageContentType));
         List<BotMessage> recentMessages = messageService.getByConversation(conversation.getId());
+        ConversationStateService.Snapshot conversationState =
+            conversationStateService.load(conversation, recentMessages);
         ContextCompressionResult contextCompression = maybeCompressConversation(
             conversation, recentMessages, redactedTypes, preferredModelId);
         modelLatencyMs += contextCompression.latencyMs();
@@ -683,7 +702,6 @@ public class DialogServiceImpl {
         String contextSummary = conversation.getContextSummary();
         boolean profileUpdated = false;
         String profileContext = null;
-        String chatHistory = null;
         EmotionService.EmotionResult emotion = emotionService.analyze(
             safeText, recentMessages, userMessage.getId());
         messageService.updateMetadata(userMessage, mergeMetadata(userMessage.getMetadata(),
@@ -719,9 +737,6 @@ public class DialogServiceImpl {
             profileUpdated = profile.updated();
             profileContext = customerProfileService.contextFor(understandingText, profile);
         }
-        chatHistory = appendProfileContext(
-            buildChatHistory(recentMessages, redactedTypes, contextSummary), profileContext);
-
         if (isPreviousQuestionRequest(understandingText)) {
             return previousQuestionResponse(
                 conversation, preCheck, recentMessages, safeText, emotion, started,
@@ -779,13 +794,49 @@ public class DialogServiceImpl {
                 emotion, started, redactedTypes, promptVersion);
         }
 
+        NlpIntentClassifier.IntentAnalysis directIntent = nlpIntentClassifier.classify(
+            stripLeadingCourtesyPrefix(understandingText));
+        IntentUnderstandingService.Understanding semanticUnderstanding =
+            IntentUnderstandingService.Understanding.notAttempted("not_needed");
+        boolean canUseSemanticUnderstanding = !hasText(safeProvidedContext)
+            && !hasText(safeModalityContext)
+            && !hasEmbeddedMediaContext(safeText)
+            && !isClearlyUnrelatedQuestion(understandingText)
+            && !isExplicitlyUnrelatedNativeRequest(understandingText);
+        if (canUseSemanticUnderstanding) {
+            semanticUnderstanding = understandIntent(
+                understandingText, recentMessages, preferredModelId,
+                conversationStateService.modelContext(conversationState));
+            modelLatencyMs += semanticUnderstanding.latencyMs();
+        }
+        ConversationStateService.MergeResult stateMerge = conversationStateService.merge(
+            conversationState, understandingText, semanticUnderstanding, directIntent);
+        semanticUnderstanding = stateMerge.understanding();
+        ConversationContextAssembler.AssembledContext assembledContext =
+            conversationContextAssembler.assemble(
+                safeText, recentMessages, userMessage.getId(),
+                conversation.getSummaryMessageId(), contextSummary,
+                conversationStateService.turnContext(
+                    conversationState, stateMerge, understandingText),
+                profileContext, maxHistoryMessages,
+                value -> redact(value, redactedTypes));
+
         CustomerServiceDecisionEngine.PendingResult pendingResult =
-            decisionEngine.resolvePending(recentMessages, understandingText);
+            CustomerServiceDecisionEngine.PendingResult.none();
+        if (stateMerge.retainPending()) {
+            ConversationStateService.PendingState persistedPending =
+                conversationState.pending();
+            pendingResult = persistedPending == null
+                ? decisionEngine.resolvePending(recentMessages, understandingText)
+                : decisionEngine.resolvePending(
+                    persistedPending.toPlan(), persistedPending.sourceQuestion(),
+                    understandingText);
+        }
         if (pendingResult.status()
                 == CustomerServiceDecisionEngine.PendingStatus.RETRY) {
             return decisionClarificationResponse(
-                conversation, preCheck, pendingResult.clarification(), null,
-                emotion, started, redactedTypes);
+                conversation, preCheck, pendingResult.clarification(), directIntent,
+                emotion, started, redactedTypes, semanticUnderstanding);
         }
         if (pendingResult.status()
                 == CustomerServiceDecisionEngine.PendingStatus.HANDOFF) {
@@ -797,11 +848,10 @@ public class DialogServiceImpl {
                 conversation, emotion, started, redactedTypes,
                 reason, pendingResult.reasonCode(), null);
         }
-        NlpIntentClassifier.IntentAnalysis directIntent = nlpIntentClassifier.classify(
-            stripLeadingCourtesyPrefix(understandingText));
+
         CustomerServiceDecisionEngine.ClarificationPlan directClarification =
             decisionEngine.initialClarification(understandingText, directIntent);
-        if (directClarification != null) {
+        if (directClarification != null && !semanticUnderstanding.knowledge()) {
             IntentService.IntentMatch directIntentMatch = intentStaticRepliesEnabled
                 ? intentService.match(understandingText).orElse(null) : null;
             if (directIntentMatch != null) {
@@ -811,31 +861,25 @@ public class DialogServiceImpl {
             }
             return decisionClarificationResponse(
                 conversation, preCheck, directClarification, directIntent,
-                emotion, started, redactedTypes);
+                emotion, started, redactedTypes, semanticUnderstanding);
         }
         ContextualQueryResolver.Resolution queryResolution =
             pendingResult.status() == CustomerServiceDecisionEngine.PendingStatus.RESOLVED
                 ? new ContextualQueryResolver.Resolution(
                     pendingResult.resolvedQuery(), true,
                     pendingResult.previousQuestion(), null, null, false,
-                    "decision_metadata")
+                    hasText(conversation.getDialogState())
+                        ? "java_dialog_state" : "decision_metadata")
                 : contextualQueryResolver.resolve(recentMessages, understandingText);
-        IntentUnderstandingService.Understanding semanticUnderstanding =
-            IntentUnderstandingService.Understanding.notAttempted("not_needed");
-        boolean canUseSemanticUnderstanding = queryResolution.unresolved()
-            && !hasText(safeProvidedContext)
-            && !hasText(safeModalityContext)
-            && !hasEmbeddedMediaContext(safeText)
-            && !isClearlyUnrelatedQuestion(understandingText)
-            && !isExplicitlyUnrelatedNativeRequest(understandingText);
-        if (canUseSemanticUnderstanding) {
-            semanticUnderstanding = understandIntent(
-                understandingText, recentMessages, preferredModelId);
-            modelLatencyMs += semanticUnderstanding.latencyMs();
-            if (semanticUnderstanding.knowledge()) {
-                queryResolution = semanticResolution(
-                    queryResolution, semanticUnderstanding, "semantic_context_resolution");
-            }
+        if (semanticUnderstanding.knowledge()
+                && (queryResolution.unresolved()
+                    || semanticUnderstanding.contextDependent()
+                    || !sameQuestion(queryResolution.query(),
+                        semanticUnderstanding.standaloneQuery()))) {
+            queryResolution = semanticResolution(
+                queryResolution, semanticUnderstanding,
+                queryResolution.unresolved()
+                    ? "semantic_context_resolution" : "semantic_intent_resolution");
         }
         boolean semanticOutOfScope = semanticUnderstanding.outOfScope();
         if (queryResolution.unresolved() && !semanticOutOfScope
@@ -939,7 +983,8 @@ public class DialogServiceImpl {
         boolean retrievalQueryRewritten = queryResolution.rewritten()
             || !Objects.equals(retrievalQuery, queryResolution.query());
         String retrievalHistory = buildRetrievalHistory(
-            recentMessages, queryResolution.contextDependent(), redactedTypes, contextSummary);
+            recentMessages, queryResolution.contextDependent(), redactedTypes, contextSummary,
+            conversation.getSummaryMessageId(), userMessage.getId());
         // A rewritten query is already standalone. Reusing the raw previous topic
         // in semantic search would pull old evidence back into the new intent.
         String semanticRetrievalHistory = retrievalQueryRewritten
@@ -1134,7 +1179,7 @@ public class DialogServiceImpl {
                     nlpIntent, false, false, 0.0, answerabilityGateMinModelConfidence,
                     false, nativeDecision == NativeFallbackDecision.NATIVE);
                 NativeFallbackResponse fallback = nativeFallbackResponse(safeText, nlpIntent,
-                    chatHistory,
+                    assembledContext,
                     emotion, preferredModelId);
                 if (fallback.aiResponse() != null) {
                     modelLatencyMs += elapsedMillis(modelStarted);
@@ -1192,8 +1237,8 @@ public class DialogServiceImpl {
             boolean partialEvidenceNeedsClarification = "partial_rag".equals(retrieval.decision())
                 && shouldClarifyPartialEvidence(nlpIntent);
             String prompt = buildPrompt(
-                chatHistory, safeRetrievalContext,
-                safeText, retrievalQuery, partialEvidenceNeedsClarification, nlpIntent);
+                assembledContext, safeRetrievalContext,
+                retrievalQuery, partialEvidenceNeedsClarification, nlpIntent);
             modelPrompt = prompt;
             SystemPromptResolution systemPrompt = customerServiceSystemPrompt(
                 emotion, safeText, nlpIntent, promptVersion);
@@ -2550,6 +2595,7 @@ public class DialogServiceImpl {
             case "CONTRACT_SIGNING_OPERATION" -> "电子合同发起 签署流程 操作";
             case "CONTRACT_TYPE_CAPABILITY" -> "支持签署 合同类型";
             case "CONTRACT_LEGAL_RISK" -> "电子合同法律效力 合同风险";
+            case "SYSTEM_INTEGRATION" -> "API OpenAPI 系统接入 集成 对接 电子签章";
             case "PRODUCT_FEATURES" -> "点签产品功能";
             case "PRODUCT_OVERVIEW" -> "点签电子合同产品介绍 适用场景";
             case "PRODUCT_VERSION_FEATURES" -> "产品版本 功能权益";
@@ -2739,11 +2785,20 @@ public class DialogServiceImpl {
 
     private IntentUnderstandingService.Understanding understandIntent(
             String question, List<BotMessage> recentMessages, Long preferredModelId) {
+        return understandIntent(question, recentMessages, preferredModelId, Map.of());
+    }
+
+    private IntentUnderstandingService.Understanding understandIntent(
+            String question, List<BotMessage> recentMessages, Long preferredModelId,
+            Map<String, Object> conversationState) {
         if (intentUnderstandingService == null) {
             return IntentUnderstandingService.Understanding.notAttempted("service_unavailable");
         }
-        IntentUnderstandingService.Understanding understanding =
-            intentUnderstandingService.understand(question, recentMessages, preferredModelId);
+        IntentUnderstandingService.Understanding understanding = conversationState == null
+                || conversationState.isEmpty()
+            ? intentUnderstandingService.understand(question, recentMessages, preferredModelId)
+            : intentUnderstandingService.understand(
+                question, recentMessages, preferredModelId, conversationState);
         return understanding == null
             ? IntentUnderstandingService.Understanding.notAttempted("service_unavailable")
             : understanding;
@@ -2754,7 +2809,7 @@ public class DialogServiceImpl {
             IntentUnderstandingService.Understanding understanding,
             String source) {
         return new ContextualQueryResolver.Resolution(
-            understanding.standaloneQuery(), true,
+            understanding.standaloneQuery(), understanding.contextDependent(),
             original == null ? null : original.previousQuestion(),
             original == null ? null : original.switchedEntity(),
             original == null ? null : original.inheritedProduct(),
@@ -2936,13 +2991,14 @@ public class DialogServiceImpl {
         return hasText(value) ? value.trim().toLowerCase(Locale.ROOT) : "text";
     }
 
-    private String buildPrompt(String chatHistory, String ragContext, String userQuestion,
-                               String retrievalQuery, boolean partialEvidence,
+    private String buildPrompt(ConversationContextAssembler.AssembledContext assembledContext,
+                               String ragContext, String retrievalQuery, boolean partialEvidence,
                                NlpIntentClassifier.IntentAnalysis nlpIntent) {
-        StringBuilder prompt = new StringBuilder("用户问题：").append(userQuestion)
+        String userQuestion = assembledContext.currentQuestion();
+        StringBuilder prompt = new StringBuilder()
             .append(!Objects.equals(userQuestion, retrievalQuery)
-                ? "\n归一化或补全后的本轮意图：" + retrievalQuery : "")
-            .append("\n回答目标：以用户问题中明确点名的产品、业务或对象为唯一主体，首句直接回答该主体是什么、做什么或如何处理。")
+                ? "归一化或补全后的本轮意图：" + retrievalQuery + "\n" : "")
+            .append("回答目标：以用户问题中明确点名的产品、业务或对象为唯一主体，首句直接回答该主体是什么、做什么或如何处理。")
             .append("补全后的本轮意图只用于消除省略和指代，回答仍需自然承接用户原话。")
             .append("如果内部事实同时介绍公司或多个产品，只抽取能回答当前主体和意图的事实，不复述无关内容。")
             .append("不得把会员类型、账号类型、企业认证、电子合同使用资格等不同概念相互推导。")
@@ -2977,11 +3033,13 @@ public class DialogServiceImpl {
                 .append("，说明已确认边界并追问具体签署主体或使用场景，不得直接宣称该对象受支持。");
         }
         int usedTokens = estimateTokens(prompt.toString());
+        int mandatoryContextTokens = estimateTokens(
+            assembledContext.render(assembledContext.mandatoryChars()));
 
         if (hasText(ragContext)) {
-            int remainingTokenBudget = Math.max(0, maxPromptTokens - usedTokens);
-            int allowedChars = Math.min(remainingTokenBudget * CHARS_PER_TOKEN,
-                Math.max(0, maxPromptTokens));
+            int remainingTokenBudget = Math.max(
+                0, maxPromptTokens - usedTokens - mandatoryContextTokens);
+            int allowedChars = remainingTokenBudget * CHARS_PER_TOKEN;
             if (allowedChars > 50) {
                 String evidence = ragContext.substring(0,
                     Math.min(allowedChars, ragContext.length()));
@@ -2992,18 +3050,16 @@ public class DialogServiceImpl {
             }
         }
 
-        if (hasText(chatHistory)) {
-            int allowedChars = Math.max(0, (maxPromptTokens - usedTokens) * CHARS_PER_TOKEN);
-            if (allowedChars > 30) {
-                prompt.insert(0, chatHistory.substring(0, Math.min(allowedChars, chatHistory.length())) + "\n");
-            }
-        }
+        int allowedContextChars = Math.max(assembledContext.mandatoryChars(),
+            Math.max(0, (maxPromptTokens - usedTokens) * CHARS_PER_TOKEN));
+        prompt.insert(0, assembledContext.render(allowedContextChars) + "\n");
         return prompt.toString();
     }
 
-    private String buildNativeFallbackPrompt(String chatHistory, String userQuestion) {
-        StringBuilder prompt = new StringBuilder("用户问题：").append(userQuestion)
-            .append("\n请先判断问题是否属于电子合同、电子签名、签署合规或合同管理业务范围。")
+    private String buildNativeFallbackPrompt(
+            ConversationContextAssembler.AssembledContext assembledContext) {
+        StringBuilder prompt = new StringBuilder(
+            "请先判断当前问题是否属于电子合同、电子签名、签署合规或合同管理业务范围。")
             .append("不属于该范围时只输出 ").append(NO_ANSWER_SIGNAL).append("。")
             .append("属于该范围且可以仅依据稳定通用知识完整回答时直接作答；")
             .append("若只能回答通用部分而企业具体事实仍缺失，第一行输出 ")
@@ -3013,14 +3069,10 @@ public class DialogServiceImpl {
             .append("只输出 ").append(NO_ANSWER_SIGNAL).append("，不要猜测。")
             .append("\n输出格式：").append(PLAIN_TEXT_OUTPUT_INSTRUCTION)
             .append("\n回答结构：").append(ADAPTIVE_REPLY_STRUCTURE_INSTRUCTION);
-        if (hasText(chatHistory)) {
-            int allowedChars = Math.max(0, (maxPromptTokens - estimateTokens(prompt.toString()))
-                * CHARS_PER_TOKEN);
-            if (allowedChars > 30) {
-                prompt.insert(0, chatHistory.substring(0,
-                    Math.min(allowedChars, chatHistory.length())) + "\n");
-            }
-        }
+        int allowedContextChars = Math.max(assembledContext.mandatoryChars(),
+            Math.max(0, (maxPromptTokens - estimateTokens(prompt.toString()))
+                * CHARS_PER_TOKEN));
+        prompt.insert(0, assembledContext.render(allowedContextChars) + "\n");
         return prompt.toString();
     }
 
@@ -3081,9 +3133,11 @@ public class DialogServiceImpl {
                 "model_unavailable", elapsedMillis(summaryStarted));
         }
 
-        String summary = normalizeContextSummary(summaryResponse.getContent());
+        String summary = conversationSummaryFormat.normalizeModelOutput(
+            summaryResponse.getContent(), contextSummaryLimitChars()).orElse(null);
         if (!hasText(summary)) {
-            return ContextCompressionResult.failed("empty_summary", elapsedMillis(summaryStarted));
+            return ContextCompressionResult.failed(
+                "invalid_summary_format", elapsedMillis(summaryStarted));
         }
         conversation.setContextSummary(summary);
         BotMessage lastCompactedMessage = messages.get(compactEnd - 1);
@@ -3106,7 +3160,8 @@ public class DialogServiceImpl {
         StringBuilder prompt = new StringBuilder()
             .append("请压缩下面的客服对话，仅保留对后续多轮问答有帮助的信息。\n")
             .append("目标长度：不超过 ").append(contextSummaryLimitChars())
-            .append(" 个字符。\n");
+            .append(" 个字符。必须完整输出以下模板中的全部栏目，栏目名称和顺序不得改变：\n")
+            .append(conversationSummaryFormat.template()).append("\n");
         if (hasText(existingSummary)) {
             prompt.append("已有摘要（请在此基础上更新，不要丢掉仍然有效的信息）：\n")
                 .append(existingSummary).append("\n");
@@ -3142,17 +3197,12 @@ public class DialogServiceImpl {
             + prompt.substring(prompt.length() - tailChars);
     }
 
-    private String normalizeContextSummary(String value) {
-        String summary = value == null ? "" : value.replace("```", "").strip();
-        int maxChars = contextSummaryLimitChars();
-        return summary.length() <= maxChars ? summary : summary.substring(0, maxChars).strip();
-    }
-
     private int contextSummaryLimitChars() {
         int configuredLimit = Math.max(200, contextSummaryMaxChars);
         int targetChars = (int) Math.ceil(contextBudgetChars()
             * normalizedRatio(contextSummaryTargetRatio, 0.50));
-        return targetChars > 0 ? Math.min(configuredLimit, targetChars) : configuredLimit;
+        return targetChars > 0
+            ? Math.max(200, Math.min(configuredLimit, targetChars)) : configuredLimit;
     }
 
     private int contextBudgetChars() {
@@ -3164,40 +3214,6 @@ public class DialogServiceImpl {
         return value > 0.0 && value <= 1.0 ? value : fallback;
     }
 
-    private String buildChatHistory(List<BotMessage> messages, Set<String> redactedTypes) {
-        return buildChatHistory(messages, redactedTypes, null);
-    }
-
-    private String buildChatHistory(List<BotMessage> messages, Set<String> redactedTypes,
-                                    String contextSummary) {
-        StringBuilder history = new StringBuilder();
-        if (hasText(contextSummary)) {
-            history.append("【当前会话摘要】\n")
-                .append(redact(contextSummary, redactedTypes))
-                .append("\n");
-        }
-        if (messages != null && messages.size() > 1) {
-            int end = messages.size() - 1;
-            int start = Math.max(0, end - Math.max(0, maxHistoryMessages));
-            if (start < end) {
-                history.append("【对话历史】\n");
-                for (int i = start; i < end; i++) {
-                    BotMessage message = messages.get(i);
-                    history.append("user".equals(message.getRole()) ? "用户" : "客服")
-                        .append(": ").append(redact(message.getContent(), redactedTypes))
-                        .append("\n");
-                }
-            }
-        }
-        return history.length() == 0 ? null : history.toString();
-    }
-
-    private String appendProfileContext(String chatHistory, String profileContext) {
-        if (!hasText(profileContext)) return chatHistory;
-        if (!hasText(chatHistory)) return profileContext;
-        return chatHistory + "\n" + profileContext;
-    }
-
     private String buildRetrievalHistory(List<BotMessage> messages, boolean contextDependent,
                                          Set<String> redactedTypes) {
         return buildRetrievalHistory(messages, contextDependent, redactedTypes, null);
@@ -3205,21 +3221,35 @@ public class DialogServiceImpl {
 
     private String buildRetrievalHistory(List<BotMessage> messages, boolean contextDependent,
                                          Set<String> redactedTypes, String contextSummary) {
+        return buildRetrievalHistory(
+            messages, contextDependent, redactedTypes, contextSummary, null, null);
+    }
+
+    private String buildRetrievalHistory(List<BotMessage> messages, boolean contextDependent,
+                                         Set<String> redactedTypes, String contextSummary,
+                                         Long summaryMessageId, Long currentMessageId) {
         if (!contextDependent) return null;
         StringBuilder recent = new StringBuilder();
         if (messages != null && messages.size() > 1) {
-            int end = messages.size() - 1;
-            int start = Math.max(0, end - Math.max(0, maxRetrievalHistoryMessages));
+            int end = currentMessageIndex(messages, currentMessageId);
+            int summaryStart = summaryStartIndex(messages, summaryMessageId);
+            int start = Math.max(summaryStart,
+                end - Math.max(0, maxRetrievalHistoryMessages));
             for (int i = start; i < end; i++) {
                 BotMessage message = messages.get(i);
+                if (message == null || (summaryStart == 0 && summaryMessageId != null
+                        && message.getId() != null
+                        && message.getId() <= summaryMessageId)) continue;
                 if (!"user".equals(message.getRole()) && !"ai".equals(message.getRole())) continue;
                 if (!hasText(message.getContent())) continue;
                 recent.append("user".equals(message.getRole()) ? "用户: " : "客服: ")
                     .append(redact(message.getContent(), redactedTypes)).append('\n');
             }
         }
-        String summary = hasText(contextSummary)
-            ? "会话摘要: " + redact(contextSummary, redactedTypes) : "";
+        String normalizedSummary = conversationSummaryFormat.normalizeStoredSummary(
+            contextSummary, contextSummaryLimitChars());
+        String summary = hasText(normalizedSummary)
+            ? "会话摘要:\n" + redact(normalizedSummary, redactedTypes) : "";
         if (recent.length() == 0 && summary.isEmpty()) return null;
         int historyChars = Math.max(0, maxRetrievalHistoryChars);
         if (historyChars == 0) return null;
@@ -3231,15 +3261,40 @@ public class DialogServiceImpl {
         return fitRetrievalHistory(summary, recent.toString(), historyChars);
     }
 
+    private int currentMessageIndex(List<BotMessage> messages, Long currentMessageId) {
+        if (messages == null || messages.isEmpty()) return 0;
+        if (currentMessageId != null) {
+            for (int i = messages.size() - 1; i >= 0; i--) {
+                BotMessage message = messages.get(i);
+                if (message != null && currentMessageId.equals(message.getId())) return i;
+            }
+        }
+        return messages.size() - 1;
+    }
+
+    private int summaryStartIndex(List<BotMessage> messages, Long summaryMessageId) {
+        if (messages == null || summaryMessageId == null) return 0;
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            BotMessage message = messages.get(i);
+            if (message != null && summaryMessageId.equals(message.getId())) return i + 1;
+        }
+        return 0;
+    }
+
     private String fitRetrievalHistory(String summary, String recent, int maxChars) {
         if (summary.length() + recent.length() + 1 <= maxChars) {
             return summary + (recent.isEmpty() ? "" : "\n" + recent.strip());
         }
-        int summaryChars = Math.min(summary.length(), Math.max(1, maxChars / 2));
-        int recentChars = Math.max(0, maxChars - summaryChars - 1);
+        String summaryPrefix = "会话摘要:\n";
+        String summaryValue = summary.startsWith(summaryPrefix)
+            ? summary.substring(summaryPrefix.length()) : summary;
+        int summaryChars = recent.isBlank() ? maxChars : Math.max(1, maxChars / 2);
+        String fittedSummary = summaryPrefix + conversationSummaryFormat.normalizeStoredSummary(
+            summaryValue, Math.max(1, summaryChars - summaryPrefix.length()));
+        int recentChars = Math.max(0, maxChars - fittedSummary.length() - 1);
         String recentTail = recentChars == 0 ? ""
             : recent.substring(Math.max(0, recent.length() - recentChars)).strip();
-        return summary.substring(0, summaryChars).strip()
+        return fittedSummary.strip()
             + (recentTail.isEmpty() ? "" : "\n" + recentTail);
     }
 
@@ -3375,7 +3430,7 @@ public class DialogServiceImpl {
 
     private NativeFallbackResponse nativeFallbackResponse(
             String question, NlpIntentClassifier.IntentAnalysis nlpIntent,
-            String chatHistory,
+            ConversationContextAssembler.AssembledContext assembledContext,
             EmotionService.EmotionResult emotion, Long preferredModelId) {
         NativeFallbackDecision decision = nativeFallbackDecision(question, nlpIntent);
         String decisionName = decision.name().toLowerCase(Locale.ROOT);
@@ -3450,7 +3505,7 @@ public class DialogServiceImpl {
                 true, null, null);
         }
 
-        String fallbackPrompt = buildNativeFallbackPrompt(chatHistory, question);
+        String fallbackPrompt = buildNativeFallbackPrompt(assembledContext);
         SystemPromptResolution systemPrompt = nativeFallbackSystemPromptFor(emotion);
         ChatResponse response = aiModelService.chatWithModel(
             fallbackPrompt, systemPrompt.content(), preferredModelId);

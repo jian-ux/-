@@ -106,6 +106,19 @@ class CustomerServiceDecisionEngineTest {
     }
 
     @Test
+    void resolvesPersistedClarificationWithoutReadingMessageMetadata() {
+        CustomerServiceDecisionEngine.ClarificationPlan clarification =
+            engine.initialClarification(
+                "点签支持签合同吗？", classifier.classify("点签支持签合同吗？"));
+
+        CustomerServiceDecisionEngine.PendingResult result = engine.resolvePending(
+            clarification, "点签支持签合同吗？", "劳动合同");
+
+        assertEquals(CustomerServiceDecisionEngine.PendingStatus.RESOLVED, result.status());
+        assertEquals("点签 是否支持签署 劳动合同", result.resolvedQuery());
+    }
+
+    @Test
     void boundsGenericLowConfidenceClarification() throws Exception {
         CustomerServiceDecisionEngine.ClarificationPlan first =
             engine.genericClarification("请补充具体场景");

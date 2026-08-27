@@ -31,7 +31,10 @@ public class CustomerServiceDecisionEngine {
         "密码", "重置", "找回", "注销", "修改手机号");
     private static final List<String> NEW_QUESTION_MARKERS = List.of(
         "怎么", "如何", "为什么", "能否", "是否", "可以吗", "多少钱",
-        "流程", "材料", "登录", "发票", "合同", "价格", "认证");
+        "流程", "材料", "登录", "发票", "合同", "价格", "认证",
+        "点签", "你们", "是什么", "干什么", "可以用", "能用",
+        "接入", "集成", "嵌入", "对接", "api", "openapi",
+        "oa", "erp", "crm", "hrm");
 
     private final ObjectMapper objectMapper;
 
@@ -156,6 +159,14 @@ public class CustomerServiceDecisionEngine {
         if (pending == null) return PendingResult.none();
 
         String previousQuestion = previousUserQuestionBefore(messages, previousAiIndex);
+        return resolvePending(pending, previousQuestion, currentQuestion);
+    }
+
+    public PendingResult resolvePending(
+            ClarificationPlan pending, String previousQuestion, String currentQuestion) {
+        if (pending == null || isExplicitTopicReset(currentQuestion)) {
+            return PendingResult.none();
+        }
         String slotValue = resolveSlot(pending.missingSlot(), currentQuestion);
         if (slotValue != null) {
             if ("draftingGoal".equals(pending.missingSlot())

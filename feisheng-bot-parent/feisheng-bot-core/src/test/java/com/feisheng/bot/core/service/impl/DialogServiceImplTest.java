@@ -17,6 +17,7 @@ import com.feisheng.bot.core.service.NlpIntentClassifier;
 import com.feisheng.bot.core.service.ReplyAttachmentService;
 import com.feisheng.bot.core.service.SensitiveDataService;
 import com.feisheng.bot.knowledge.service.KnowledgeImageService;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -889,7 +890,7 @@ class DialogServiceImplTest {
         ArgumentCaptor<com.feisheng.bot.core.entity.BotAiReplyLog> logCaptor =
             ArgumentCaptor.forClass(com.feisheng.bot.core.entity.BotAiReplyLog.class);
         verify(aiReplyLogMapper).insert(logCaptor.capture());
-        assertTrue(logCaptor.getValue().getPrompt().contains("用户问题：什么是电子签名"));
+        assertTrue(logCaptor.getValue().getPrompt().contains("【当前问题】\n什么是电子签名"));
         assertEquals(true, result.get("promptApplied"));
         assertEquals("native_fallback", result.get("promptPath"));
         assertEquals("configured_native", result.get("promptSource"));
@@ -1215,7 +1216,7 @@ class DialogServiceImplTest {
         when(intentUnderstandingService.understand(eq(question), anyList(), isNull()))
             .thenReturn(new IntentUnderstandingService.Understanding(
                 true, true, IntentUnderstandingService.Route.CLARIFY,
-                "ACCOUNT_OPERATION", "", Map.of("operation", "登录"),
+                "UNKNOWN", "", Map.of("operation", "登录"),
                 List.of("user_type"), true, 0.90, "semantic_understanding",
                 "intent-model", "test", 20, 8, 10L));
 
@@ -1234,13 +1235,9 @@ class DialogServiceImplTest {
     }
 
     @Test
-    void retriesFailedUnknownRetrievalWithSemanticStandaloneQuery() {
+    void usesSemanticStandaloneQueryBeforeFirstRetrieval() {
         String question = "适合哪些团队使用";
         String rewritten = "点签电子合同适合哪些团队使用？";
-        when(retrievalService.retrieve(question)).thenReturn(
-            new RagRetrievalService.RetrievalResult(
-                false, false, null, null, 0.0, "no_answer", true,
-                Collections.emptyList(), Collections.emptyList()));
         when(intentUnderstandingService.understand(eq(question), anyList(), isNull()))
             .thenReturn(knowledgeUnderstanding("OTHER_KNOWLEDGE", rewritten, false));
         when(retrievalService.retrieve(rewritten)).thenReturn(
@@ -1256,10 +1253,15 @@ class DialogServiceImplTest {
         assertEquals("rag_ai", result.get("source"));
         assertEquals(rewritten, result.get("retrievalPrimaryQuery"));
         assertEquals(true, result.get("queryRewritten"));
-        assertEquals("semantic_retrieval_retry",
+        assertEquals("semantic_intent_resolution",
             result.get("clarificationResolutionSource"));
-        verify(retrievalService).retrieve(question, KNOWLEDGE_RETRIEVAL_FILTERS, true);
-        verify(retrievalService).retrieve(rewritten, KNOWLEDGE_RETRIEVAL_FILTERS, true);
+        verify(retrievalService, never()).retrieve(
+            question, KNOWLEDGE_RETRIEVAL_FILTERS, true);
+        verify(retrievalService).retrieve(
+            eq(rewritten), isNull(), isNull(), eq(KNOWLEDGE_RETRIEVAL_FILTERS),
+            argThat(variants -> variants.stream().anyMatch(variant ->
+                "context_follow_up".equals(variant.purpose())
+                    && question.equals(variant.query()))), eq(true));
     }
 
     @Test
@@ -3169,7 +3171,16 @@ class DialogServiceImplTest {
         ReflectionTestUtils.setField(dialogService, "contextSummaryModelId", 77L);
         when(aiModelService.chatWithModel(anyString(),
                 argThat(prompt -> prompt.contains("客服对话摘要器")), eq(77L)))
-            .thenReturn(new ChatResponse("客户正在确认认证资料。", true));
+            .thenReturn(new ChatResponse("""
+                客户身份：企业客户
+                咨询产品：点签电子合同
+                套餐或版本：未确认
+                当前问题：确认认证资料
+                已确认信息：已了解基础流程
+                已给出的处理建议：补充认证资料
+                仍待确认信息：认证资料明细
+                当前未解决事项：网页端发起入口
+                """.strip(), true));
 
         Object result = ReflectionTestUtils.invokeMethod(
             dialogService, "maybeCompressConversation", conversation, messages,
@@ -3178,6 +3189,38 @@ class DialogServiceImplTest {
         assertTrue((Boolean) ReflectionTestUtils.invokeMethod(result, "applied"));
         verify(aiModelService).chatWithModel(anyString(),
             argThat(prompt -> prompt.contains("客服对话摘要器")), eq(77L));
+    }
+
+    @Test
+    void rejectsSummaryThatDoesNotContainEveryRequiredField() {
+        BotConversation conversation = new BotConversation();
+        conversation.setId(10L);
+        conversation.setContextSummary("原有摘要");
+        conversation.setSummaryMessageId(1L);
+        List<BotMessage> messages = List.of(
+            messageWithId(1L, "user", "企业客户咨询点签电子合同。"),
+            messageWithId(2L, "ai", "客服说明了基础流程。"),
+            messageWithId(3L, "user", "还需要确认认证资料。"),
+            messageWithId(4L, "ai", "客服建议补充认证资料。"),
+            messageWithId(5L, "user", "网页端是否可以发起？"),
+            messageWithId(6L, "ai", "客服说可以。"),
+            messageWithId(7L, "user", "我还没有得到完整答复。"));
+        ReflectionTestUtils.setField(dialogService, "contextSummaryEnabled", true);
+        ReflectionTestUtils.setField(dialogService, "maxPromptTokens", 100);
+        ReflectionTestUtils.setField(dialogService, "contextSummaryTriggerRatio", 0.01);
+        when(aiModelService.chatWithModel(anyString(),
+                argThat(prompt -> prompt.contains("客服对话摘要器")), isNull()))
+            .thenReturn(new ChatResponse(
+                "客户身份：企业客户\n当前问题：认证资料", true));
+
+        Object result = ReflectionTestUtils.invokeMethod(
+            dialogService, "maybeCompressConversation", conversation, messages,
+            new LinkedHashSet<String>(), null);
+
+        assertFalse((Boolean) ReflectionTestUtils.invokeMethod(result, "applied"));
+        assertEquals("原有摘要", conversation.getContextSummary());
+        assertEquals(1L, conversation.getSummaryMessageId());
+        verify(conversationService, never()).updateStatus(conversation);
     }
 
     @Test
@@ -3280,6 +3323,109 @@ class DialogServiceImplTest {
         assertEquals(2,
             ((Map<?, ?>) result.get("pendingClarification")).get("attempt"));
         verify(retrievalService, never()).retrieve(anyString());
+    }
+
+    @Test
+    void replacesCrmWithErpFromPersistedConversationState() {
+        BotConversation conversation = conversationService.getOrCreate(
+            "web", "state-erp-follow-up", "咨询");
+        conversation.setDialogStateVersion(2L);
+        conversation.setDialogState("""
+            {"schemaVersion":1,"status":"ACTIVE",\
+             "activeIntent":"SYSTEM_INTEGRATION",\
+             "entities":{"business_system":"CRM"},"missingSlots":[],\
+             "standaloneQuery":"点签电子签章是否支持通过API集成到CRM系统？",\
+             "pending":null,"clarificationAttempts":0,"remainingTurns":3}
+            """);
+        String question = "那我们的ERP系统呢？";
+        String resolvedQuery = "点签电子签章是否支持通过API集成到ERP系统？";
+        when(messageService.getByConversation(10L)).thenReturn(List.of(
+            message("user", "CRM客户管理系统可以用吗？"),
+            message("ai", "点签支持通过API接入业务系统。"),
+            message("user", question)));
+        when(retrievalService.retrieve(resolvedQuery)).thenReturn(
+            retrieval("点签提供API，可对接ERP等业务系统。", 0.90));
+        when(aiModelService.chatWithModel(anyString(), anyString(), isNull()))
+            .thenReturn(new ChatResponse(
+                "点签支持通过API对接ERP系统。", true,
+                "answer-model", "test", 30, 12));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "state-erp-follow-up", question, "咨询");
+
+        assertEquals("rag_ai", result.get("source"));
+        assertEquals(resolvedQuery, result.get("retrievalPrimaryQuery"));
+        assertEquals("SYSTEM_INTEGRATION",
+            ((Map<?, ?>) result.get("nlpIntent")).get("intentCode"));
+        assertEquals("semantic_context_resolution",
+            result.get("clarificationResolutionSource"));
+        verify(intentUnderstandingService).understand(
+            eq(question), anyList(), isNull(), argThat(state ->
+                "SYSTEM_INTEGRATION".equals(state.get("active_intent"))));
+    }
+
+    @Test
+    void completeErpQuestionClearsExhaustedPendingClarification() throws Exception {
+        BotConversation conversation = conversationService.getOrCreate(
+            "web", "state-new-erp", "咨询");
+        conversation.setDialogStateVersion(5L);
+        conversation.setDialogState(waitingContextState(2));
+        when(conversationService.getById(10L)).thenReturn(conversation);
+        when(conversationService.updateDialogState(
+                eq(conversation), anyString(), eq(5L))).thenReturn(true);
+        String question = "点签可以嵌入ERP系统吗？";
+        String resolvedQuery = "点签电子签章是否支持通过API集成到ERP系统？";
+        when(retrievalService.retrieve(resolvedQuery)).thenReturn(
+            retrieval("点签提供API，可嵌入ERP系统。", 0.91));
+        when(aiModelService.chatWithModel(anyString(), anyString(), isNull()))
+            .thenReturn(new ChatResponse(
+                "点签可以通过API嵌入ERP系统。", true,
+                "answer-model", "test", 30, 12));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "state-new-erp", question, "咨询");
+
+        assertEquals("ANSWER",
+            ((Map<?, ?>) result.get("serviceDecision")).get("decision"));
+        assertEquals(resolvedQuery, result.get("retrievalPrimaryQuery"));
+        verify(handoffCoordinator, never()).handoff(any(), anyString(), anyString());
+        ArgumentCaptor<String> stateJson = ArgumentCaptor.forClass(String.class);
+        verify(conversationService).updateDialogState(
+            eq(conversation), stateJson.capture(), eq(5L));
+        JsonNode persisted = new ObjectMapper().readTree(stateJson.getValue());
+        assertEquals("ACTIVE", persisted.path("status").asText());
+        assertTrue(persisted.path("pending").isNull());
+        assertEquals("ERP", persisted.path("entities").path("business_system").asText());
+    }
+
+    @Test
+    void productOverviewQuestionClearsPendingWithoutClarificationHandoff() {
+        BotConversation conversation = conversationService.getOrCreate(
+            "web", "state-product-overview", "咨询");
+        conversation.setDialogStateVersion(2L);
+        conversation.setDialogState(waitingContextState(2));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "state-product-overview", "你们是干什么的？", "咨询");
+
+        assertEquals("ANSWER",
+            ((Map<?, ?>) result.get("serviceDecision")).get("decision"));
+        assertFalse("clarify".equals(result.get("answerStatus")));
+        assertFalse(result.containsKey("pendingClarification"));
+        verify(handoffCoordinator, never()).handoff(any(), anyString(), anyString());
+    }
+
+    private String waitingContextState(int attempt) {
+        return """
+            {"schemaVersion":1,"status":"WAITING_FOR_SLOT",\
+             "activeIntent":"UNKNOWN","entities":{},"missingSlots":["context"],\
+             "standaloneQuery":"这个怎么操作",\
+             "pending":{"intentCode":"UNKNOWN","missingSlot":"context",\
+               "queryTemplate":"{context}","question":"请补充具体场景",\
+               "attempt":%d,"maxAttempts":2,"reasonCode":"unresolved_reference",\
+               "sourceQuestion":"这个怎么操作"},\
+             "clarificationAttempts":%d,"remainingTurns":1}
+            """.formatted(attempt, attempt);
     }
 
     private Map<String, Object> citation(String id, String type, Long sourceId, String title) {

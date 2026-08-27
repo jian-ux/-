@@ -16,8 +16,11 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -28,8 +31,9 @@ class IntentUnderstandingServiceTest {
 
     @Test
     void returnsStandaloneKnowledgeQueryFromRecentContext() {
-        IntentUnderstandingService service = service(true, 0.75, 4);
-        when(aiModelService.chatWithModel(anyString(), anyString(), isNull()))
+        IntentUnderstandingService service = service(true, 0.75, 4, 7L);
+        when(aiModelService.chatWithExactModelJson(
+                anyString(), anyString(), eq(7L), anyMap()))
             .thenReturn(response("""
                 {"route":"KNOWLEDGE","intent_code":"ACCOUNT_OPERATION",\
                 "standalone_query":"点签企业账号如何登录？",\
@@ -41,7 +45,7 @@ class IntentUnderstandingServiceTest {
             "这个怎么操作", List.of(
                 message("user", "企业账号登录失败"),
                 message("ai", "请说明您看到的页面提示"),
-                message("user", "这个怎么操作")), null);
+                message("user", "这个怎么操作")), 99L);
 
         assertTrue(result.knowledge());
         assertEquals("ACCOUNT_OPERATION", result.intentCode());
@@ -50,15 +54,21 @@ class IntentUnderstandingServiceTest {
         assertTrue(result.contextDependent());
 
         ArgumentCaptor<String> prompt = ArgumentCaptor.forClass(String.class);
-        verify(aiModelService).chatWithModel(prompt.capture(), anyString(), isNull());
+        verify(aiModelService).chatWithExactModelJson(
+            prompt.capture(), anyString(), eq(7L), argThat(schema ->
+                Boolean.FALSE.equals(schema.get("additionalProperties"))
+                    && ((List<?>) schema.get("required")).size() == 7));
+        verify(aiModelService, never()).chatWithModel(
+            anyString(), anyString(), nullable(Long.class));
         assertTrue(prompt.getValue().contains("企业账号登录失败"));
         assertEquals(1, occurrences(prompt.getValue(), "这个怎么操作"));
     }
 
     @Test
     void rejectsLowConfidenceResultWithoutLosingDiagnostics() {
-        IntentUnderstandingService service = service(true, 0.75, 4);
-        when(aiModelService.chatWithModel(anyString(), anyString(), isNull()))
+        IntentUnderstandingService service = service(true, 0.75, 4, 7L);
+        when(aiModelService.chatWithExactModelJson(
+                anyString(), anyString(), eq(7L), anyMap()))
             .thenReturn(response("""
                 {"route":"KNOWLEDGE","intent_code":"OTHER_KNOWLEDGE",\
                 "standalone_query":"点签相关问题", "entities":{},\
@@ -75,10 +85,11 @@ class IntentUnderstandingServiceTest {
 
     @Test
     void acceptsActionableClarificationWithControlledMissingSlot() {
-        IntentUnderstandingService service = service(true, 0.75, 4);
-        when(aiModelService.chatWithModel(anyString(), anyString(), isNull()))
+        IntentUnderstandingService service = service(true, 0.75, 4, 7L);
+        when(aiModelService.chatWithExactModelJson(
+                anyString(), anyString(), eq(7L), anyMap()))
             .thenReturn(response("""
-                {"route":"CLARIFY","intent_code":"ACCOUNT_OPERATION",\
+                {"route":"CLARIFY","intent_code":"UNKNOWN",\
                 "standalone_query":"", "entities":{"operation":"登录"},\
                 "missing_slots":["user_type"],"context_dependent":true,\
                 "confidence":0.90}
@@ -94,10 +105,11 @@ class IntentUnderstandingServiceTest {
 
     @Test
     void rejectsUnknownMissingSlot() {
-        IntentUnderstandingService service = service(true, 0.75, 4);
-        when(aiModelService.chatWithModel(anyString(), anyString(), isNull()))
+        IntentUnderstandingService service = service(true, 0.75, 4, 7L);
+        when(aiModelService.chatWithExactModelJson(
+                anyString(), anyString(), eq(7L), anyMap()))
             .thenReturn(response("""
-                {"route":"CLARIFY","intent_code":"ACCOUNT_OPERATION",\
+                {"route":"CLARIFY","intent_code":"UNKNOWN",\
                 "standalone_query":"", "entities":{},\
                 "missing_slots":["secret_token"],"context_dependent":true,\
                 "confidence":0.90}
@@ -112,8 +124,9 @@ class IntentUnderstandingServiceTest {
 
     @Test
     void rejectsUnexpectedModelFields() {
-        IntentUnderstandingService service = service(true, 0.75, 4);
-        when(aiModelService.chatWithModel(anyString(), anyString(), isNull()))
+        IntentUnderstandingService service = service(true, 0.75, 4, 7L);
+        when(aiModelService.chatWithExactModelJson(
+                anyString(), anyString(), eq(7L), anyMap()))
             .thenReturn(response("""
                 {"route":"KNOWLEDGE","intent_code":"PRODUCT_USAGE",\
                 "standalone_query":"点签怎么用", "entities":{},\
@@ -130,21 +143,141 @@ class IntentUnderstandingServiceTest {
     }
 
     @Test
+    void rejectsKnowledgeResultWithMissingSlots() {
+        IntentUnderstandingService service = service(true, 0.75, 4, 7L);
+        when(aiModelService.chatWithExactModelJson(
+                anyString(), anyString(), eq(7L), anyMap()))
+            .thenReturn(response("""
+                {"route":"KNOWLEDGE","intent_code":"PRODUCT_USAGE",\
+                "standalone_query":"点签怎么用", "entities":{},\
+                "missing_slots":["operation"],"context_dependent":false,\
+                "confidence":0.90}
+                """));
+
+        assertInvalid(service.understand("点签怎么用", List.of(), null));
+    }
+
+    @Test
+    void rejectsClarificationWithSpecificIntent() {
+        IntentUnderstandingService service = service(true, 0.75, 4, 7L);
+        when(aiModelService.chatWithExactModelJson(
+                anyString(), anyString(), eq(7L), anyMap()))
+            .thenReturn(response("""
+                {"route":"CLARIFY","intent_code":"ACCOUNT_OPERATION",\
+                "standalone_query":"", "entities":{},\
+                "missing_slots":["user_type"],"context_dependent":true,\
+                "confidence":0.90}
+                """));
+
+        assertInvalid(service.understand("登录不上", List.of(), null));
+    }
+
+    @Test
+    void rejectsOutOfScopeWithMismatchedFields() {
+        IntentUnderstandingService service = service(true, 0.75, 4, 7L);
+        when(aiModelService.chatWithExactModelJson(
+                anyString(), anyString(), eq(7L), anyMap()))
+            .thenReturn(response("""
+                {"route":"OUT_OF_SCOPE","intent_code":"OTHER_KNOWLEDGE",\
+                "standalone_query":"", "entities":{"product":"电影"},\
+                "missing_slots":[],"context_dependent":false,"confidence":0.95}
+                """));
+
+        assertInvalid(service.understand("推荐一部电影", List.of(), null));
+    }
+
+    @Test
+    void rejectsUnknownOrSensitiveEntityField() {
+        IntentUnderstandingService service = service(true, 0.75, 4, 7L);
+        when(aiModelService.chatWithExactModelJson(
+                anyString(), anyString(), eq(7L), anyMap()))
+            .thenReturn(response("""
+                {"route":"KNOWLEDGE","intent_code":"ACCOUNT_OPERATION",\
+                "standalone_query":"如何登录账号", "entities":{"phone":"13800138000"},\
+                "missing_slots":[],"context_dependent":false,"confidence":0.95}
+                """));
+
+        assertInvalid(service.understand("如何登录账号", List.of(), null));
+    }
+
+    @Test
+    void acceptsSystemIntegrationAndReceivesReadOnlyConversationState() {
+        IntentUnderstandingService service = service(true, 0.75, 4, 7L);
+        when(aiModelService.chatWithExactModelJson(
+                anyString(), anyString(), eq(7L), anyMap()))
+            .thenReturn(response("""
+                {"route":"KNOWLEDGE","intent_code":"SYSTEM_INTEGRATION",\
+                "standalone_query":"点签电子签章是否支持通过API集成到ERP系统？",\
+                "entities":{"business_system":"ERP"},"missing_slots":[],\
+                "context_dependent":true,"confidence":0.95}
+                """));
+
+        IntentUnderstandingService.Understanding result = service.understand(
+            "那我们的ERP系统呢？", List.of(), null, Map.of(
+                "status", "ACTIVE",
+                "active_intent", "SYSTEM_INTEGRATION",
+                "standalone_query", "点签电子签章是否支持通过API集成到CRM系统？",
+                "entities", Map.of("business_system", "CRM")));
+
+        assertTrue(result.knowledge());
+        assertEquals("SYSTEM_INTEGRATION", result.intentCode());
+        assertEquals(Map.of("business_system", "ERP"), result.entities());
+
+        ArgumentCaptor<String> prompt = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<Map<String, Object>> schema = ArgumentCaptor.forClass(Map.class);
+        verify(aiModelService).chatWithExactModelJson(
+            prompt.capture(), anyString(), eq(7L), schema.capture());
+        assertTrue(prompt.getValue().contains("conversation_state"));
+        assertTrue(prompt.getValue().contains("SYSTEM_INTEGRATION"));
+        Map<?, ?> properties = (Map<?, ?>) schema.getValue().get("properties");
+        Map<?, ?> intentCode = (Map<?, ?>) properties.get("intent_code");
+        assertTrue(((List<?>) intentCode.get("enum")).contains("SYSTEM_INTEGRATION"));
+    }
+
+    @Test
+    void preservesPreferredModelFallbackWhenDedicatedModelIsNotConfigured() {
+        IntentUnderstandingService service = service(true, 0.75, 4, 0L);
+        when(aiModelService.chatWithModel(anyString(), anyString(), eq(99L)))
+            .thenReturn(response("""
+                {"route":"KNOWLEDGE","intent_code":"PRODUCT_USAGE",\
+                "standalone_query":"点签怎么用", "entities":{},\
+                "missing_slots":[],"context_dependent":false,"confidence":0.90}
+                """));
+
+        IntentUnderstandingService.Understanding result =
+            service.understand("点签怎么用", List.of(), 99L);
+
+        assertTrue(result.knowledge());
+        verify(aiModelService).chatWithModel(anyString(), anyString(), eq(99L));
+        verify(aiModelService, never()).chatWithExactModelJson(
+            anyString(), anyString(), nullable(Long.class), anyMap());
+    }
+
+    @Test
     void skipsModelWhenDisabled() {
-        IntentUnderstandingService service = service(false, 0.75, 4);
+        IntentUnderstandingService service = service(false, 0.75, 4, 7L);
 
         IntentUnderstandingService.Understanding result =
             service.understand("这个怎么操作", List.of(), null);
 
         assertFalse(result.attempted());
         assertEquals("disabled", result.reasonCode());
-        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), isNull());
+        verify(aiModelService, never()).chatWithModel(
+            anyString(), anyString(), nullable(Long.class));
+        verify(aiModelService, never()).chatWithExactModelJson(
+            anyString(), anyString(), nullable(Long.class), anyMap());
     }
 
     private IntentUnderstandingService service(boolean enabled, double confidence,
-                                               int historyMessages) {
+                                               int historyMessages, long modelId) {
         return new IntentUnderstandingService(
-            aiModelService, new ObjectMapper(), enabled, confidence, historyMessages);
+            aiModelService, new ObjectMapper(), enabled, confidence, historyMessages, modelId);
+    }
+
+    private void assertInvalid(IntentUnderstandingService.Understanding result) {
+        assertTrue(result.attempted());
+        assertFalse(result.actionable());
+        assertEquals("invalid_model_output", result.reasonCode());
     }
 
     private ChatResponse response(String content) {

@@ -31,6 +31,18 @@ public class ConversationServiceImpl {
     public void updateStatus(BotConversation cv) {
         mapper.updateById(cv);
     }
+    public boolean updateDialogState(BotConversation conversation, String dialogState,
+                                     long expectedVersion) {
+        if (conversation == null || conversation.getId() == null) return false;
+        int updated = mapper.updateDialogState(
+            conversation.getId(), dialogState, Math.max(0L, expectedVersion));
+        if (updated == 1) {
+            conversation.setDialogState(dialogState);
+            conversation.setDialogStateVersion(Math.max(0L, expectedVersion) + 1L);
+            return true;
+        }
+        return false;
+    }
     public Page<BotConversation> list(int page, int size) {
         return mapper.selectPage(new Page<>(page,size), new LambdaQueryWrapper<BotConversation>().orderByDesc(BotConversation::getUpdateTime));
     }

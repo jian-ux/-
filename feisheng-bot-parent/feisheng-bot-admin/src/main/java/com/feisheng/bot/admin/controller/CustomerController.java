@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/admin/customer")
 public class CustomerController {
+    private static final String PLAYGROUND_CHANNEL = "playground";
     private final BotCustomerMapper mapper;
     private final BotConversationMapper conversationMapper;
     private final CustomerProfileSyncService profileSyncService;
@@ -34,6 +35,7 @@ public class CustomerController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String channelType) {
         LambdaQueryWrapper<BotCustomer> q = new LambdaQueryWrapper<>();
+        q.apply("LOWER(TRIM(channel_type)) <> {0}", PLAYGROUND_CHANNEL);
         if (StringUtils.hasText(keyword)) {
             String normalizedKeyword = keyword.trim();
             q.and(w -> w.like(BotCustomer::getName, normalizedKeyword)
@@ -58,12 +60,12 @@ public class CustomerController {
 
     @GetMapping("/{id}")
     public R<BotCustomer> detail(@PathVariable Long id) {
-        return R.ok(mapper.selectById(id));
+        return R.ok(visibleCustomer(id));
     }
 
     @PutMapping("/{id}")
     public R<Void> update(@PathVariable Long id, @RequestBody BotCustomer changes) {
-        BotCustomer customer = mapper.selectById(id);
+        BotCustomer customer = visibleCustomer(id);
         if (customer == null) return R.fail(404, "客户不存在");
         customer.setName(trimToNull(changes.getName()));
         customer.setPhone(trimToNull(changes.getPhone()));
@@ -83,7 +85,7 @@ public class CustomerController {
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size) {
         BotCustomer customer = mapper.selectById(id);
-        if (customer == null) return R.ok(new Page<>(page, size));
+        if (!isVisibleCustomer(customer)) return R.ok(new Page<>(page, size));
         return R.ok(conversationMapper.selectPage(
             new Page<>(page, size),
             new LambdaQueryWrapper<BotConversation>()
@@ -96,6 +98,9 @@ public class CustomerController {
     public R<BotCustomer> findByChannel(
             @RequestParam String channelType,
             @RequestParam String channelUserId) {
+        if (PLAYGROUND_CHANNEL.equalsIgnoreCase(channelType.trim())) {
+            return R.ok(null);
+        }
         return R.ok(mapper.selectOne(new LambdaQueryWrapper<BotCustomer>()
             .eq(BotCustomer::getChannelType, channelType)
             .eq(BotCustomer::getChannelUserId, channelUserId)));
@@ -103,5 +108,16 @@ public class CustomerController {
 
     private String trimToNull(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private BotCustomer visibleCustomer(Long id) {
+        BotCustomer customer = mapper.selectById(id);
+        return isVisibleCustomer(customer) ? customer : null;
+    }
+
+    private boolean isVisibleCustomer(BotCustomer customer) {
+        return customer != null
+            && !PLAYGROUND_CHANNEL.equalsIgnoreCase(
+                customer.getChannelType() == null ? null : customer.getChannelType().trim());
     }
 }

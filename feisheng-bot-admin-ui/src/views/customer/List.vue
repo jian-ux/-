@@ -202,7 +202,9 @@ function updateMobileLayout() {
 onMounted(async () => {
   window.addEventListener('resize', updateMobileLayout)
   const channelRequest = loadChannelOptions(request)
-    .then(options => { channelOptions.value = options })
+    .then(options => {
+      channelOptions.value = options.filter(option => option.value !== 'playground')
+    })
     .catch(() => { channelOptions.value = [] })
   await Promise.all([fetchCustomers(), channelRequest])
 })

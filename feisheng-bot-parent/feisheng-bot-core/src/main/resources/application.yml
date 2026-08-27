@@ -31,6 +31,14 @@ mybatis-plus:
       logic-delete-value: 1
       logic-not-delete-value: 0
 
+customer-service:
+  tools-enabled: ${CUSTOMER_SERVICE_TOOLS_ENABLED:false}
+  intent-static-replies-enabled: ${CUSTOMER_SERVICE_INTENT_STATIC_REPLIES_ENABLED:false}
+  intent-understanding:
+    enabled: ${CUSTOMER_SERVICE_INTENT_UNDERSTANDING_ENABLED:true}
+    min-confidence: ${CUSTOMER_SERVICE_INTENT_UNDERSTANDING_MIN_CONFIDENCE:0.75}
+    max-history-messages: ${CUSTOMER_SERVICE_INTENT_UNDERSTANDING_MAX_HISTORY_MESSAGES:4}
+
 rag:
   context:
     max-history-messages: ${RAG_CONTEXT_MAX_HISTORY_MESSAGES:6}
@@ -117,10 +125,10 @@ rag:
   bad-case:
     slow-response-ms: ${RAG_BAD_CASE_SLOW_RESPONSE_MS:5000}
   native-fallback:
-    enabled: ${RAG_NATIVE_FALLBACK_ENABLED:true}
+    enabled: ${RAG_NATIVE_FALLBACK_ENABLED:false}
     high-risk-keywords: ${RAG_NATIVE_FALLBACK_HIGH_RISK_KEYWORDS:合同条款,法律效力,违约责任,赔偿责任,合规承诺,保证结果,隐私泄露,个人信息泄露}
     clarification-keywords: ${RAG_NATIVE_FALLBACK_CLARIFICATION_KEYWORDS:这个,那个,它,这款,那款,然后呢}
-    clarification-reply: ${RAG_NATIVE_FALLBACK_CLARIFICATION_REPLY:您好，为了准确帮您处理，请补充要咨询的产品、功能或具体使用场景；如有页面提示或截图，也可以一并发送。}
+    clarification-reply: ${RAG_NATIVE_FALLBACK_CLARIFICATION_REPLY:您好，为了准确帮您处理，请补充要咨询的产品、功能或具体使用场景；}
     high-risk-reply: ${RAG_NATIVE_FALLBACK_HIGH_RISK_REPLY:您好，涉及产品能力、价格、合同、交付或售后等业务信息，需要以可核实资料为准，需要由人工客服进一步确认。}
     high-risk-transfer: ${RAG_NATIVE_FALLBACK_HIGH_RISK_TRANSFER:true}
   out-of-scope:

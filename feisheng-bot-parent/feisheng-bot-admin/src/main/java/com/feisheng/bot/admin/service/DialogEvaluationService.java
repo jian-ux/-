@@ -132,6 +132,19 @@ public class DialogEvaluationService {
             + Objects.toString(handoff.get("summary"), "");
         boolean piiLeak = sensitiveDataService.containsSensitiveData(outputForLeakCheck);
         boolean modelError = "error".equals(source) || Boolean.FALSE.equals(response.get("success"));
+        Map<String, Object> intentUnderstanding = map(response.get("intentUnderstanding"));
+        Map<String, Object> nlpIntent = map(response.get("nlpIntent"));
+        String actualIntentCode = firstNonBlank(
+            Objects.toString(intentUnderstanding.get("intentCode"), ""),
+            Objects.toString(nlpIntent.get("intentCode"), ""));
+        Boolean intentMatched = hasText(sample.expectedIntentCode())
+            ? sample.expectedIntentCode().equalsIgnoreCase(actualIntentCode) : null;
+        String actualStandaloneQuery = firstNonBlank(
+            Objects.toString(intentUnderstanding.get("standaloneQuery"), ""),
+            Objects.toString(response.get("retrievalPrimaryQuery"), ""));
+        Boolean queryRewriteMatched = hasText(sample.expectedStandaloneQuery())
+            ? normalizeEvaluationValue(sample.expectedStandaloneQuery())
+                .equals(normalizeEvaluationValue(actualStandaloneQuery)) : null;
 
         return new DialogCaseResult(
             caseId, sensitiveDataService.redact(sample.question()).text(),
@@ -140,6 +153,9 @@ public class DialogEvaluationService {
             Objects.toString(response.get("promptVersion"),
                 firstNonBlank(requestedPromptVersion, "default")),
             decisionCorrect, number(response.get("confidence")), reply,
+            sample.expectedIntentCode(), actualIntentCode, intentMatched,
+            sample.expectedStandaloneQuery(), actualStandaloneQuery,
+            queryRewriteMatched,
             sample.expectedSourceType(), sample.expectedSourceId(), groundingMatched,
             List.copyOf(missingRequired), List.copyOf(forbiddenFound),
             sample.expectedNeedsTransfer(), needsTransfer, handoffCorrect,
@@ -154,6 +170,10 @@ public class DialogEvaluationService {
             firstNonBlank(sample.id(), "case-" + (index + 1)),
             sensitiveDataService.redact(sample.question()).text(), sample.answerable(),
             false, sample.expectedAnswerDecision(), "", "error", "evaluation_error", "", false, 0, "",
+            sample.expectedIntentCode(), "",
+            hasText(sample.expectedIntentCode()) ? false : null,
+            sample.expectedStandaloneQuery(), "",
+            hasText(sample.expectedStandaloneQuery()) ? false : null,
             sample.expectedSourceType(), sample.expectedSourceId(),
             expectsGrounding(sample) ? false : null,
             redactList(sample.mustContain()), Collections.emptyList(),
@@ -171,6 +191,10 @@ public class DialogEvaluationService {
         int decisionCorrect = 0;
         int groundingExpected = 0;
         int groundingMatched = 0;
+        int intentExpected = 0;
+        int intentMatched = 0;
+        int queryRewriteExpected = 0;
+        int queryRewriteMatched = 0;
         int requiredPhraseTotal = 0;
         int requiredPhraseHit = 0;
         int forbiddenPhraseTotal = 0;
@@ -187,6 +211,14 @@ public class DialogEvaluationService {
             if (result.groundingMatched() != null) {
                 groundingExpected++;
                 if (result.groundingMatched()) groundingMatched++;
+            }
+            if (result.intentMatched() != null) {
+                intentExpected++;
+                if (result.intentMatched()) intentMatched++;
+            }
+            if (result.queryRewriteMatched() != null) {
+                queryRewriteExpected++;
+                if (result.queryRewriteMatched()) queryRewriteMatched++;
             }
             if (result.handoffCorrect() != null) {
                 handoffExpected++;
@@ -211,7 +243,10 @@ public class DialogEvaluationService {
             "评测会调用真实模型并产生 API 成本；会话、消息、工单和日志数据均按样本回滚。",
             results.size(), passedCases == results.size(), passedCases,
             results.size() - passedCases, decisionExpected, decisionCorrect,
-            ratio(decisionCorrect, decisionExpected), groundingExpected, groundingMatched,
+            ratio(decisionCorrect, decisionExpected), intentExpected, intentMatched,
+            ratio(intentMatched, intentExpected), queryRewriteExpected,
+            queryRewriteMatched, ratio(queryRewriteMatched, queryRewriteExpected),
+            groundingExpected, groundingMatched,
             ratio(groundingMatched, groundingExpected), requiredPhraseTotal, requiredPhraseHit,
             ratio(requiredPhraseHit, requiredPhraseTotal), forbiddenPhraseTotal,
             forbiddenPhraseViolations, handoffExpected, handoffCorrect,
@@ -272,6 +307,8 @@ public class DialogEvaluationService {
     private boolean casePassed(DialogCaseResult result) {
         return result.decisionCorrect()
             && !Boolean.FALSE.equals(result.groundingMatched())
+            && !Boolean.FALSE.equals(result.intentMatched())
+            && !Boolean.FALSE.equals(result.queryRewriteMatched())
             && result.missingRequiredPhrases().isEmpty()
             && result.forbiddenPhrasesFound().isEmpty()
             && !Boolean.FALSE.equals(result.handoffCorrect())
@@ -350,6 +387,13 @@ public class DialogEvaluationService {
             .replace("查看", "查阅");
     }
 
+    private String normalizeEvaluationValue(String value) {
+        return java.text.Normalizer.normalize(Objects.toString(value, ""),
+                java.text.Normalizer.Form.NFKC)
+            .toLowerCase(java.util.Locale.ROOT)
+            .replaceAll("[\\p{P}\\p{S}\\s]+", "");
+    }
+
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> citations(Object value) {
         return value instanceof List<?> list ? (List<Map<String, Object>>) list
@@ -414,7 +458,21 @@ public class DialogEvaluationService {
         String expectedAnswerDecision, String expectedSourceType, Long expectedSourceId,
         List<EvaluationTurn> history,
         List<String> mustContain, List<String> mustNotContain,
-        Boolean expectedNeedsTransfer, Long preferredModelId) {}
+        Boolean expectedNeedsTransfer, Long preferredModelId,
+        String expectedIntentCode, String expectedStandaloneQuery) {
+        public DialogEvaluationCase(
+                String id, String question, Boolean answerable,
+                String expectedAnswerStatus, String expectedAnswerDecision,
+                String expectedSourceType, Long expectedSourceId,
+                List<EvaluationTurn> history, List<String> mustContain,
+                List<String> mustNotContain, Boolean expectedNeedsTransfer,
+                Long preferredModelId) {
+            this(id, question, answerable, expectedAnswerStatus,
+                expectedAnswerDecision, expectedSourceType, expectedSourceId,
+                history, mustContain, mustNotContain, expectedNeedsTransfer,
+                preferredModelId, null, null);
+        }
+    }
 
     public record EvaluationTurn(String role, String content) {}
 
@@ -422,20 +480,48 @@ public class DialogEvaluationService {
         String id, String question, Boolean expectedAnswerable, boolean actualAnswerable,
         String expectedAnswerDecision, String answerDecision, String answerStatus,
         String source, String promptVersion, boolean decisionCorrect, double confidence,
-        String reply, String expectedSourceType, Long expectedSourceId,
+        String reply, String expectedIntentCode, String actualIntentCode,
+        Boolean intentMatched, String expectedStandaloneQuery,
+        String actualStandaloneQuery, Boolean queryRewriteMatched,
+        String expectedSourceType, Long expectedSourceId,
         Boolean groundingMatched, List<String> missingRequiredPhrases,
         List<String> forbiddenPhrasesFound, Boolean expectedNeedsTransfer,
         boolean actualNeedsTransfer, Boolean handoffCorrect, Object ticketId,
         boolean handoffSucceeded, boolean piiLeak, boolean redactionApplied,
         List<String> redactedTypes, boolean modelError, long latencyMs,
-        List<Map<String, Object>> citations, String error) {}
+        List<Map<String, Object>> citations, String error) {
+        public DialogCaseResult(
+                String id, String question, Boolean expectedAnswerable,
+                boolean actualAnswerable, String expectedAnswerDecision,
+                String answerDecision, String answerStatus, String source,
+                String promptVersion, boolean decisionCorrect, double confidence,
+                String reply, String expectedSourceType, Long expectedSourceId,
+                Boolean groundingMatched, List<String> missingRequiredPhrases,
+                List<String> forbiddenPhrasesFound, Boolean expectedNeedsTransfer,
+                boolean actualNeedsTransfer, Boolean handoffCorrect, Object ticketId,
+                boolean handoffSucceeded, boolean piiLeak, boolean redactionApplied,
+                List<String> redactedTypes, boolean modelError, long latencyMs,
+                List<Map<String, Object>> citations, String error) {
+            this(id, question, expectedAnswerable, actualAnswerable,
+                expectedAnswerDecision, answerDecision, answerStatus, source,
+                promptVersion, decisionCorrect, confidence, reply,
+                null, "", null, null, "", null,
+                expectedSourceType, expectedSourceId, groundingMatched,
+                missingRequiredPhrases, forbiddenPhrasesFound, expectedNeedsTransfer,
+                actualNeedsTransfer, handoffCorrect, ticketId, handoffSucceeded,
+                piiLeak, redactionApplied, redactedTypes, modelError, latencyMs,
+                citations, error);
+        }
+    }
 
     public record DialogEvaluationReport(
         String name, String promptVersion, String evaluatedAt,
         boolean usesRealModel, boolean databaseRolledBack,
         String costNotice, int total, boolean passed, int passedCaseCount,
         int failedCaseCount, int decisionExpected, int decisionCorrect,
-        double decisionAccuracy, int groundingExpected, int groundingMatched,
+        double decisionAccuracy, int intentExpected, int intentMatched,
+        double intentAccuracy, int queryRewriteExpected, int queryRewriteMatched,
+        double queryRewriteAccuracy, int groundingExpected, int groundingMatched,
         double groundingAccuracy, int requiredPhraseTotal, int requiredPhraseHit,
         double requiredPhraseHitRate, int forbiddenPhraseTotal,
         int forbiddenPhraseViolations, int handoffExpected, int handoffCorrect,

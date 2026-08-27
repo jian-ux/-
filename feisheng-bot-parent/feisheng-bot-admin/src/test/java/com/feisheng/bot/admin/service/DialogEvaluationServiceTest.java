@@ -100,6 +100,34 @@ class DialogEvaluationServiceTest {
     }
 
     @Test
+    void evaluatesSemanticIntentAndStandaloneQuery() {
+        String question = "这个怎么登录";
+        Map<String, Object> response = response(
+            "请从企业账号登录入口进入。", "answered", "rag_ai",
+            0.9, List.of(), false, false);
+        response.put("intentUnderstanding", Map.of(
+            "intentCode", "ACCOUNT_OPERATION",
+            "standaloneQuery", "点签企业账号如何登录？"));
+        response.put("retrievalPrimaryQuery", "点签企业账号如何登录？");
+        when(dialogService.send(eq("evaluation"), anyString(), eq(question),
+                anyString(), isNull(), isNull()))
+            .thenReturn(response);
+
+        DialogEvaluationService.DialogEvaluationReport report = service.evaluate(
+            new DialogEvaluationService.DialogEvaluationRequest("semantic-intent", List.of(
+                new DialogEvaluationService.DialogEvaluationCase(
+                    "intent", question, true, null, "ANSWER", null, null,
+                    List.of(), List.of(), List.of(), false, null,
+                    "ACCOUNT_OPERATION", "点签企业账号如何登录"))));
+
+        assertEquals(1.0, report.intentAccuracy());
+        assertEquals(1.0, report.queryRewriteAccuracy());
+        assertEquals("ACCOUNT_OPERATION", report.cases().get(0).actualIntentCode());
+        assertTrue(report.cases().get(0).queryRewriteMatched());
+        assertTrue(report.passed());
+    }
+
+    @Test
     void normalizesRequiredPhrasesAndIgnoresForbiddenPhrasesInNegatedClaims() {
         String question = "测试评测语义";
         when(dialogService.send(eq("evaluation"), anyString(), eq(question),

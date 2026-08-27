@@ -31,6 +31,20 @@ class CustomerProfileServiceTest {
     @Mock private AiModelServiceImpl aiModelService;
 
     @Test
+    void ignoresPlaygroundSessionsWithoutLoadingOrCreatingCustomerProfiles() {
+        CustomerProfileService service = new CustomerProfileService(mapper, new ObjectMapper());
+
+        CustomerProfileService.ProfileSnapshot result = service.updateAndLoad(
+            " playground ", "trial-user", "我们是南京测试有限公司，我是管理员。");
+
+        assertFalse(result.updated());
+        assertTrue(result.facts().isEmpty());
+        verify(mapper, never()).selectOne(any());
+        verify(mapper, never()).insert(any(BotCustomer.class));
+        verify(mapper, never()).updateById(any(BotCustomer.class));
+    }
+
+    @Test
     void storesOnlyExplicitStableCustomerFacts() {
         BotCustomer customer = new BotCustomer();
         customer.setId(9L);
@@ -38,7 +52,7 @@ class CustomerProfileServiceTest {
         CustomerProfileService service = new CustomerProfileService(mapper, new ObjectMapper());
 
         CustomerProfileService.ProfileSnapshot result = service.updateAndLoad(
-            "playground", "user-1",
+            "dingtalk", "user-1",
             "我们是南京测试有限公司，我是管理员，使用的是点签电子合同，版本是企业版，主要在网页端使用。合同怎么发起？");
 
         assertTrue(result.updated());
@@ -59,7 +73,7 @@ class CustomerProfileServiceTest {
         CustomerProfileService service = new CustomerProfileService(mapper, new ObjectMapper());
 
         CustomerProfileService.ProfileSnapshot result = service.updateAndLoad(
-            "playground", "user-variants",
+            "dingtalk", "user-variants",
             "我代表星河科技，负责合同管理，我们用的是点签企业版，平时用电脑操作。合同怎么发起？");
 
         assertEquals("星河科技", result.facts().get("company").get("value"));
@@ -75,7 +89,7 @@ class CustomerProfileServiceTest {
         CustomerProfileService service = new CustomerProfileService(mapper, new ObjectMapper());
 
         CustomerProfileService.ProfileSnapshot result = service.updateAndLoad(
-            "playground", "user-aliases",
+            "dingtalk", "user-aliases",
             "公司叫星河科技，产品是点签，套餐是企业套餐，通常通过浏览器登录。");
 
         assertEquals("星河科技", result.facts().get("company").get("value"));
@@ -90,7 +104,7 @@ class CustomerProfileServiceTest {
         CustomerProfileService service = new CustomerProfileService(mapper, new ObjectMapper());
 
         CustomerProfileService.ProfileSnapshot result = service.updateAndLoad(
-            "playground", "user-negative", "我不是管理员，不使用企业版，也不用手机端。");
+            "dingtalk", "user-negative", "我不是管理员，不使用企业版，也不用手机端。");
 
         assertTrue(result.facts().isEmpty());
         verify(mapper, never()).insert(any(BotCustomer.class));
@@ -106,12 +120,12 @@ class CustomerProfileServiceTest {
         CustomerProfileService service = new CustomerProfileService(mapper, new ObjectMapper());
 
         CustomerProfileService.ProfileSnapshot unchanged = service.updateAndLoad(
-            "playground", "user-conflict", "套餐是专业版");
+            "dingtalk", "user-conflict", "套餐是专业版");
         assertEquals("企业版", unchanged.facts().get("plan").get("value"));
         verify(mapper, never()).updateById(any(BotCustomer.class));
 
         CustomerProfileService.ProfileSnapshot changed = service.updateAndLoad(
-            "playground", "user-conflict", "现在使用专业版");
+            "dingtalk", "user-conflict", "现在使用专业版");
         assertEquals("专业版", changed.facts().get("plan").get("value"));
         verify(mapper).updateById(customer);
     }
@@ -132,7 +146,7 @@ class CustomerProfileServiceTest {
         CustomerProfileService service = intelligentService();
 
         CustomerProfileService.ProfileSnapshot result = service.updateAndLoad(
-            "playground", "user-ai", "请记录我的工作背景和当前使用方案。我的资料已明确说明。 ");
+            "dingtalk", "user-ai", "请记录我的工作背景和当前使用方案。我的资料已明确说明。 ");
 
         assertEquals("北辰科技", result.facts().get("company").get("value"));
         assertEquals("合同审批负责人", result.facts().get("role").get("value"));
@@ -158,7 +172,7 @@ class CustomerProfileServiceTest {
         CustomerProfileService service = intelligentService();
 
         CustomerProfileService.ProfileSnapshot result = service.updateAndLoad(
-            "playground", "user-ai-aliases", "请记录我的背景信息。");
+            "dingtalk", "user-ai-aliases", "请记录我的背景信息。");
 
         assertEquals("云海数字服务团队", result.facts().get("company").get("value"));
         assertEquals("电子合同审批", result.facts().get("role").get("value"));
@@ -183,7 +197,7 @@ class CustomerProfileServiceTest {
         CustomerProfileService service = intelligentService();
 
         CustomerProfileService.ProfileSnapshot result = service.updateAndLoad(
-            "playground", "user-ai-named-values", "请记录我的工作背景和当前使用方案。");
+            "dingtalk", "user-ai-named-values", "请记录我的工作背景和当前使用方案。");
 
         assertEquals("云海数字服务团队", result.facts().get("company").get("value"));
         assertEquals("电子合同审批", result.facts().get("role").get("value"));
@@ -206,7 +220,7 @@ class CustomerProfileServiceTest {
         CustomerProfileService service = intelligentService();
 
         CustomerProfileService.ProfileSnapshot result = service.updateAndLoad(
-            "playground", "user-ai-evidence-text", "请记录我的背景信息。");
+            "dingtalk", "user-ai-evidence-text", "请记录我的背景信息。");
 
         assertEquals("云海数字服务团队", result.facts().get("company").get("value"));
         assertEquals("网页端", result.facts().get("channel").get("value"));
@@ -221,7 +235,7 @@ class CustomerProfileServiceTest {
         CustomerProfileService service = intelligentService();
 
         CustomerProfileService.ProfileSnapshot result = service.updateAndLoad(
-            "playground", "user-ai-fallback",
+            "dingtalk", "user-ai-fallback",
             "我代表星河科技，我们使用的是点签电子合同，套餐是企业版。");
 
         assertEquals("星河科技", result.facts().get("company").get("value"));
@@ -238,7 +252,7 @@ class CustomerProfileServiceTest {
         CustomerProfileService service = intelligentService();
 
         CustomerProfileService.ProfileSnapshot result = service.updateAndLoad(
-            "playground", "user-ai-invalid", "我想咨询合同签署流程。");
+            "dingtalk", "user-ai-invalid", "我想咨询合同签署流程。");
 
         assertTrue(result.facts().isEmpty());
         verify(mapper, never()).insert(any(BotCustomer.class));
@@ -251,7 +265,7 @@ class CustomerProfileServiceTest {
         CustomerProfileService service = new CustomerProfileService(mapper, new ObjectMapper());
 
         CustomerProfileService.ProfileSnapshot result = service.updateAndLoad(
-            "playground", "user-2", "合同怎么发起签署？");
+            "dingtalk", "user-2", "合同怎么发起签署？");
 
         assertFalse(result.updated());
         assertTrue(result.facts().isEmpty());

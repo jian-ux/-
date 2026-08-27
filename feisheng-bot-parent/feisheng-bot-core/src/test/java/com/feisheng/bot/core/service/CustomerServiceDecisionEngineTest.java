@@ -122,6 +122,34 @@ class CustomerServiceDecisionEngineTest {
     }
 
     @Test
+    void resolvesSemanticUserTypeClarificationFromPendingMetadata() throws Exception {
+        CustomerServiceDecisionEngine.ClarificationPlan clarification =
+            engine.semanticClarification(
+                "ACCOUNT_OPERATION", List.of("user_type", "error_message"));
+        BotMessage ai = message("ai", clarification.question());
+        ai.setMetadata(new ObjectMapper().writeValueAsString(Map.of(
+            "pendingClarification", clarification.toState())));
+
+        CustomerServiceDecisionEngine.PendingResult result = engine.resolvePending(List.of(
+            message("user", "账号登录不上"), ai,
+            message("user", "企业账号")), "企业账号");
+
+        assertEquals("userType", clarification.missingSlot());
+        assertEquals("请问您使用的是个人账号还是企业账号？", clarification.question());
+        assertEquals(CustomerServiceDecisionEngine.PendingStatus.RESOLVED, result.status());
+        assertEquals("账号登录不上 用户类型：企业账号", result.resolvedQuery());
+    }
+
+    @Test
+    void usesTheConciseGenericContextClarification() {
+        CustomerServiceDecisionEngine.ClarificationPlan clarification =
+            engine.semanticClarification("UNKNOWN", List.of("context"));
+
+        assertEquals("您好，为了准确帮您处理，请补充要咨询的产品、功能或具体使用场景；",
+            clarification.question());
+    }
+
+    @Test
     void handsContractContentDraftingToAQualifiedAgent() throws Exception {
         CustomerServiceDecisionEngine.ClarificationPlan clarification =
             engine.pendingClarification(
@@ -146,6 +174,8 @@ class CustomerServiceDecisionEngineTest {
         noAnswer.put("answerStatus", "no_answer");
         noAnswer.put("source", "no_answer");
         noAnswer.put("fallbackDecision", "rag_abstained");
+        noAnswer.put("intentUnderstanding", Map.of("intentCode", "ACCOUNT_OPERATION"));
+        noAnswer.put("nlpIntent", Map.of("intentCode", "UNKNOWN"));
 
         engine.enrich(noAnswer);
 
@@ -153,6 +183,8 @@ class CustomerServiceDecisionEngineTest {
             ((Map<?, ?>) noAnswer.get("serviceDecision")).get("decision"));
         assertEquals("rag_abstained",
             ((Map<?, ?>) noAnswer.get("serviceDecision")).get("reasonCode"));
+        assertEquals("ACCOUNT_OPERATION",
+            ((Map<?, ?>) noAnswer.get("serviceDecision")).get("intentCode"));
     }
 
     @Test

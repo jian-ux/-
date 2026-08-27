@@ -14,6 +14,7 @@ import com.feisheng.bot.core.service.CustomerProfileService;
 import com.feisheng.bot.core.service.EmotionService;
 import com.feisheng.bot.core.service.HandoffCoordinator;
 import com.feisheng.bot.core.service.IntentService;
+import com.feisheng.bot.core.service.IntentUnderstandingService;
 import com.feisheng.bot.core.service.ModelAnswerSignalParser;
 import com.feisheng.bot.core.service.NlpIntentClassifier;
 import com.feisheng.bot.core.service.PlainTextReplyFormatter;
@@ -50,6 +51,7 @@ public class DialogServiceImpl {
     private static final Logger log = LoggerFactory.getLogger(DialogServiceImpl.class);
     private static final int CHARS_PER_TOKEN = 2;
     private static final double INTENT_REWRITE_RETRIEVAL_WEIGHT = 0.85;
+    private static final double SEMANTIC_INTENT_RETRIEVAL_WEIGHT = 0.82;
     private static final double CONTEXT_RESOLUTION_RETRIEVAL_WEIGHT = 0.92;
     private static final double CONTEXT_FOLLOW_UP_RETRIEVAL_WEIGHT = 0.70;
     private static final String NO_ANSWER_SIGNAL = "__NO_ANSWER__";
@@ -110,7 +112,7 @@ public class DialogServiceImpl {
         + "当前问题、已确认信息、已给出的处理建议、仍待确认信息、当前未解决事项。"
         + "没有信息的栏目写“未确认”。";
     private static final String DEFAULT_NATIVE_FALLBACK_CLARIFICATION_REPLY = "您好，为了准确帮您处理，"
-        + "请补充要咨询的产品、功能或具体使用场景；如有页面提示或截图，也可以一并发送。";
+        + "请补充要咨询的产品、功能或具体使用场景；";
     private static final String DEFAULT_NATIVE_FALLBACK_HIGH_RISK_REPLY = "您好，涉及产品能力、价格、合同、"
         + "交付或售后等业务信息，需要以可核实资料为准，需要由人工客服进一步确认。";
     private static final String CONTRACT_DRAFTING_CLARIFICATION_REPLY =
@@ -440,7 +442,7 @@ public class DialogServiceImpl {
     @Value("${rag.native-fallback.clarification-keywords:这个,那个,它,这款,那款,然后呢}")
     private String nativeFallbackClarificationKeywords;
 
-    @Value("${rag.native-fallback.clarification-reply:您好，为了准确帮您处理，请补充要咨询的产品、功能或具体使用场景；如有页面提示或截图，也可以一并发送。}")
+    @Value("${rag.native-fallback.clarification-reply:您好，为了准确帮您处理，请补充要咨询的产品、功能或具体使用场景；}")
     private String nativeFallbackClarificationReply;
 
     @Value("${rag.native-fallback.high-risk-reply:您好，涉及产品能力、价格、合同、交付或售后等业务信息，需要以可核实资料为准，已为您转接人工客服确认。}")
@@ -461,6 +463,12 @@ public class DialogServiceImpl {
     @Value("${ai.customer-service.native-fallback-system-prompt:}")
     private String nativeFallbackSystemPrompt;
 
+    @Value("${customer-service.tools-enabled:false}")
+    private boolean businessToolsEnabled;
+
+    @Value("${customer-service.intent-static-replies-enabled:false}")
+    private boolean intentStaticRepliesEnabled;
+
     private final ConversationServiceImpl conversationService;
     private final MessageServiceImpl messageService;
     private final AiModelServiceImpl aiModelService;
@@ -478,6 +486,7 @@ public class DialogServiceImpl {
     private final EmotionService emotionService;
     private final ReplyAttachmentService replyAttachmentService;
     private final ContextualQueryResolver contextualQueryResolver;
+    private final IntentUnderstandingService intentUnderstandingService;
     private final CustomerServiceDecisionEngine decisionEngine;
     private final ObjectMapper objectMapper;
     private final CustomerProfileService customerProfileService;
@@ -500,6 +509,7 @@ public class DialogServiceImpl {
                              EmotionService emotionService,
                              ReplyAttachmentService replyAttachmentService,
                              ContextualQueryResolver contextualQueryResolver,
+                             IntentUnderstandingService intentUnderstandingService,
                              CustomerServiceDecisionEngine decisionEngine,
                              ObjectMapper objectMapper,
                              CustomerProfileService customerProfileService) {
@@ -520,6 +530,7 @@ public class DialogServiceImpl {
         this.emotionService = emotionService;
         this.replyAttachmentService = replyAttachmentService;
         this.contextualQueryResolver = contextualQueryResolver;
+        this.intentUnderstandingService = intentUnderstandingService;
         this.decisionEngine = decisionEngine;
         this.objectMapper = objectMapper;
         this.customerProfileService = customerProfileService;
@@ -542,14 +553,15 @@ public class DialogServiceImpl {
                              EmotionService emotionService,
                              ReplyAttachmentService replyAttachmentService,
                              ContextualQueryResolver contextualQueryResolver,
+                             IntentUnderstandingService intentUnderstandingService,
                              ObjectMapper objectMapper) {
         this(conversationService, messageService, aiModelService, safetyService,
             businessSafetyBoundaryService, promptProvider, aiReplyLogMapper,
             retrievalService, unmatchedQuestionService, businessToolOrchestrator,
             intentService, nlpIntentClassifier, sensitiveDataService,
             handoffCoordinator, emotionService, replyAttachmentService,
-            contextualQueryResolver, new CustomerServiceDecisionEngine(objectMapper),
-            objectMapper, null);
+            contextualQueryResolver, intentUnderstandingService,
+            new CustomerServiceDecisionEngine(objectMapper), objectMapper, null);
     }
 
     public Map<String, Object> send(String channelType, String channelUserId, String text, String title) {
@@ -790,8 +802,8 @@ public class DialogServiceImpl {
         CustomerServiceDecisionEngine.ClarificationPlan directClarification =
             decisionEngine.initialClarification(understandingText, directIntent);
         if (directClarification != null) {
-            IntentService.IntentMatch directIntentMatch =
-                intentService.match(understandingText).orElse(null);
+            IntentService.IntentMatch directIntentMatch = intentStaticRepliesEnabled
+                ? intentService.match(understandingText).orElse(null) : null;
             if (directIntentMatch != null) {
                 return intentResponse(
                     conversation, preCheck, directIntentMatch,
@@ -808,14 +820,40 @@ public class DialogServiceImpl {
                     pendingResult.previousQuestion(), null, null, false,
                     "decision_metadata")
                 : contextualQueryResolver.resolve(recentMessages, understandingText);
-        if (queryResolution.unresolved()
-                && !hasText(safeProvidedContext)
-                && !hasText(safeModalityContext)
-                && !hasEmbeddedMediaContext(safeText)
-                && !isClearlyUnrelatedQuestion(understandingText)
-                && !isExplicitlyUnrelatedNativeRequest(understandingText)) {
+        IntentUnderstandingService.Understanding semanticUnderstanding =
+            IntentUnderstandingService.Understanding.notAttempted("not_needed");
+        boolean canUseSemanticUnderstanding = queryResolution.unresolved()
+            && !hasText(safeProvidedContext)
+            && !hasText(safeModalityContext)
+            && !hasEmbeddedMediaContext(safeText)
+            && !isClearlyUnrelatedQuestion(understandingText)
+            && !isExplicitlyUnrelatedNativeRequest(understandingText);
+        if (canUseSemanticUnderstanding) {
+            semanticUnderstanding = understandIntent(
+                understandingText, recentMessages, preferredModelId);
+            modelLatencyMs += semanticUnderstanding.latencyMs();
+            if (semanticUnderstanding.knowledge()) {
+                queryResolution = semanticResolution(
+                    queryResolution, semanticUnderstanding, "semantic_context_resolution");
+            }
+        }
+        boolean semanticOutOfScope = semanticUnderstanding.outOfScope();
+        if (queryResolution.unresolved() && !semanticOutOfScope
+                && canUseSemanticUnderstanding) {
+            CustomerServiceDecisionEngine.ClarificationPlan semanticClarification =
+                semanticUnderstanding.actionable()
+                    && semanticUnderstanding.route() == IntentUnderstandingService.Route.CLARIFY
+                ? decisionEngine.semanticClarification(
+                    semanticUnderstanding.intentCode(), semanticUnderstanding.missingSlots())
+                : null;
+            if (semanticClarification != null) {
+                return decisionClarificationResponse(
+                    conversation, preCheck, semanticClarification, directIntent,
+                    emotion, started, redactedTypes, semanticUnderstanding);
+            }
             return understandingClarificationResponse(
-                conversation, preCheck, queryResolution, emotion, started, redactedTypes);
+                conversation, preCheck, queryResolution, semanticUnderstanding,
+                emotion, started, redactedTypes);
         }
 
         if (isUnifiedContractPricingQuestion(understandingText, recentMessages)) {
@@ -838,8 +876,11 @@ public class DialogServiceImpl {
             return priceHandoffResponse(conversation, safeText, emotion, started, redactedTypes);
         }
 
-        BusinessToolOrchestrator.ToolRoutingResult toolRouting = businessToolOrchestrator.route(
-            conversation.getId(), channelType, channelUserId, understandingText, recentMessages);
+        BusinessToolOrchestrator.ToolRoutingResult toolRouting = businessToolsEnabled
+            ? businessToolOrchestrator.route(
+                conversation.getId(), channelType, channelUserId,
+                understandingText, recentMessages)
+            : BusinessToolOrchestrator.ToolRoutingResult.notHandled();
         if (toolRouting != null && toolRouting.handled()) {
             return toolResponse(
                 conversation, preCheck, toolRouting, emotion, started, redactedTypes);
@@ -851,7 +892,7 @@ public class DialogServiceImpl {
         // intercepted by a broad keyword rule (for example "登录" or "合同").
         boolean contextualQuestion = queryResolution.contextDependent()
             || queryResolution.rewritten();
-        IntentService.IntentMatch intentMatch = contextualQuestion
+        IntentService.IntentMatch intentMatch = !intentStaticRepliesEnabled || contextualQuestion
             ? null : intentService.match(understandingText).orElse(null);
         if (intentMatch != null) {
             return intentResponse(
@@ -891,7 +932,8 @@ public class DialogServiceImpl {
             : queryResolution.rewritten() ? retrievalQuery : resolvedRetrievalQuestion;
         List<QueryVariant> supplementalRetrievalVariants = supplementalRetrievalVariants(
             primaryRetrievalQuery, retrievalQuery, resolvedRetrievalQuestion,
-            understandingText, queryResolution.rewritten(), productOverviewQuestion);
+            understandingText, queryResolution.rewritten(), productOverviewQuestion,
+            semanticUnderstanding);
         List<String> retrievalVariants = retrievalVariantQueries(
             primaryRetrievalQuery, supplementalRetrievalVariants);
         boolean retrievalQueryRewritten = queryResolution.rewritten()
@@ -907,7 +949,7 @@ public class DialogServiceImpl {
         boolean parentCompanyQuestion = isParentCompanyQuestion(understandingText)
             || (!Objects.equals(understandingText, retrievalQuery)
                 && isParentCompanyQuestion(retrievalQuery));
-        boolean outOfScopeQuestion = parentCompanyQuestion
+        boolean outOfScopeQuestion = semanticOutOfScope || parentCompanyQuestion
             || isClearlyUnrelatedQuestion(understandingText)
             || (!Objects.equals(understandingText, retrievalQuery)
                 && isClearlyUnrelatedQuestion(retrievalQuery));
@@ -955,6 +997,42 @@ public class DialogServiceImpl {
         }
         if (retrieval == null) {
             retrieval = emptyRetrieval();
+        }
+        if (!retrieval.answerable() && !outOfScopeQuestion
+                && !hasText(safeProvidedContext)
+                && nlpIntent.intentCode() == NlpIntentClassifier.IntentCode.UNKNOWN
+                && !semanticUnderstanding.attempted()) {
+            semanticUnderstanding = understandIntent(
+                understandingText, recentMessages, preferredModelId);
+            modelLatencyMs += semanticUnderstanding.latencyMs();
+            if (semanticUnderstanding.outOfScope()) {
+                outOfScopeQuestion = true;
+            } else if (semanticUnderstanding.knowledge()) {
+                String semanticQuery = semanticUnderstanding.standaloneQuery();
+                List<QueryVariant> semanticVariants = semanticRetrievalVariants(
+                    semanticQuery, semanticUnderstanding);
+                if (!sameQuestion(primaryRetrievalQuery, semanticQuery)
+                        || !semanticVariants.isEmpty()) {
+                    long semanticRetrievalStarted = System.nanoTime();
+                    RagRetrievalService.RetrievalResult semanticRetrieval = retrieveKnowledge(
+                        semanticQuery, semanticVariants, null, safeModalityContext);
+                    retrievalLatencyMs += elapsedMillis(semanticRetrievalStarted);
+                    if (semanticRetrieval != null && semanticRetrieval.answerable()) {
+                        retrieval = semanticRetrieval;
+                        retrievalQuery = semanticQuery;
+                        primaryRetrievalQuery = semanticQuery;
+                        retrievalVariants = retrievalVariantQueries(
+                            semanticQuery, semanticVariants);
+                        retrievalQueryRewritten = true;
+                        semanticRetrievalHistory = null;
+                        resolvedRetrievalQuestion = semanticQuery;
+                        queryResolution = semanticResolution(
+                            queryResolution, semanticUnderstanding,
+                            "semantic_retrieval_retry");
+                        nlpIntent = nlpIntentClassifier.classify(semanticQuery);
+                    }
+                }
+            }
         }
         if (productOverviewQuestion
                 && (!hasText(safeProvidedContext) || mergeGlobalRetrieval)) {
@@ -1344,6 +1422,10 @@ public class DialogServiceImpl {
             response.put("pendingClarification", pendingClarification);
         }
         response.put("nlpIntent", nlpIntentDetails(nlpIntent));
+        if (semanticUnderstanding.attempted()) {
+            response.put("intentUnderstanding",
+                intentUnderstandingDetails(semanticUnderstanding));
+        }
         response.put("emotion", emotionDetails(emotion));
         response.put("promptVersion", promptVersion);
         addPromptTraceDetails(response, promptTraces);
@@ -1411,6 +1493,10 @@ public class DialogServiceImpl {
             messageMetadata.put("pendingClarification", pendingClarification);
         }
         messageMetadata.put("nlpIntent", nlpIntentDetails(nlpIntent));
+        if (semanticUnderstanding.attempted()) {
+            messageMetadata.put("intentUnderstanding",
+                intentUnderstandingDetails(semanticUnderstanding));
+        }
         messageMetadata.put("emotion", emotionDetails(emotion));
         messageMetadata.put("promptVersion", promptVersion);
         addPromptTraceDetails(messageMetadata, promptTraces);
@@ -1742,6 +1828,18 @@ public class DialogServiceImpl {
             NlpIntentClassifier.IntentAnalysis nlpIntent,
             EmotionService.EmotionResult emotion, long started,
             Set<String> redactedTypes) {
+        return decisionClarificationResponse(
+            conversation, preCheck, clarification, nlpIntent, emotion, started,
+            redactedTypes, null);
+    }
+
+    private Map<String, Object> decisionClarificationResponse(
+            BotConversation conversation, SafetyResult preCheck,
+            CustomerServiceDecisionEngine.ClarificationPlan clarification,
+            NlpIntentClassifier.IntentAnalysis nlpIntent,
+            EmotionService.EmotionResult emotion, long started,
+            Set<String> redactedTypes,
+            IntentUnderstandingService.Understanding semanticUnderstanding) {
         String reply = emotionService.adaptDeterministicReply(
             clarification.question(), emotion);
         SafetyResult postCheck = safetyService.checkAiOutput(reply);
@@ -1767,6 +1865,10 @@ public class DialogServiceImpl {
         metadata.put("fallbackDecision", clarification.reasonCode());
         metadata.put("pendingClarification", pendingClarification);
         if (nlpIntent != null) metadata.put("nlpIntent", nlpIntentDetails(nlpIntent));
+        if (semanticUnderstanding != null && semanticUnderstanding.attempted()) {
+            metadata.put("intentUnderstanding",
+                intentUnderstandingDetails(semanticUnderstanding));
+        }
         metadata.put("emotion", emotionDetails(emotion));
         metadata.put("redactionApplied", !redactedTypes.isEmpty());
         saveMessage(conversation.getId(), "ai", reply, toJson(metadata));
@@ -1781,6 +1883,10 @@ public class DialogServiceImpl {
         response.put("fallbackDecision", clarification.reasonCode());
         response.put("pendingClarification", pendingClarification);
         if (nlpIntent != null) response.put("nlpIntent", nlpIntentDetails(nlpIntent));
+        if (semanticUnderstanding != null && semanticUnderstanding.attempted()) {
+            response.put("intentUnderstanding",
+                intentUnderstandingDetails(semanticUnderstanding));
+        }
         response.put("safetyPreCheck", safetyDetails(preCheck));
         response.put("safetyPostCheck", safetyDetails(postCheck));
         response.put("confidence", 1.0);
@@ -1805,6 +1911,7 @@ public class DialogServiceImpl {
     private Map<String, Object> understandingClarificationResponse(
             BotConversation conversation, SafetyResult preCheck,
             ContextualQueryResolver.Resolution queryResolution,
+            IntentUnderstandingService.Understanding semanticUnderstanding,
             EmotionService.EmotionResult emotion, long started,
             Set<String> redactedTypes) {
         String reply = configuredReply(nativeFallbackClarificationReply,
@@ -1845,6 +1952,10 @@ public class DialogServiceImpl {
         metadata.put("fallbackDecision", "unresolved_reference");
         metadata.put("understanding", understanding);
         metadata.put("pendingClarification", pendingClarification);
+        if (semanticUnderstanding != null && semanticUnderstanding.attempted()) {
+            metadata.put("intentUnderstanding",
+                intentUnderstandingDetails(semanticUnderstanding));
+        }
         metadata.put("emotion", emotionDetails(emotion));
         metadata.put("redactionApplied", !redactedTypes.isEmpty());
         saveMessage(conversation.getId(), "ai", reply, toJson(metadata));
@@ -1874,6 +1985,10 @@ public class DialogServiceImpl {
         response.put("lowConfidence", false);
         response.put("humanHandling", false);
         response.put("understanding", understanding);
+        if (semanticUnderstanding != null && semanticUnderstanding.attempted()) {
+            response.put("intentUnderstanding",
+                intentUnderstandingDetails(semanticUnderstanding));
+        }
         response.put("emotion", emotionDetails(emotion));
 
         if (needsTransfer) {
@@ -2365,7 +2480,8 @@ public class DialogServiceImpl {
     private List<QueryVariant> supplementalRetrievalVariants(
             String primaryQuery, String intentQuery, String contextResolvedQuery,
             String originalQuestion, boolean contextResolutionApplied,
-            boolean productOverviewQuestion) {
+            boolean productOverviewQuestion,
+            IntentUnderstandingService.Understanding semanticUnderstanding) {
         List<QueryVariant> variants = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
         if (hasText(primaryQuery)) seen.add(primaryQuery.trim());
@@ -2390,7 +2506,58 @@ public class DialogServiceImpl {
                 "为什么选择点签电子合同平台 服务优势", 0.88,
                 "product_overview_advantages");
         }
+        for (QueryVariant variant : semanticRetrievalVariants(
+                primaryQuery, semanticUnderstanding)) {
+            addRetrievalVariant(variants, seen, variant.query(),
+                variant.weight(), variant.purpose());
+        }
         return List.copyOf(variants);
+    }
+
+    private List<QueryVariant> semanticRetrievalVariants(
+            String primaryQuery,
+            IntentUnderstandingService.Understanding understanding) {
+        if (!hasText(primaryQuery) || understanding == null || !understanding.knowledge()) {
+            return Collections.emptyList();
+        }
+        String intentTerms = semanticIntentTerms(understanding.intentCode());
+        StringBuilder hint = new StringBuilder(primaryQuery.trim());
+        String normalized = normalizeQuestionForMatching(primaryQuery);
+        if (hasText(intentTerms)
+                && !normalized.contains(normalizeQuestionForMatching(intentTerms))) {
+            hint.append(' ').append(intentTerms);
+        }
+        int entityCount = 0;
+        for (String entity : understanding.entities().values()) {
+            if (!hasText(entity) || entityCount >= 4
+                    || normalizeQuestionForMatching(hint.toString())
+                        .contains(normalizeQuestionForMatching(entity))) {
+                continue;
+            }
+            hint.append(' ').append(entity.trim());
+            entityCount++;
+        }
+        String query = hint.length() <= 400 ? hint.toString() : hint.substring(0, 400);
+        if (sameQuestion(primaryQuery, query)) return Collections.emptyList();
+        return List.of(new QueryVariant(query, SEMANTIC_INTENT_RETRIEVAL_WEIGHT,
+            "semantic_intent_entities", false));
+    }
+
+    private String semanticIntentTerms(String intentCode) {
+        if (intentCode == null) return "";
+        return switch (intentCode) {
+            case "CONTRACT_DRAFTING" -> "合同起草 合同模板 合同内容";
+            case "CONTRACT_SIGNING_OPERATION" -> "电子合同发起 签署流程 操作";
+            case "CONTRACT_TYPE_CAPABILITY" -> "支持签署 合同类型";
+            case "CONTRACT_LEGAL_RISK" -> "电子合同法律效力 合同风险";
+            case "PRODUCT_FEATURES" -> "点签产品功能";
+            case "PRODUCT_OVERVIEW" -> "点签电子合同产品介绍 适用场景";
+            case "PRODUCT_VERSION_FEATURES" -> "产品版本 功能权益";
+            case "PRODUCT_USAGE" -> "点签使用操作流程";
+            case "ACCOUNT_OPERATION" -> "账号注册 登录 实名认证 密码";
+            case "OTHER_KNOWLEDGE" -> "点签电子合同";
+            default -> "";
+        };
     }
 
     private void addRetrievalVariant(List<QueryVariant> variants, Set<String> seen,
@@ -2567,6 +2734,57 @@ public class DialogServiceImpl {
         details.put("subject", analysis.subject());
         details.put("requiresSpecificEvidence", analysis.requiresSpecificEvidence());
         details.put("generallySupportedContractType", analysis.generallySupportedContractType());
+        return details;
+    }
+
+    private IntentUnderstandingService.Understanding understandIntent(
+            String question, List<BotMessage> recentMessages, Long preferredModelId) {
+        if (intentUnderstandingService == null) {
+            return IntentUnderstandingService.Understanding.notAttempted("service_unavailable");
+        }
+        IntentUnderstandingService.Understanding understanding =
+            intentUnderstandingService.understand(question, recentMessages, preferredModelId);
+        return understanding == null
+            ? IntentUnderstandingService.Understanding.notAttempted("service_unavailable")
+            : understanding;
+    }
+
+    private ContextualQueryResolver.Resolution semanticResolution(
+            ContextualQueryResolver.Resolution original,
+            IntentUnderstandingService.Understanding understanding,
+            String source) {
+        return new ContextualQueryResolver.Resolution(
+            understanding.standaloneQuery(), true,
+            original == null ? null : original.previousQuestion(),
+            original == null ? null : original.switchedEntity(),
+            original == null ? null : original.inheritedProduct(),
+            false, source);
+    }
+
+    private boolean sameQuestion(String left, String right) {
+        return normalizeQuestionForMatching(left)
+            .equals(normalizeQuestionForMatching(right));
+    }
+
+    private Map<String, Object> intentUnderstandingDetails(
+            IntentUnderstandingService.Understanding understanding) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("attempted", understanding.attempted());
+        details.put("actionable", understanding.actionable());
+        details.put("route", understanding.route() == null
+            ? null : understanding.route().name());
+        details.put("intentCode", understanding.intentCode());
+        details.put("standaloneQuery", understanding.standaloneQuery());
+        details.put("entities", understanding.entities());
+        details.put("missingSlots", understanding.missingSlots());
+        details.put("contextDependent", understanding.contextDependent());
+        details.put("confidence", understanding.confidence());
+        details.put("reasonCode", understanding.reasonCode());
+        details.put("model", understanding.model());
+        details.put("providerCode", understanding.providerCode());
+        details.put("inputTokens", understanding.inputTokens());
+        details.put("outputTokens", understanding.outputTokens());
+        details.put("latencyMs", understanding.latencyMs());
         return details;
     }
 

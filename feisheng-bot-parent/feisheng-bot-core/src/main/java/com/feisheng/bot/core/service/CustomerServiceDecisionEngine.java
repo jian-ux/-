@@ -71,6 +71,45 @@ public class CustomerServiceDecisionEngine {
             "unresolved_reference");
     }
 
+    public ClarificationPlan semanticClarification(
+            String intentCode, List<String> missingSlots) {
+        if (missingSlots == null || missingSlots.isEmpty()) return null;
+        String code = intentCode == null || intentCode.isBlank() ? "UNKNOWN" : intentCode;
+        for (String slot : missingSlots) {
+            ClarificationPlan clarification = switch (slot) {
+                case "contract_type" -> plan(code, "contractType",
+                    "点签 是否支持签署 {contractType}",
+                    "请问您具体想签署哪一种合同，例如劳动合同、租赁合同或买卖合同？",
+                    "missing_contract_type");
+                case "operation" -> plan(code, "operation",
+                    "点签 {operation} 怎么操作",
+                    "请问您想进行发起合同、签署合同，还是企业认证？",
+                    "missing_product_operation");
+                case "account_action" -> plan(code, "accountAction",
+                    "账号{accountAction}怎么操作",
+                    "请问您想咨询账号注册、登录、实名认证，还是密码找回？",
+                    "missing_account_action");
+                case "user_type" -> plan(code, "userType",
+                    "{previousQuestion} 用户类型：{userType}",
+                    "请问您使用的是个人账号还是企业账号？",
+                    "missing_user_type");
+                case "error_message" -> plan(code, "errorMessage",
+                    "{previousQuestion} 页面提示：{errorMessage}",
+                    "请把页面上的具体错误提示发给我；也可以直接发送截图。",
+                    "missing_error_message");
+                case "product_version" -> plan(code, "productVersion",
+                    "{previousQuestion} 产品版本：{productVersion}",
+                    "请问您使用的是哪个产品版本或套餐？",
+                    "missing_product_version");
+                case "context" -> plan(code, "context", "{context}",
+                    defaultQuestion("context"), "unresolved_reference");
+                default -> null;
+            };
+            if (clarification != null) return clarification;
+        }
+        return null;
+    }
+
     public ClarificationPlan pendingClarification(
             NlpIntentClassifier.IntentAnalysis intent, String reply) {
         if (intent == null || reply == null || reply.isBlank()) return null;
@@ -164,7 +203,10 @@ public class CustomerServiceDecisionEngine {
             decision = Decision.ANSWER;
         }
 
-        String intentCode = nestedText(response.get("nlpIntent"), "intentCode");
+        String intentCode = nestedText(response.get("intentUnderstanding"), "intentCode");
+        if (intentCode.isBlank()) {
+            intentCode = nestedText(response.get("nlpIntent"), "intentCode");
+        }
         if (intentCode.isBlank() && pending != null) {
             intentCode = text(pending.get("intentCode"));
         }
@@ -298,8 +340,24 @@ public class CustomerServiceDecisionEngine {
                 ? "已签纸质合同怎么上传归档？" : containsAny(normalized,
                 "发起签署", "还没签", "未签", "上传签署")
                 ? "已有合同文件怎么上传发起签署？" : null;
+            case "userType" -> containsAny(normalized, "企业", "公司", "组织")
+                ? "企业账号" : containsAny(normalized, "个人", "本人")
+                ? "个人账号" : null;
+            case "errorMessage", "productVersion" -> freeTextSlot(answer);
             default -> null;
         };
+    }
+
+    private String freeTextSlot(String value) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        String normalized = normalize(trimmed);
+        if (trimmed.isEmpty() || trimmed.length() > 200
+                || Set.of("不知道", "不清楚", "没有", "没提示", "看不懂")
+                    .contains(normalized)) {
+            return null;
+        }
+        return trimmed;
     }
 
     private String contractType(String value) {
@@ -376,6 +434,9 @@ public class CustomerServiceDecisionEngine {
             case "accountAction" -> "账号{accountAction}怎么操作";
             case "draftingGoal" -> "{previousQuestion} {draftingGoal}";
             case "contractFileState" -> "{contractFileState}";
+            case "userType" -> "{previousQuestion} 用户类型：{userType}";
+            case "errorMessage" -> "{previousQuestion} 页面提示：{errorMessage}";
+            case "productVersion" -> "{previousQuestion} 产品版本：{productVersion}";
             default -> "{" + missingSlot + "}";
         };
     }
@@ -387,7 +448,10 @@ public class CustomerServiceDecisionEngine {
             case "accountAction" -> "请问您想咨询账号注册、登录、实名认证，还是密码找回？";
             case "draftingGoal" -> "请回复“合同内容”或“发起签署”，我会继续为您处理。";
             case "contractFileState" -> "请回复“发起签署”或“纸质归档”，我会按对应场景说明。";
-            case "context" -> "请补充具体的产品、功能或使用场景；如有页面提示或截图，也可以一并发送。";
+            case "userType" -> "请问您使用的是个人账号还是企业账号？";
+            case "errorMessage" -> "请把页面上的具体错误提示发给我；也可以直接发送截图。";
+            case "productVersion" -> "请问您使用的是哪个产品版本或套餐？";
+            case "context" -> "您好，为了准确帮您处理，请补充要咨询的产品、功能或具体使用场景；";
             default -> "请补充处理该问题所需的关键信息。";
         };
     }

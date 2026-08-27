@@ -12,6 +12,7 @@ import com.feisheng.bot.core.service.CustomerServicePromptProvider;
 import com.feisheng.bot.core.service.EmotionService;
 import com.feisheng.bot.core.service.HandoffCoordinator;
 import com.feisheng.bot.core.service.IntentService;
+import com.feisheng.bot.core.service.IntentUnderstandingService;
 import com.feisheng.bot.core.service.NlpIntentClassifier;
 import com.feisheng.bot.core.service.ReplyAttachmentService;
 import com.feisheng.bot.core.service.SensitiveDataService;
@@ -85,6 +86,7 @@ class DialogServiceImplTest {
     @Mock private UnmatchedQuestionService unmatchedQuestionService;
     @Mock private BusinessToolOrchestrator businessToolOrchestrator;
     @Mock private IntentService intentService;
+    @Mock private IntentUnderstandingService intentUnderstandingService;
     @Mock private HandoffCoordinator handoffCoordinator;
     @Mock private ReplyAttachmentService replyAttachmentService;
 
@@ -101,7 +103,8 @@ class DialogServiceImplTest {
             new NlpIntentClassifier(),
             new SensitiveDataService("18689633999"),
             handoffCoordinator, new EmotionService(), replyAttachmentService,
-            new ContextualQueryResolver(new ObjectMapper()), new ObjectMapper());
+            new ContextualQueryResolver(new ObjectMapper()), intentUnderstandingService,
+            new ObjectMapper());
         ReflectionTestUtils.setField(dialogService, "noAnswerReply", SCOPE_FALLBACK_REPLY);
         ReflectionTestUtils.setField(dialogService, "outOfScopeReply", PARENT_COMPANY_REPLY);
         ReflectionTestUtils.setField(dialogService, "unrelatedReply", SCOPE_FALLBACK_REPLY);
@@ -129,6 +132,8 @@ class DialogServiceImplTest {
         ReflectionTestUtils.setField(dialogService, "nativeFallbackHighRiskReply", "高风险问题转人工确认");
         ReflectionTestUtils.setField(dialogService, "nativeFallbackHighRiskTransfer", true);
         ReflectionTestUtils.setField(dialogService, "nativeFallbackSystemPrompt", "native-system-prompt");
+        ReflectionTestUtils.setField(dialogService, "businessToolsEnabled", true);
+        ReflectionTestUtils.setField(dialogService, "intentStaticRepliesEnabled", true);
         ReflectionTestUtils.setField(dialogService, "priceHandoffKeywords",
             "定制报价,专属报价,商务报价,最终报价,折扣,优惠,议价,最低价,底价,便宜点,打折");
         ReflectionTestUtils.setField(dialogService, "priceHandoffReply", "价格问题已提交人工确认");
@@ -148,6 +153,9 @@ class DialogServiceImplTest {
         lenient().when(replyAttachmentService.fromKnowledgeImageTitle(anyString()))
             .thenReturn(Collections.emptyList());
         lenient().when(intentService.match(anyString())).thenReturn(Optional.empty());
+        lenient().when(intentUnderstandingService.understand(
+                anyString(), anyList(), nullable(Long.class)))
+            .thenReturn(IntentUnderstandingService.Understanding.notAttempted("test_default"));
 
         // Preserve the shorter-overload stubs used by behavior tests while requiring
         // every production path to carry the fixed knowledge-scope filter.
@@ -1164,6 +1172,114 @@ class DialogServiceImplTest {
         verify(intentService, never()).match(anyString());
         verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
         verify(unmatchedQuestionService, never()).record(anyString());
+    }
+
+    @Test
+    void usesSemanticUnderstandingBeforeClarifyingUnresolvedContext() {
+        String rewritten = "点签企业账号如何登录？";
+        when(messageService.getByConversation(10L)).thenReturn(List.of(
+            message("user", "成员入口在哪里"),
+            message("ai", "请说明您使用的产品和页面"),
+            message("user", "这个怎么操作")));
+        when(intentUnderstandingService.understand(
+                eq("这个怎么操作"), anyList(), isNull()))
+            .thenReturn(knowledgeUnderstanding("ACCOUNT_OPERATION", rewritten, true));
+        when(retrievalService.retrieve(rewritten)).thenReturn(
+            retrieval("企业账号可从点签登录页进入。", 0.90));
+        when(aiModelService.chatWithModel(anyString(), anyString(), isNull()))
+            .thenReturn(new ChatResponse(
+                "企业账号可从点签登录页进入。", true,
+                "answer-model", "test", 30, 12));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "semantic-context", "这个怎么操作", "咨询");
+
+        assertEquals("rag_ai", result.get("source"));
+        assertEquals(rewritten, result.get("retrievalPrimaryQuery"));
+        assertEquals("semantic_context_resolution",
+            result.get("clarificationResolutionSource"));
+        Map<?, ?> understanding = (Map<?, ?>) result.get("intentUnderstanding");
+        assertEquals("KNOWLEDGE", understanding.get("route"));
+        assertEquals("ACCOUNT_OPERATION", understanding.get("intentCode"));
+        assertEquals(0.91, understanding.get("confidence"));
+        verify(retrievalService).retrieve(
+            eq(rewritten), isNull(), isNull(), eq(KNOWLEDGE_RETRIEVAL_FILTERS),
+            argThat(variants -> variants.stream().anyMatch(variant ->
+                "semantic_intent_entities".equals(variant.purpose())
+                    && variant.query().contains("账号注册"))), eq(true));
+    }
+
+    @Test
+    void asksTargetedSemanticClarificationAndPersistsTheMissingSlot() {
+        String question = "这个怎么操作";
+        when(intentUnderstandingService.understand(eq(question), anyList(), isNull()))
+            .thenReturn(new IntentUnderstandingService.Understanding(
+                true, true, IntentUnderstandingService.Route.CLARIFY,
+                "ACCOUNT_OPERATION", "", Map.of("operation", "登录"),
+                List.of("user_type"), true, 0.90, "semantic_understanding",
+                "intent-model", "test", 20, 8, 10L));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "semantic-clarify", question, "咨询");
+
+        assertEquals("decision", result.get("source"));
+        assertEquals("CLARIFY", result.get("answerDecision"));
+        assertEquals("missing_user_type", result.get("fallbackDecision"));
+        assertEquals("请问您使用的是个人账号还是企业账号？", result.get("reply"));
+        assertEquals("userType",
+            ((Map<?, ?>) result.get("pendingClarification")).get("missingSlot"));
+        assertEquals("CLARIFY",
+            ((Map<?, ?>) result.get("intentUnderstanding")).get("route"));
+        verify(retrievalService, never()).retrieve(anyString());
+    }
+
+    @Test
+    void retriesFailedUnknownRetrievalWithSemanticStandaloneQuery() {
+        String question = "适合哪些团队使用";
+        String rewritten = "点签电子合同适合哪些团队使用？";
+        when(retrievalService.retrieve(question)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                false, false, null, null, 0.0, "no_answer", true,
+                Collections.emptyList(), Collections.emptyList()));
+        when(intentUnderstandingService.understand(eq(question), anyList(), isNull()))
+            .thenReturn(knowledgeUnderstanding("OTHER_KNOWLEDGE", rewritten, false));
+        when(retrievalService.retrieve(rewritten)).thenReturn(
+            retrieval("点签电子合同适用于需要线上签约的企业团队。", 0.86));
+        when(aiModelService.chatWithModel(anyString(), anyString(), isNull()))
+            .thenReturn(new ChatResponse(
+                "点签电子合同适用于需要线上签约的企业团队。", true,
+                "answer-model", "test", 30, 12));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "semantic-retry", question, "咨询");
+
+        assertEquals("rag_ai", result.get("source"));
+        assertEquals(rewritten, result.get("retrievalPrimaryQuery"));
+        assertEquals(true, result.get("queryRewritten"));
+        assertEquals("semantic_retrieval_retry",
+            result.get("clarificationResolutionSource"));
+        verify(retrievalService).retrieve(question, KNOWLEDGE_RETRIEVAL_FILTERS, true);
+        verify(retrievalService).retrieve(rewritten, KNOWLEDGE_RETRIEVAL_FILTERS, true);
+    }
+
+    @Test
+    void bypassesToolsAndStaticIntentRepliesWhenKnowledgeOnlyModeIsEnabled() {
+        ReflectionTestUtils.setField(dialogService, "businessToolsEnabled", false);
+        ReflectionTestUtils.setField(dialogService, "intentStaticRepliesEnabled", false);
+        String question = "退款进度怎么查";
+        when(retrievalService.retrieve(question)).thenReturn(
+            new RagRetrievalService.RetrievalResult(
+                true, true, "请在订单页面查看退款进度。", null, 1.0,
+                "direct", true, Collections.emptyList(), Collections.emptyList()));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "knowledge-only", question, "咨询");
+
+        assertEquals("faq", result.get("source"));
+        assertEquals("请在订单页面查看退款进度。", result.get("reply"));
+        verify(intentService, never()).match(anyString());
+        verify(businessToolOrchestrator, never()).route(
+            any(), anyString(), anyString(), anyString(), anyList());
     }
 
     @Test
@@ -3189,6 +3305,15 @@ class DialogServiceImplTest {
         message.setRole(role);
         message.setContent(content);
         return message;
+    }
+
+    private IntentUnderstandingService.Understanding knowledgeUnderstanding(
+            String intentCode, String standaloneQuery, boolean contextDependent) {
+        return new IntentUnderstandingService.Understanding(
+            true, true, IntentUnderstandingService.Route.KNOWLEDGE,
+            intentCode, standaloneQuery, Map.of("product", "点签电子合同"), List.of(),
+            contextDependent, 0.91, "semantic_understanding",
+            "intent-model", "test", 20, 10, 12L);
     }
 
     private BotMessage messageWithId(Long id, String role, String content) {

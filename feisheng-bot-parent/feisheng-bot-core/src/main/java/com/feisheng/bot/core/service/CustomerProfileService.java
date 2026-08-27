@@ -27,6 +27,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class CustomerProfileService {
     private static final Logger log = LoggerFactory.getLogger(CustomerProfileService.class);
+    private static final String PLAYGROUND_CHANNEL = "playground";
     private static final String SOURCE = "user_explicit";
     private static final String AI_SOURCE = "user_explicit_ai";
     private static final double CONFIDENCE = 0.95;
@@ -117,6 +118,9 @@ public class CustomerProfileService {
 
     public ProfileSnapshot updateAndLoad(String channelType, String channelUserId, String text) {
         if (!hasText(channelType) || !hasText(channelUserId)) return ProfileSnapshot.empty();
+        if (PLAYGROUND_CHANNEL.equalsIgnoreCase(channelType.trim())) {
+            return ProfileSnapshot.empty();
+        }
         BotCustomer customer = find(channelType, channelUserId);
         Map<String, Map<String, Object>> facts = readFacts(customer == null
             ? null : customer.getProfileJson());

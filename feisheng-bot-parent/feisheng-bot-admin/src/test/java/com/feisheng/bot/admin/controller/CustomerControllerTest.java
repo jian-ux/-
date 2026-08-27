@@ -15,7 +15,9 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -26,6 +28,32 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class CustomerControllerTest {
+    @Test
+    void detailDoesNotExposeAnExistingPlaygroundCustomer() {
+        BotCustomerMapper customerMapper = mock(BotCustomerMapper.class);
+        BotCustomer customer = new BotCustomer();
+        customer.setId(8L);
+        customer.setChannelType("PLAYGROUND");
+        when(customerMapper.selectById(8L)).thenReturn(customer);
+        CustomerController controller = new CustomerController(
+            customerMapper, mock(BotConversationMapper.class), mock(CustomerProfileSyncService.class));
+
+        assertNull(controller.detail(8L).getData());
+    }
+
+    @Test
+    void detailDoesNotExposePlaygroundCustomerWithWhitespaceChannel() {
+        BotCustomerMapper customerMapper = mock(BotCustomerMapper.class);
+        BotCustomer customer = new BotCustomer();
+        customer.setId(9L);
+        customer.setChannelType("  playground  ");
+        when(customerMapper.selectById(9L)).thenReturn(customer);
+        CustomerController controller = new CustomerController(
+            customerMapper, mock(BotConversationMapper.class), mock(CustomerProfileSyncService.class));
+
+        assertNull(controller.detail(9L).getData());
+    }
+
     @Test
     void updateTrimsAndSavesCustomerRemark() {
         BotCustomerMapper customerMapper = mock(BotCustomerMapper.class);

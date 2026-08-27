@@ -58,7 +58,9 @@ public class StatisticsController {
         m.put("todayMessages", messageMapper.selectCount(
             new LambdaQueryWrapper<com.feisheng.bot.admin.entity.BotMessage>()
                 .ge(com.feisheng.bot.admin.entity.BotMessage::getCreateTime, today)));
-        m.put("customerCount", customerMapper.selectCount(null));
+        m.put("customerCount", customerMapper.selectCount(
+            new LambdaQueryWrapper<com.feisheng.bot.admin.entity.BotCustomer>()
+                .apply("LOWER(TRIM(channel_type)) <> {0}", "playground")));
         m.put("ticketCount", ticketCount);
         m.put("pendingTickets", ticketMapper.selectCount(
             new LambdaQueryWrapper<BotTicket>().eq(BotTicket::getStatus, "pending")));

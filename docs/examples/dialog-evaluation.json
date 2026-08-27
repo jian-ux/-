@@ -41,6 +41,7 @@
       "id": "pii-redaction",
       "question": "我的手机号13800138000，电子合通有发律效力吗？",
       "answerable": true,
+      "expectedIntentCode": "CONTRACT_LEGAL_RISK",
       "expectedSourceType": "document",
       "mustContain": ["法律效力"],
       "mustNotContain": ["13800138000", "知识库"],

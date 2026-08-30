@@ -16,6 +16,7 @@ tmp/
 .model-cache/
 .understand-anything/
 outputs/
+.worktrees/
 **/__pycache__/
 *.py[cod]
 

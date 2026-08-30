@@ -2,11 +2,13 @@ package com.feisheng.bot.knowledge.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.feisheng.bot.knowledge.entity.BotKnowledgeDocument;
 import org.apache.ibatis.annotations.Mapper;
-import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Param;
 
 @Mapper
 public interface BotKnowledgeDocumentMapper extends BaseMapper<BotKnowledgeDocument> {
+    @Select("SELECT COUNT(*) FROM bot_knowledge_document WHERE bucket_name=#{bucketName} AND object_key=#{objectKey} AND deleted=0")
+    int countActiveObjectReferences(@Param("bucketName") String bucketName, @Param("objectKey") String objectKey);
     @Select("""
         SELECT * FROM bot_knowledge_document
         WHERE title = #{title}

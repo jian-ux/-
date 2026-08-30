@@ -102,7 +102,8 @@ public class DocumentController {
             item.put("status", doc.getStatus());
             item.put("createTime", doc.getCreateTime());
 
-            if (doc.getObjectKey() != null && !doc.getObjectKey().isEmpty()) {
+            if (doc.getObjectKey() != null && !doc.getObjectKey().isEmpty()
+                    && mapper.countActiveObjectReferences(doc.getBucketName(), doc.getObjectKey()) <= 1) {
                 item.put("downloadUrl", "/api/knowledge/document/" + doc.getId() + "/download");
             } else {
                 item.put("downloadUrl", null);

@@ -324,7 +324,7 @@ public class KnowledgeMigrationReviewService {
                 JsonNode end = span.get("end");
                 JsonNode quote = span.get("quote");
                 if (chunkId == null || !chunkId.isIntegralNumber() || !evidenceIds.contains(chunkId.longValue())
-                        || start == null || end == null || !start.canConvertToInt() || !end.canConvertToInt()
+                        || !validOffset(start) || !validOffset(end)
                         || start.intValue() < 0 || end.intValue() <= start.intValue()
                         || quote == null || !quote.isTextual() || quote.textValue().isBlank()) return false;
                 spanIds.add(chunkId.longValue());
@@ -334,6 +334,13 @@ public class KnowledgeMigrationReviewService {
             }
             return spanIds.equals(evidenceIds);
         } catch (Exception e) { return false; }
+    }
+
+    private boolean validOffset(JsonNode value) {
+        if (value == null || !value.isNumber()) return false;
+        double number = value.doubleValue();
+        return Double.isFinite(number) && number >= Integer.MIN_VALUE
+            && number <= Integer.MAX_VALUE && Math.rint(number) == number;
     }
 
     private String confirmationAudit(BotKnowledgeMigrationJob job, GateReport report,

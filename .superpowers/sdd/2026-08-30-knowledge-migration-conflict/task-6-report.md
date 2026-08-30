@@ -117,3 +117,43 @@ Result: 40 tests run, 0 failures/errors; reactor `BUILD SUCCESS`.
 Self-review: the fingerprint is stored inside the existing conflict evidence JSON, so no schema migration is introduced. Legacy rows without the fingerprint intentionally reset to pending on the next detection. Span validation checks the raw Jackson number node before its conversion to the integer record fields. Constructor selection does not remove the test-configurable policy path.
 
 Risks: changing any normalized judgment input or rule/model metadata deliberately requires a fresh human review; existing reviewed rows generated before Round 2 will also be re-reviewed once. Switch and rollback remain Task 7-owned and unchanged.
+
+## Fix Round 3
+
+Addressed the two remaining scoped findings: document confirmation now rejects non-integral or non-finite source-span offsets before integer conversion; conflict judgment fingerprints now include source/target embedding models and structurally canonicalize JSON-valued condition, metadata, entity, and exclusion inputs so object field order is insignificant.
+
+RED evidence:
+
+```powershell
+C:\Users\HQJ\.m2\wrapper\dists\apache-maven-3.9.14-bin\1cb7fhup6b5n3bed6kckbrnspv\apache-maven-3.9.14\bin\mvn.cmd -f feisheng-bot-parent/pom.xml -pl feisheng-bot-admin,feisheng-bot-knowledge -am "-Dtest=KnowledgeMigrationReviewServiceTest,FactConflictServiceTest" "-Dsurefire.failIfNoSpecifiedTests=false" test
+```
+
+Before the production fixes, the three new regressions failed as expected: fractional confirmation returned `passed=true`; changing the target embedding model left the reviewed conflict `RESOLVED`; and reordering metadata object fields reset it to `PENDING` (3 failures, 24 other tests passing).
+
+GREEN evidence:
+
+```powershell
+C:\Users\HQJ\.m2\wrapper\dists\apache-maven-3.9.14-bin\1cb7fhup6b5n3bed6kckbrnspv\apache-maven-3.9.14\bin\mvn.cmd -f feisheng-bot-parent/pom.xml -pl feisheng-bot-admin,feisheng-bot-knowledge -am "-Dtest=KnowledgeMigrationReviewServiceTest,FactConflictServiceTest" "-Dsurefire.failIfNoSpecifiedTests=false" test
+```
+
+Result: 27 tests run, 0 failures/errors; reactor `BUILD SUCCESS`.
+
+Selected Task 6 reactor verification:
+
+```powershell
+C:\Users\HQJ\.m2\wrapper\dists\apache-maven-3.9.14-bin\1cb7fhup6b5n3bed6kckbrnspv\apache-maven-3.9.14\bin\mvn.cmd -f feisheng-bot-parent/pom.xml -pl feisheng-bot-admin,feisheng-bot-knowledge -am "-Dtest=KnowledgeMigrationReviewServiceTest,KnowledgeMigrationControllerTest,StructuredKnowledgeUnitReviewServiceTest,StructuredKnowledgeUnitIndexServiceTest,FactConflictServiceTest" "-Dsurefire.failIfNoSpecifiedTests=false" test
+```
+
+Result: 43 tests run, 0 failures/errors; reactor `BUILD SUCCESS`.
+
+Self-review: raw span nodes are validated for finite integral values and integer range before `intValue()` or substring use. Fingerprint model fields cover both source and target embedding inputs, while canonical JSON sorting preserves array order and only removes object-field ordering differences. Existing constructor wiring, switch/rollback behavior, and Task 5 files are unchanged. `git diff --check` is clean.
+
+Concern: legacy conflict evidence without a fingerprint continues to reset to `PENDING` on re-detection, as intended for safe re-review.
+
+Full selected reactor verification:
+
+```powershell
+C:\Users\HQJ\.m2\wrapper\dists\apache-maven-3.9.14-bin\1cb7fhup6b5n3bed6kckbrnspv\apache-maven-3.9.14\bin\mvn.cmd -f feisheng-bot-parent/pom.xml -pl feisheng-bot-admin,feisheng-bot-knowledge -am "-Dsurefire.failIfNoSpecifiedTests=false" test
+```
+
+Result: 254 tests run, 0 failures/errors across the selected reactor; `BUILD SUCCESS`.

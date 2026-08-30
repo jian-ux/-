@@ -208,6 +208,88 @@ class FactConflictServiceTest {
         verify(conflicts).updateById(existing);
     }
 
+    @Test
+    void reDetectionResetsReviewedPairWhenEmbeddingModelChanges() throws Exception {
+        BotKnowledgeDocumentMapper documents = mock(BotKnowledgeDocumentMapper.class);
+        BotKnowledgeSemanticUnitMapper units = mock(BotKnowledgeSemanticUnitMapper.class);
+        BotKnowledgeConflictMapper conflicts = mock(BotKnowledgeConflictMapper.class);
+        StructuredKnowledgeUnitIndexService index = mock(StructuredKnowledgeUnitIndexService.class);
+        BotKnowledgeDocument targetDocument = new BotKnowledgeDocument();
+        targetDocument.setId(20L);
+        targetDocument.setKnowledgeSetKey("set-a");
+        when(documents.selectById(20L)).thenReturn(targetDocument);
+        BotKnowledgeSemanticUnit target = unit(200L, 20L, "不可以办理");
+        target.setSourceHash("target-same");
+        target.setEmbeddingModel("model-v2");
+        BotKnowledgeSemanticUnit source = unit(100L, 10L, "可以办理");
+        source.setSourceHash("source-same");
+        source.setEmbeddingModel("model-v1");
+        when(units.selectList(any())).thenReturn(List.of(target));
+        when(index.searchConflictCandidates(any())).thenReturn(List.of(
+            new StructuredKnowledgeUnitIndexService.ConflictCandidate(source, 0.94d, 10L, "set-a")));
+        when(conflicts.selectOne(any())).thenReturn(null);
+        FactConflictService service = new FactConflictService(documents, units, conflicts, index,
+            new FactNormalizationService(new ObjectMapper()), new FactComparisonService(),
+            new ObjectMapper(), 20, 0.82d);
+        service.check(1L, 10L, 20L);
+        org.mockito.ArgumentCaptor<com.feisheng.bot.admin.entity.BotKnowledgeConflict> captor =
+            org.mockito.ArgumentCaptor.forClass(com.feisheng.bot.admin.entity.BotKnowledgeConflict.class);
+        verify(conflicts).insert(captor.capture());
+        com.feisheng.bot.admin.entity.BotKnowledgeConflict existing = captor.getValue();
+        existing.setId(9L);
+        existing.setStatus("RESOLVED");
+        existing.setResolution("MERGE");
+        target.setEmbeddingModel("model-v3");
+        reset(conflicts);
+        when(conflicts.selectOne(any())).thenReturn(existing);
+
+        service.check(1L, 10L, 20L);
+
+        assertEquals("PENDING", existing.getStatus());
+        verify(conflicts).updateById(existing);
+    }
+
+    @Test
+    void reDetectionPreservesReviewedPairWhenOnlyJsonObjectFieldOrderChanges() throws Exception {
+        BotKnowledgeDocumentMapper documents = mock(BotKnowledgeDocumentMapper.class);
+        BotKnowledgeSemanticUnitMapper units = mock(BotKnowledgeSemanticUnitMapper.class);
+        BotKnowledgeConflictMapper conflicts = mock(BotKnowledgeConflictMapper.class);
+        StructuredKnowledgeUnitIndexService index = mock(StructuredKnowledgeUnitIndexService.class);
+        BotKnowledgeDocument targetDocument = new BotKnowledgeDocument();
+        targetDocument.setId(20L);
+        targetDocument.setKnowledgeSetKey("set-a");
+        when(documents.selectById(20L)).thenReturn(targetDocument);
+        BotKnowledgeSemanticUnit target = unit(200L, 20L, "不可以办理");
+        target.setSourceHash("target-same");
+        target.setMetadataJson("{\"product\":\"合同\",\"region\":\"全国\"}");
+        BotKnowledgeSemanticUnit source = unit(100L, 10L, "可以办理");
+        source.setSourceHash("source-same");
+        source.setMetadataJson("{\"region\":\"全国\",\"product\":\"合同\"}");
+        when(units.selectList(any())).thenReturn(List.of(target));
+        when(index.searchConflictCandidates(any())).thenReturn(List.of(
+            new StructuredKnowledgeUnitIndexService.ConflictCandidate(source, 0.94d, 10L, "set-a")));
+        when(conflicts.selectOne(any())).thenReturn(null);
+        FactConflictService service = new FactConflictService(documents, units, conflicts, index,
+            new FactNormalizationService(new ObjectMapper()), new FactComparisonService(),
+            new ObjectMapper(), 20, 0.82d);
+        service.check(1L, 10L, 20L);
+        org.mockito.ArgumentCaptor<com.feisheng.bot.admin.entity.BotKnowledgeConflict> captor =
+            org.mockito.ArgumentCaptor.forClass(com.feisheng.bot.admin.entity.BotKnowledgeConflict.class);
+        verify(conflicts).insert(captor.capture());
+        com.feisheng.bot.admin.entity.BotKnowledgeConflict existing = captor.getValue();
+        existing.setId(9L);
+        existing.setStatus("RESOLVED");
+        existing.setResolution("MERGE");
+        target.setMetadataJson("{\"region\":\"全国\",\"product\":\"合同\"}");
+        reset(conflicts);
+        when(conflicts.selectOne(any())).thenReturn(existing);
+
+        service.check(1L, 10L, 20L);
+
+        assertEquals("RESOLVED", existing.getStatus());
+        verify(conflicts, never()).updateById(any(com.feisheng.bot.admin.entity.BotKnowledgeConflict.class));
+    }
+
     private BotKnowledgeSemanticUnit unit(Long id, Long documentId, String statement) {
         BotKnowledgeSemanticUnit unit = new BotKnowledgeSemanticUnit();
         unit.setId(id);

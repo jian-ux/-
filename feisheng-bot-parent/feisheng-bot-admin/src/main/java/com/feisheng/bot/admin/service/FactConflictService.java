@@ -1,7 +1,10 @@
 package com.feisheng.bot.admin.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.feisheng.bot.admin.entity.BotKnowledgeConflict;
 import com.feisheng.bot.admin.entity.BotKnowledgeDocument;
 import com.feisheng.bot.admin.mapper.BotKnowledgeConflictMapper;
@@ -335,14 +338,14 @@ public class FactConflictService {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("sourceNormalized", canonicalFact(left));
         input.put("targetNormalized", canonicalFact(right));
-        input.put("sourceConditions", Objects.toString(source.getConditionsJson(), ""));
-        input.put("targetConditions", Objects.toString(target.getConditionsJson(), ""));
-        input.put("sourceMetadata", Objects.toString(source.getMetadataJson(), ""));
-        input.put("targetMetadata", Objects.toString(target.getMetadataJson(), ""));
-        input.put("sourceEntities", Objects.toString(source.getEntitiesJson(), ""));
-        input.put("targetEntities", Objects.toString(target.getEntitiesJson(), ""));
-        input.put("sourceExclusions", Objects.toString(source.getExclusionsJson(), ""));
-        input.put("targetExclusions", Objects.toString(target.getExclusionsJson(), ""));
+        input.put("sourceConditions", canonicalJson(source.getConditionsJson()));
+        input.put("targetConditions", canonicalJson(target.getConditionsJson()));
+        input.put("sourceMetadata", canonicalJson(source.getMetadataJson()));
+        input.put("targetMetadata", canonicalJson(target.getMetadataJson()));
+        input.put("sourceEntities", canonicalJson(source.getEntitiesJson()));
+        input.put("targetEntities", canonicalJson(target.getEntitiesJson()));
+        input.put("sourceExclusions", canonicalJson(source.getExclusionsJson()));
+        input.put("targetExclusions", canonicalJson(target.getExclusionsJson()));
         input.put("comparison", result);
         input.put("ruleVersion", "deterministic-fact-comparison:v1");
         input.put("topK", topK);
@@ -353,6 +356,8 @@ public class FactConflictService {
         input.put("targetPromptVersion", Objects.toString(target.getPromptVersion(), ""));
         input.put("sourceSchemaVersion", Objects.toString(source.getSchemaVersion(), ""));
         input.put("targetSchemaVersion", Objects.toString(target.getSchemaVersion(), ""));
+        input.put("sourceEmbeddingModel", Objects.toString(source.getEmbeddingModel(), ""));
+        input.put("targetEmbeddingModel", Objects.toString(target.getEmbeddingModel(), ""));
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")
                 .digest(writeJson(input).getBytes(StandardCharsets.UTF_8));
@@ -378,6 +383,30 @@ public class FactConflictService {
         value.put("scopeFields", new java.util.TreeMap<>(fact.scope().fields()));
         value.put("evidenceChunkIds", fact.evidenceChunkIds());
         return value;
+    }
+
+    private Object canonicalJson(String value) {
+        if (value == null || value.isBlank()) return "";
+        try {
+            return canonicalJsonNode(objectMapper.readTree(value));
+        } catch (Exception ignored) {
+            return value;
+        }
+    }
+
+    private JsonNode canonicalJsonNode(JsonNode node) {
+        if (node == null || node.isValueNode()) return node;
+        if (node.isArray()) {
+            ArrayNode array = objectMapper.createArrayNode();
+            for (JsonNode child : node) array.add(canonicalJsonNode(child));
+            return array;
+        }
+        ObjectNode object = objectMapper.createObjectNode();
+        java.util.List<String> fields = new java.util.ArrayList<>();
+        node.fieldNames().forEachRemaining(fields::add);
+        java.util.Collections.sort(fields);
+        for (String field : fields) object.set(field, canonicalJsonNode(node.get(field)));
+        return object;
     }
 
     private String embeddingSnapshot(BotKnowledgeSemanticUnit unit) {

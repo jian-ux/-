@@ -86,6 +86,21 @@ class KnowledgeMigrationReviewServiceTest {
     }
 
     @Test
+    void blocksConfirmationWhenEvidenceSpanOffsetsAreFractionalEvenIfTruncationMatchesQuote() {
+        BotKnowledgeSemanticUnit unit = unit("APPROVED", "[0.1]", "[11]");
+        unit.setSourceSpansJson(
+            "[{\"chunkId\":11,\"start\":0.5,\"end\":6.5,\"quote\":\"source\"}]");
+        Fixture fixture = fixture(unit);
+
+        var report = fixture.service.confirmDocument(1L,
+            new KnowledgeMigrationReviewService.ConfirmationRequest("quality review"), 7L);
+
+        assertFalse(report.passed());
+        assertTrue(report.blockers().stream().anyMatch(message -> message.contains("质量")));
+        verify(fixture.jobMapper, never()).confirm(any(), anyLong(), any(), any(), any(), any());
+    }
+
+    @Test
     void doesNotAllowUnknownDeterministicBlockerToBeOverridden() {
         Fixture fixture = fixture(unit("APPROVED", "[0.1]", "[11]"));
         BotKnowledgeConflict conflict = conflict(9L, "BLOCKING");

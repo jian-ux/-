@@ -112,6 +112,9 @@ public class KnowledgeMigrationSnapshotService {
         if (!Objects.equals(source.getStatus(), COMPLETED)) {
             throw new SnapshotException(409, "源文档尚未处理完成");
         }
+        if (!KnowledgeDocumentReleaseService.PUBLISHED.equals(source.getPublishStatus())) {
+            throw new SnapshotException(409, "源文档尚未发布");
+        }
         if (!"KNOWLEDGE".equalsIgnoreCase(source.getSourceScope())) {
             throw new SnapshotException(409, "仅支持知识库文档迁移");
         }
@@ -178,8 +181,10 @@ public class KnowledgeMigrationSnapshotService {
                 }
             }
             if (match >= 0) {
-                remaining.remove(match);
-                continue;
+                BotKnowledgeChunk candidate = remaining.remove(match);
+                if (Objects.equals(candidate.getContent(), source.getContent())
+                    && Objects.equals(candidate.getSectionPath(), source.getSectionPath())) continue;
+                chunkMapper.deleteById(candidate.getId());
             }
             BotKnowledgeChunk target = new BotKnowledgeChunk();
             target.setDocumentId(targetId);
@@ -203,6 +208,7 @@ public class KnowledgeMigrationSnapshotService {
             target.setStatus(source.getStatus());
             chunkMapper.insert(target);
         }
+        for (BotKnowledgeChunk stale : remaining) chunkMapper.deleteById(stale.getId());
     }
 
     private static String sourceHash(List<BotKnowledgeChunk> chunks) {

@@ -14,8 +14,10 @@ Command:
 
 `mvn -f feisheng-bot-parent/pom.xml -pl feisheng-bot-admin -am -Dtest=KnowledgeMigrationSnapshotServiceTest,AdminDocControllerTest test`
 
-Result: not runnable in this environment. PowerShell reports `mvn` is not recognized; no Maven test execution occurred.
+Initial result: default `mvn` command was unavailable in PowerShell. Using the absolute IntelliJ Maven path, the focused command initially failed in the reactor because upstream modules had no matching tests. Re-run with `-Dsurefire.failIfNoSpecifiedTests=false` completed successfully:
+
+`Tests run: 3, Failures: 0, Errors: 0, Skipped: 0; BUILD SUCCESS (38.759 s)`
 
 ## Remaining Concerns
 
-- Maven/JDK build should be run in an environment with Maven available to verify compilation and execute the focused tests.
+- The focused test set is intentionally compact; broader integration coverage remains outside this task.

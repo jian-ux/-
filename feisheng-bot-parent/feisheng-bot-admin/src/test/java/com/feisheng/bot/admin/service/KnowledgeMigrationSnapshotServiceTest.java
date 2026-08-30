@@ -31,7 +31,7 @@ class KnowledgeMigrationSnapshotServiceTest {
     @Test
     void reusesExistingHashBeforeAllocatingVersion() {
         BotKnowledgeDocument source = new BotKnowledgeDocument();
-        source.setId(1L); source.setStatus(2); source.setSourceScope("KNOWLEDGE"); source.setKnowledgeSetKey("k");
+        source.setId(1L); source.setStatus(2); source.setSourceScope("KNOWLEDGE"); source.setPublishStatus("PUBLISHED"); source.setKnowledgeSetKey("k");
         BotKnowledgeChunk chunk = new BotKnowledgeChunk();
         chunk.setId(10L); chunk.setDocumentId(1L); chunk.setChunkIndex(0); chunk.setContent("hello");
         BotKnowledgeMigrationJob existing = new BotKnowledgeMigrationJob();
@@ -47,6 +47,6 @@ class KnowledgeMigrationSnapshotServiceTest {
             docs, chunks, jobs, release).create(1L, 2L);
         assertEquals(9L, result.jobId());
         verify(release, never()).nextVersion(anyString());
-        verify(docs, never()).insert(any());
+        verify(docs, never()).insert(any(BotKnowledgeDocument.class));
     }
 }

@@ -14,7 +14,7 @@ import static org.mockito.Mockito.*;
 
 class AdminDocControllerTest {
     @Test
-    void deletingSharedDraftKeepsSourceObject() {
+    void deletingSharedDraftKeepsSourceObject() throws Exception {
         BotKnowledgeDocument document = new BotKnowledgeDocument();
         document.setId(2L); document.setBucketName(null); document.setObjectKey("shared/source.pdf");
         BotKnowledgeDocumentMapper documents = mock(BotKnowledgeDocumentMapper.class);

@@ -10,7 +10,7 @@ public class FactComparisonService {
     public ComparisonResult compare(FactNormalizationService.NormalizedFact left, FactNormalizationService.NormalizedFact right) {
         Objects.requireNonNull(left, "left"); Objects.requireNonNull(right, "right");
         if (left.scope().relation() == FactNormalizationService.ScopeRelation.UNKNOWN || right.scope().relation() == FactNormalizationService.ScopeRelation.UNKNOWN)
-            return result(Relation.UNKNOWN, ConflictType.SCOPE, Severity.WARNING, List.of("scope"), "适用范围未知，无法比较");
+            return result(Relation.UNKNOWN, ConflictType.SCOPE, Severity.BLOCKING, List.of("scope"), "适用范围未知，无法比较");
         if (mutuallyExclusive(left.scope(), right.scope()))
             return result(Relation.SCOPE_DIFFERENCE, ConflictType.SCOPE, Severity.INFO, List.of("scope"), "适用范围互斥");
         List<String> fields = new ArrayList<>(); ConflictType type = ConflictType.OTHER;

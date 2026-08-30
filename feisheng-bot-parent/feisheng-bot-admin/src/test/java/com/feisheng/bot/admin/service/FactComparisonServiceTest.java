@@ -44,6 +44,7 @@ class FactComparisonServiceTest {
         b.setStatement("不可以办理");
         FactComparisonService.ComparisonResult result = comparison.compare(normalization.normalize(a), normalization.normalize(b));
         assertEquals(FactComparisonService.Relation.UNKNOWN, result.relation());
+        assertEquals(FactComparisonService.Severity.BLOCKING, result.severity());
     }
 
     private BotKnowledgeSemanticUnit unit(String statement) {

@@ -18,4 +18,9 @@ public interface BotKnowledgeMigrationJobMapper extends BaseMapper<BotKnowledgeM
 
     @Select("SELECT * FROM bot_knowledge_migration_job WHERE id=#{id} FOR UPDATE")
     BotKnowledgeMigrationJob findByIdForUpdate(@Param("id") Long id);
+
+    @Update("UPDATE bot_knowledge_migration_job SET status='READY_TO_SWITCH', current_step='READY_TO_SWITCH', reviewer_id=#{reviewerId}, reviewed_at=#{reviewedAt}, review_reason=#{reviewReason}, review_audit_json=#{reviewAuditJson}, lock_version=lock_version+1, updated_at=CURRENT_TIMESTAMP WHERE id=#{id} AND status='REVIEW_REQUIRED' AND lock_version=#{expectedLockVersion}")
+    int confirm(@Param("id") Long id, @Param("expectedLockVersion") long expectedLockVersion,
+                @Param("reviewerId") Long reviewerId, @Param("reviewedAt") Date reviewedAt,
+                @Param("reviewReason") String reviewReason, @Param("reviewAuditJson") String reviewAuditJson);
 }

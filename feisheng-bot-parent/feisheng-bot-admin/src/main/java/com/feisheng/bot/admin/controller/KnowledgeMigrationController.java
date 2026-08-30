@@ -58,10 +58,15 @@ public class KnowledgeMigrationController {
 
     @GetMapping("/migrations/{id}/conflicts")
     public R<List<BotKnowledgeConflict>> conflicts(@PathVariable Long id) {
-        return R.ok(conflictMapper.selectList(new LambdaQueryWrapper<BotKnowledgeConflict>()
-            .eq(BotKnowledgeConflict::getMigrationJobId, id)
-            .orderByDesc(BotKnowledgeConflict::getSeverity)
-            .orderByAsc(BotKnowledgeConflict::getId)));
+        try {
+            jobService.get(id);
+            return R.ok(conflictMapper.selectList(new LambdaQueryWrapper<BotKnowledgeConflict>()
+                .eq(BotKnowledgeConflict::getMigrationJobId, id)
+                .orderByDesc(BotKnowledgeConflict::getSeverity)
+                .orderByAsc(BotKnowledgeConflict::getId)));
+        } catch (KnowledgeMigrationJobService.MigrationJobException e) {
+            return R.fail(e.status(), e.getMessage());
+        }
     }
 
     @PostMapping("/migrations/{id}/conflicts/{conflictId}/resolve")
@@ -78,9 +83,11 @@ public class KnowledgeMigrationController {
 
     @PostMapping("/migrations/{id}/review/confirm")
     public R<KnowledgeMigrationReviewService.GateReport> confirm(@PathVariable Long id,
+                                                                  @RequestBody(required = false)
+                                                                  KnowledgeMigrationReviewService.ConfirmationRequest request,
                                                                   Authentication authentication) {
         try {
-            return R.ok(reviewService.confirmDocument(id, operatorId(authentication)));
+            return R.ok(reviewService.confirmDocument(id, request, operatorId(authentication)));
         } catch (KnowledgeMigrationReviewService.ReviewException e) {
             return R.fail(e.status(), e.getMessage());
         }

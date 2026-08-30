@@ -40,10 +40,12 @@ class KnowledgeMigrationControllerTest {
             .andExpect(jsonPath("$.data.reviewerId").value(77));
         verify(reviewService).resolveConflict(eq(4L), eq(8L), any(), eq(77L));
 
-        when(reviewService.confirmDocument(4L, 77L)).thenThrow(
+        when(reviewService.confirmDocument(eq(4L), any(), eq(77L))).thenThrow(
             new KnowledgeMigrationReviewService.ReviewException(409, "门禁未通过"));
         mvc.perform(post("/api/admin/knowledge/migrations/4/review/confirm")
-                .principal(new UsernamePasswordAuthenticationToken(77L, "reviewer")))
+                .principal(new UsernamePasswordAuthenticationToken(77L, "reviewer"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reason\":\"checked\"}"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.code").value(409))
             .andExpect(jsonPath("$.msg").value("门禁未通过"));
@@ -74,6 +76,24 @@ class KnowledgeMigrationControllerTest {
 
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                 .get("/api/admin/knowledge/migrations/404"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value(404))
+            .andExpect(jsonPath("$.msg").value("迁移任务不存在"));
+    }
+
+    @Test
+    void conflictListingReturnsMigrationErrorsForMissingJob() throws Exception {
+        KnowledgeMigrationJobService jobService = mock(KnowledgeMigrationJobService.class);
+        when(jobService.get(404L)).thenThrow(
+            new KnowledgeMigrationJobService.MigrationJobException(404, "迁移任务不存在"));
+        KnowledgeMigrationController controller = new KnowledgeMigrationController(
+            jobService, mock(KnowledgeMigrationReviewService.class), mock(BotKnowledgeConflictMapper.class));
+
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build()
+            .perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .get("/api/admin/knowledge/migrations/404/conflicts"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.code").value(404))
             .andExpect(jsonPath("$.msg").value("迁移任务不存在"));

@@ -92,6 +92,83 @@ class FactConflictServiceTest {
         verifyNoInteractions(units, conflicts, index);
     }
 
+    @Test
+    void reDetectionResetsReviewedPairWhenSourceSnapshotChanges() {
+        BotKnowledgeDocumentMapper documents = mock(BotKnowledgeDocumentMapper.class);
+        BotKnowledgeSemanticUnitMapper units = mock(BotKnowledgeSemanticUnitMapper.class);
+        BotKnowledgeConflictMapper conflicts = mock(BotKnowledgeConflictMapper.class);
+        StructuredKnowledgeUnitIndexService index = mock(StructuredKnowledgeUnitIndexService.class);
+        BotKnowledgeDocument targetDocument = new BotKnowledgeDocument();
+        targetDocument.setId(20L);
+        targetDocument.setKnowledgeSetKey("set-a");
+        when(documents.selectById(20L)).thenReturn(targetDocument);
+        BotKnowledgeSemanticUnit target = unit(200L, 20L, "不可以办理");
+        target.setSourceHash("target-new");
+        BotKnowledgeSemanticUnit source = unit(100L, 10L, "可以办理");
+        source.setSourceHash("source-new");
+        when(units.selectList(any())).thenReturn(List.of(target));
+        when(index.searchConflictCandidates(any())).thenReturn(List.of(
+            new StructuredKnowledgeUnitIndexService.ConflictCandidate(source, 0.94d, 10L, "set-a")));
+        com.feisheng.bot.admin.entity.BotKnowledgeConflict existing = new com.feisheng.bot.admin.entity.BotKnowledgeConflict();
+        existing.setId(9L);
+        existing.setMigrationJobId(1L);
+        existing.setTargetUnitId(200L);
+        existing.setCandidateUnitId(100L);
+        existing.setStatus("RESOLVED");
+        existing.setResolution("MERGE");
+        existing.setEvidence("{\"sourceSnapshotHash\":\"source-old\",\"targetSnapshotHash\":\"target-new\"}");
+        when(conflicts.selectOne(any())).thenReturn(existing);
+
+        FactConflictService service = new FactConflictService(documents, units, conflicts, index,
+            new FactNormalizationService(new ObjectMapper()), new FactComparisonService(),
+            new ObjectMapper(), 20, 0.82d);
+        service.check(1L, 10L, 20L);
+
+        assertEquals("PENDING", existing.getStatus());
+        verify(conflicts).updateById(existing);
+    }
+
+    @Test
+    void reDetectionPreservesReviewedPairForIdenticalJudgmentInputs() throws Exception {
+        BotKnowledgeDocumentMapper documents = mock(BotKnowledgeDocumentMapper.class);
+        BotKnowledgeSemanticUnitMapper units = mock(BotKnowledgeSemanticUnitMapper.class);
+        BotKnowledgeConflictMapper conflicts = mock(BotKnowledgeConflictMapper.class);
+        StructuredKnowledgeUnitIndexService index = mock(StructuredKnowledgeUnitIndexService.class);
+        BotKnowledgeDocument targetDocument = new BotKnowledgeDocument();
+        targetDocument.setId(20L);
+        targetDocument.setKnowledgeSetKey("set-a");
+        when(documents.selectById(20L)).thenReturn(targetDocument);
+        BotKnowledgeSemanticUnit target = unit(200L, 20L, "不可以办理");
+        target.setSourceHash("target-same");
+        BotKnowledgeSemanticUnit source = unit(100L, 10L, "可以办理");
+        source.setSourceHash("source-same");
+        when(units.selectList(any())).thenReturn(List.of(target));
+        when(index.searchConflictCandidates(any())).thenReturn(List.of(
+            new StructuredKnowledgeUnitIndexService.ConflictCandidate(source, 0.94d, 10L, "set-a")));
+        com.feisheng.bot.admin.entity.BotKnowledgeConflict existing = new com.feisheng.bot.admin.entity.BotKnowledgeConflict();
+        existing.setId(9L);
+        existing.setMigrationJobId(1L);
+        existing.setTargetUnitId(200L);
+        existing.setCandidateUnitId(100L);
+        existing.setStatus("RESOLVED");
+        existing.setResolution("MERGE");
+        when(conflicts.selectOne(any())).thenReturn(null);
+        FactConflictService service = new FactConflictService(documents, units, conflicts, index,
+            new FactNormalizationService(new ObjectMapper()), new FactComparisonService(),
+            new ObjectMapper(), 20, 0.82d);
+        service.check(1L, 10L, 20L);
+        org.mockito.ArgumentCaptor<com.feisheng.bot.admin.entity.BotKnowledgeConflict> captor =
+            org.mockito.ArgumentCaptor.forClass(com.feisheng.bot.admin.entity.BotKnowledgeConflict.class);
+        verify(conflicts).insert(captor.capture());
+        existing.setEvidence(captor.getValue().getEvidence());
+        reset(conflicts);
+        when(conflicts.selectOne(any())).thenReturn(existing);
+        service.check(1L, 10L, 20L);
+
+        assertEquals("RESOLVED", existing.getStatus());
+        verify(conflicts, never()).updateById(any(com.feisheng.bot.admin.entity.BotKnowledgeConflict.class));
+    }
+
     private BotKnowledgeSemanticUnit unit(Long id, Long documentId, String statement) {
         BotKnowledgeSemanticUnit unit = new BotKnowledgeSemanticUnit();
         unit.setId(id);

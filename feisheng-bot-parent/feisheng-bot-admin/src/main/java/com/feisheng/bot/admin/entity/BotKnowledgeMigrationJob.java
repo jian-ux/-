@@ -30,6 +30,8 @@ public class BotKnowledgeMigrationJob {
     private Long lockVersion;
     private Long reviewerId;
     private Date reviewedAt;
+    private String reviewReason;
+    private String reviewAuditJson;
     private Date switchedAt;
     private String errorMessage;
     private Date createTime;

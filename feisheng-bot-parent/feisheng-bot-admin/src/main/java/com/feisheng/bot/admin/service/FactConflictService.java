@@ -184,13 +184,18 @@ public class FactConflictService {
                 .eq(BotKnowledgeConflict::getCandidateUnitId, 0L)
                 .last("LIMIT 1"));
         if (existing != null) {
-            if (RESOLVED.equals(existing.getStatus()) || NOT_CONFLICT.equals(existing.getStatus())) return;
+            String refreshedEvidence = writeJson(Map.of("targetUnitId", target.getId(),
+                "targetSnapshotHash", Objects.toString(target.getSourceHash(), ""), "message", message));
             existing.setSeverity("BLOCKING");
             existing.setStatus(PENDING);
             existing.setConflictType(type);
             existing.setScopeRelation("UNKNOWN");
-            existing.setEvidence(writeJson(Map.of("targetUnitId", target.getId(), "message", message)));
+            existing.setEvidence(refreshedEvidence);
             existing.setRuleResult(writeJson(Map.of("judgment", "UNKNOWN", "reason", message)));
+            existing.setResolution("UNRESOLVED");
+            existing.setResolutionNote(null);
+            existing.setReviewerId(null);
+            existing.setReviewedAt(null);
             existing.setLlmResult(writeJson(Map.of("model", "deterministic-fact-comparison", "version", "v1")));
             existing.setUpdatedAt(new Date());
             conflictMapper.updateById(existing);
@@ -204,7 +209,8 @@ public class FactConflictService {
         conflict.setSeverity("BLOCKING");
         conflict.setStatus(PENDING);
         conflict.setScopeRelation("UNKNOWN");
-        conflict.setEvidence(writeJson(Map.of("targetUnitId", target.getId(), "message", message)));
+        conflict.setEvidence(writeJson(Map.of("targetUnitId", target.getId(),
+            "targetSnapshotHash", Objects.toString(target.getSourceHash(), ""), "message", message)));
         conflict.setRuleResult(writeJson(Map.of("judgment", "UNKNOWN", "reason", message)));
         conflict.setLlmResult(writeJson(Map.of("model", "deterministic-fact-comparison", "version", "v1")));
         conflict.setCreateTime(new Date());
@@ -224,16 +230,23 @@ public class FactConflictService {
                 .eq(BotKnowledgeConflict::getTargetUnitId, target.getId())
                 .eq(BotKnowledgeConflict::getCandidateUnitId, source.getId())
                 .last("LIMIT 1"));
+        String refreshedEvidence = evidence(target, source, similarity, left, right);
         if (existing != null) {
-            if (RESOLVED.equals(existing.getStatus()) || NOT_CONFLICT.equals(existing.getStatus())) return;
+            if ((RESOLVED.equals(existing.getStatus()) || NOT_CONFLICT.equals(existing.getStatus()))
+                    && sameSnapshot(existing, refreshedEvidence, result)) return;
             existing.setSimilarity(similarity);
             existing.setConflictType(result.conflictType().name());
             existing.setSeverity(result.severity().name());
             existing.setScopeRelation(result.relation().name());
-            existing.setEvidence(evidence(target, source, similarity, left, right));
+            existing.setEvidence(refreshedEvidence);
             existing.setRuleResult(writeJson(result));
             existing.setLlmResult(writeJson(Map.of("model", "deterministic-fact-comparison",
                 "version", "v1", "judgment", result)));
+            existing.setStatus(PENDING);
+            existing.setResolution("UNRESOLVED");
+            existing.setResolutionNote(null);
+            existing.setReviewerId(null);
+            existing.setReviewedAt(null);
             existing.setUpdatedAt(new Date());
             conflictMapper.updateById(existing);
             return;
@@ -249,7 +262,7 @@ public class FactConflictService {
         conflict.setStatus(result.relation() == FactComparisonService.Relation.NOT_CONFLICT
             || result.relation() == FactComparisonService.Relation.SCOPE_DIFFERENCE
             ? NOT_CONFLICT : PENDING);
-        conflict.setEvidence(evidence(target, source, similarity, left, right));
+        conflict.setEvidence(refreshedEvidence);
         conflict.setRuleResult(writeJson(result));
         conflict.setLlmResult(writeJson(Map.of("model", "deterministic-fact-comparison",
             "version", "v1", "judgment", result)));
@@ -271,6 +284,10 @@ public class FactConflictService {
         value.put("sourceStatement", left.originalStatement());
         value.put("targetQuestion", right.originalQuestion());
         value.put("targetStatement", right.originalStatement());
+        value.put("sourceSnapshotHash", Objects.toString(source.getSourceHash(), ""));
+        value.put("targetSnapshotHash", Objects.toString(target.getSourceHash(), ""));
+        value.put("sourceEmbeddingHash", embeddingSnapshot(source));
+        value.put("targetEmbeddingHash", embeddingSnapshot(target));
         value.put("retrieval", Map.of("similarity", similarity, "topK", topK,
             "minScore", minScore,
             "sourceExtractorModel", source.getExtractorModel() == null ? "" : source.getExtractorModel(),
@@ -278,6 +295,39 @@ public class FactConflictService {
             "sourceEmbeddingModel", source.getEmbeddingModel() == null ? "" : source.getEmbeddingModel(),
             "targetEmbeddingModel", target.getEmbeddingModel() == null ? "" : target.getEmbeddingModel()));
         return writeJson(value);
+    }
+
+    private boolean sameSnapshot(BotKnowledgeConflict existing, String refreshedEvidence,
+                                 FactComparisonService.ComparisonResult result) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode old = objectMapper.readTree(existing.getEvidence());
+            com.fasterxml.jackson.databind.JsonNode current = objectMapper.readTree(refreshedEvidence);
+            String oldSource = old.path("sourceSnapshotHash").asText(null);
+            String oldTarget = old.path("targetSnapshotHash").asText(null);
+            String currentSource = current.path("sourceSnapshotHash").asText(null);
+            String currentTarget = current.path("targetSnapshotHash").asText(null);
+            String oldSourceEmbedding = old.path("sourceEmbeddingHash").asText(null);
+            String oldTargetEmbedding = old.path("targetEmbeddingHash").asText(null);
+            String currentSourceEmbedding = current.path("sourceEmbeddingHash").asText(null);
+            String currentTargetEmbedding = current.path("targetEmbeddingHash").asText(null);
+            if (oldSource == null || oldTarget == null || currentSource == null || currentTarget == null
+                    || oldSourceEmbedding == null || oldTargetEmbedding == null
+                    || !Objects.equals(oldSource, currentSource) || !Objects.equals(oldTarget, currentTarget)
+                    || !Objects.equals(oldSourceEmbedding, currentSourceEmbedding)
+                    || !Objects.equals(oldTargetEmbedding, currentTargetEmbedding)) return false;
+            com.fasterxml.jackson.databind.JsonNode oldRetrieval = old.path("retrieval");
+            com.fasterxml.jackson.databind.JsonNode currentRetrieval = current.path("retrieval");
+            return Objects.equals(oldRetrieval.path("topK").asInt(), currentRetrieval.path("topK").asInt())
+                && Double.compare(oldRetrieval.path("minScore").asDouble(), currentRetrieval.path("minScore").asDouble()) == 0
+                && Double.compare(oldRetrieval.path("similarity").asDouble(), currentRetrieval.path("similarity").asDouble()) == 0;
+        } catch (Exception ignored) { return false; }
+    }
+
+    private String embeddingSnapshot(BotKnowledgeSemanticUnit unit) {
+        if (unit.getEmbeddingContentHash() != null && !unit.getEmbeddingContentHash().isBlank()) {
+            return unit.getEmbeddingContentHash();
+        }
+        return Objects.toString(unit.getEmbedding(), "");
     }
 
     private String writeJson(Object value) {

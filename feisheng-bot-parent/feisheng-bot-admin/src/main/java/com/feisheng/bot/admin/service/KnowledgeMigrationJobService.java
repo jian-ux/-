@@ -87,8 +87,8 @@ public class KnowledgeMigrationJobService {
             BotKnowledgeMigrationJob job = jobMapper.selectById(jobId);
             if (job != null) {
                 job.setErrorMessage("迁移队列已满，请稍后重试");
-                job.setStatus(KnowledgeMigrationStatus.FAILED.name());
-                jobMapper.updateById(job);
+                jobMapper.markQueueRejected(job.getId(), job.getStatus(),
+                    job.getLockVersion() == null ? 0L : job.getLockVersion(), job.getErrorMessage());
             }
             throw new MigrationJobException(503, "迁移队列已满");
         }

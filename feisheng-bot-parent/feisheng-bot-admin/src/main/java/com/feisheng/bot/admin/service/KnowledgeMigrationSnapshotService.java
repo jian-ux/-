@@ -80,15 +80,16 @@ public class KnowledgeMigrationSnapshotService {
     }
 
     public SnapshotResult cloneTarget(Long jobId) {
+        return cloneTarget(jobId, null, null);
+    }
+
+    public SnapshotResult cloneTarget(Long jobId, String leaseOwner, Long expectedLockVersion) {
         BotKnowledgeMigrationJob job = jobMapper.selectById(jobId);
         if (job == null) throw new SnapshotException(404, "迁移任务不存在");
         BotKnowledgeDocument source = requireSource(job.getSourceDocumentId());
         List<BotKnowledgeChunk> sourceChunks = sourceChunks(source.getId());
         String currentHash = sourceHash(sourceChunks);
         if (!Objects.equals(currentHash, job.getSourceContentHash())) {
-            job.setStatus("STALE");
-            job.setErrorMessage("源文档内容已变化，快照失效");
-            jobMapper.updateById(job);
             throw new SnapshotException(409, "源文档内容已变化，快照失效");
         }
         BotKnowledgeDocument target = job.getTargetDocumentId() == null
@@ -97,7 +98,11 @@ public class KnowledgeMigrationSnapshotService {
             target = copyDocument(source, requireKnowledgeSetKey(source), job.getTargetVersionId().intValue());
             documentMapper.insert(target);
             job.setTargetDocumentId(target.getId());
-            jobMapper.updateById(job);
+            if (leaseOwner != null && expectedLockVersion != null) {
+                int changed = jobMapper.setTargetDocumentOwned(jobId, target.getId(), leaseOwner, expectedLockVersion);
+                if (changed != 1) throw new SnapshotException(409, "任务已被其他 worker 接管");
+                job.setLockVersion(expectedLockVersion + 1);
+            }
         } else if (!Objects.equals(target.getStatus(), COMPLETED)
             || !KnowledgeDocumentReleaseService.DRAFT.equals(target.getPublishStatus())) {
             throw new SnapshotException(409, "目标文档不是可编辑草稿");

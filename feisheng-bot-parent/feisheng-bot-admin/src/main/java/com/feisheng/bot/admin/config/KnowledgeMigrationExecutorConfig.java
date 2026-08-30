@@ -22,6 +22,6 @@ public class KnowledgeMigrationExecutorConfig {
                 Thread thread = new Thread(runnable, "knowledge-migration-worker");
                 thread.setDaemon(true);
                 return thread;
-            }, new ThreadPoolExecutor.CallerRunsPolicy());
+            }, new ThreadPoolExecutor.AbortPolicy());
     }
 }

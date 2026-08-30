@@ -13,6 +13,32 @@ public interface BotKnowledgeMigrationJobMapper extends BaseMapper<BotKnowledgeM
     @Update("UPDATE bot_knowledge_migration_job SET status=#{targetStatus}, current_step=#{currentStep}, lock_version=lock_version+1, updated_at=CURRENT_TIMESTAMP WHERE id=#{id} AND status=#{expectedStatus} AND lock_version=#{expectedLockVersion}")
     int transition(@Param("id") Long id, @Param("expectedStatus") String expectedStatus, @Param("targetStatus") String targetStatus, @Param("currentStep") String currentStep, @Param("expectedLockVersion") long expectedLockVersion);
 
+    @Update("UPDATE bot_knowledge_migration_job SET status=#{targetStatus}, current_step=#{currentStep}, lock_version=lock_version+1, updated_at=CURRENT_TIMESTAMP WHERE id=#{id} AND status=#{expectedStatus} AND lease_owner=#{workerId} AND lock_version=#{expectedLockVersion}")
+    int transitionOwned(@Param("id") Long id, @Param("expectedStatus") String expectedStatus,
+                        @Param("targetStatus") String targetStatus, @Param("currentStep") String currentStep,
+                        @Param("workerId") String workerId, @Param("expectedLockVersion") long expectedLockVersion);
+
+    @Update("UPDATE bot_knowledge_migration_job SET target_document_id=COALESCE(#{targetDocumentId}, target_document_id), total_units=#{totalUnits}, processed_units=#{processedUnits}, conflict_units=#{conflictUnits}, approved_units=#{approvedUnits}, error_message=#{errorMessage}, lease_until=#{leaseUntil}, lock_version=lock_version+1, updated_at=CURRENT_TIMESTAMP WHERE id=#{id} AND lease_owner=#{workerId} AND lock_version=#{expectedLockVersion}")
+    int updateProgressOwned(@Param("id") Long id, @Param("workerId") String workerId,
+                            @Param("expectedLockVersion") long expectedLockVersion,
+                            @Param("targetDocumentId") Long targetDocumentId,
+                            @Param("totalUnits") Integer totalUnits, @Param("processedUnits") Integer processedUnits,
+                            @Param("conflictUnits") Integer conflictUnits, @Param("approvedUnits") Integer approvedUnits,
+                            @Param("errorMessage") String errorMessage, @Param("leaseUntil") Date leaseUntil);
+
+    @Update("UPDATE bot_knowledge_migration_job SET target_document_id=#{targetDocumentId}, lock_version=lock_version+1, updated_at=CURRENT_TIMESTAMP WHERE id=#{id} AND lease_owner=#{workerId} AND lock_version=#{expectedLockVersion}")
+    int setTargetDocumentOwned(@Param("id") Long id, @Param("targetDocumentId") Long targetDocumentId,
+                               @Param("workerId") String workerId, @Param("expectedLockVersion") long expectedLockVersion);
+
+    @Update("UPDATE bot_knowledge_migration_job SET status=#{status}, current_step=#{currentStep}, error_message=#{errorMessage}, lease_owner=NULL, lease_until=NULL, lock_version=lock_version+1, updated_at=CURRENT_TIMESTAMP WHERE id=#{id} AND lease_owner=#{workerId} AND lock_version=#{expectedLockVersion}")
+    int failOwned(@Param("id") Long id, @Param("workerId") String workerId,
+                  @Param("expectedLockVersion") long expectedLockVersion, @Param("status") String status,
+                  @Param("currentStep") String currentStep, @Param("errorMessage") String errorMessage);
+
+    @Update("UPDATE bot_knowledge_migration_job SET status='FAILED', error_message=#{message}, lock_version=lock_version+1, updated_at=CURRENT_TIMESTAMP WHERE id=#{id} AND status=#{expectedStatus} AND lock_version=#{expectedLockVersion}")
+    int markQueueRejected(@Param("id") Long id, @Param("expectedStatus") String expectedStatus,
+                          @Param("expectedLockVersion") long expectedLockVersion, @Param("message") String message);
+
     @Update("UPDATE bot_knowledge_migration_job SET lease_until=#{leaseUntil}, updated_at=CURRENT_TIMESTAMP WHERE id=#{id} AND lease_owner=#{workerId} AND lock_version=#{expectedLockVersion}")
     int renewLease(@Param("id") Long id, @Param("workerId") String workerId, @Param("leaseUntil") Date leaseUntil, @Param("expectedLockVersion") long expectedLockVersion);
 

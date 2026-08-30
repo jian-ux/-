@@ -56,6 +56,7 @@ public class KnowledgeMigrationWorker {
                 || KnowledgeMigrationStatus.READY_TO_SWITCH.name().equals(job.getStatus())) return;
 
         String startingStatus = Objects.toString(job.getStatus(), "PENDING");
+        String startingStep = Objects.toString(job.getCurrentStep(), startingStatus);
         long version = value(job.getLockVersion());
         String owner = "migration-worker-" + UUID.randomUUID();
         int claimed = jobMapper.claim(jobId, Objects.toString(job.getStatus(), "PENDING"), owner,
@@ -67,11 +68,19 @@ public class KnowledgeMigrationWorker {
         job.setLockVersion(version + 1);
         try {
             StructuredKnowledgeExtractionService.ExtractionReport report = null;
-            if (startingStatus.equals(KnowledgeMigrationStatus.PENDING.name())
+            boolean extractionRequired = startingStatus.equals(KnowledgeMigrationStatus.PENDING.name())
                     || startingStatus.equals(KnowledgeMigrationStatus.EXTRACTING.name())
-                    || startingStatus.equals("SNAPSHOT")) {
+                    || startingStatus.equals(KnowledgeMigrationStatus.EMBEDDING.name())
+                    || startingStep.equals("SNAPSHOT")
+                    || startingStep.equals(KnowledgeMigrationStatus.EXTRACTING.name())
+                    || startingStep.equals(KnowledgeMigrationStatus.EMBEDDING.name());
+            if (extractionRequired) {
                 advance(job, KnowledgeMigrationStatus.EXTRACTING);
-                KnowledgeMigrationSnapshotService.SnapshotResult snapshot = snapshotService.cloneTarget(jobId);
+                KnowledgeMigrationSnapshotService.SnapshotResult snapshot = snapshotService.cloneTarget(
+                    jobId, job.getLeaseOwner(), job.getLockVersion());
+                if (snapshot.targetDocumentId() != null && !Objects.equals(snapshot.targetDocumentId(), job.getTargetDocumentId())) {
+                    job.setTargetDocumentId(snapshot.targetDocumentId());
+                }
                 if (snapshot.targetDocumentId() != null) job.setTargetDocumentId(snapshot.targetDocumentId());
                 BotKnowledgeDocument target = documentMapper.selectById(job.getTargetDocumentId());
                 if (target == null) throw new MigrationFailure("目标草稿不存在");
@@ -86,8 +95,6 @@ public class KnowledgeMigrationWorker {
                 job.setProcessedUnits(report.sourceChunks());
                 persist(job);
                 renew(job);
-                advance(job, KnowledgeMigrationStatus.EMBEDDING);
-            } else if (startingStatus.equals(KnowledgeMigrationStatus.EMBEDDING.name())) {
                 advance(job, KnowledgeMigrationStatus.EMBEDDING);
             }
             if (report != null && report.validatedUnits() != report.embeddedUnits()) {
@@ -119,8 +126,8 @@ public class KnowledgeMigrationWorker {
     private void advance(BotKnowledgeMigrationJob job, KnowledgeMigrationStatus next) {
         String expected = job.getStatus();
         long version = value(job.getLockVersion());
-        if ("RUNNING".equals(expected)) expected = "RUNNING";
-        int changed = jobMapper.transition(job.getId(), expected, next.name(), next.name(), version);
+        int changed = jobMapper.transitionOwned(job.getId(), expected, next.name(), next.name(),
+            job.getLeaseOwner(), version);
         if (changed != 1) throw new MigrationFailure("任务已被其他 worker 接管");
         job.setStatus(next.name());
         job.setCurrentStep(next.name());
@@ -131,23 +138,35 @@ public class KnowledgeMigrationWorker {
     }
 
     private void persist(BotKnowledgeMigrationJob job) {
+        long version = value(job.getLockVersion());
+        int changed = jobMapper.updateProgressOwned(job.getId(), job.getLeaseOwner(), version,
+            job.getTargetDocumentId(), job.getTotalUnits(), job.getProcessedUnits(),
+            job.getConflictUnits(), job.getApprovedUnits(), job.getErrorMessage(), job.getLeaseUntil());
+        if (changed != 1) throw new MigrationFailure("任务已被其他 worker 接管");
+        job.setLockVersion(version + 1);
         job.setUpdatedAt(new Date());
-        jobMapper.updateById(job);
     }
 
     private void renew(BotKnowledgeMigrationJob job) {
         if (job.getLeaseOwner() == null) return;
-        jobMapper.renewLease(job.getId(), job.getLeaseOwner(),
+        int changed = jobMapper.renewLease(job.getId(), job.getLeaseOwner(),
             new Date(System.currentTimeMillis() + leaseMillis), value(job.getLockVersion()));
+        if (changed != 1) throw new MigrationFailure("租约续期失败，任务已被其他 worker 接管");
+        job.setLeaseUntil(new Date(System.currentTimeMillis() + leaseMillis));
     }
 
     private void fail(BotKnowledgeMigrationJob job, KnowledgeMigrationStatus status, String message) {
-        job.setStatus(status.name());
-        job.setCurrentStep(status.name());
-        job.setErrorMessage(message);
-        job.setLeaseUntil(null);
-        job.setLeaseOwner(null);
-        persist(job);
+        String failedStep = Objects.toString(job.getCurrentStep(), Objects.toString(job.getStatus(), "UNKNOWN"));
+        int changed = jobMapper.failOwned(job.getId(), job.getLeaseOwner(), value(job.getLockVersion()),
+            status.name(), failedStep, message);
+        if (changed == 1) {
+            job.setStatus(status.name());
+            job.setCurrentStep(failedStep);
+            job.setErrorMessage(message);
+            job.setLeaseUntil(null);
+            job.setLeaseOwner(null);
+            job.setLockVersion(value(job.getLockVersion()) + 1);
+        }
         log.warn("migrationJobId={} knowledgeSetKey={} sourceVersion={} targetVersion={} step={} error={}",
             job.getId(), job.getKnowledgeSetKey(), job.getSourceVersionId(),
             job.getTargetVersionId(), status, message);

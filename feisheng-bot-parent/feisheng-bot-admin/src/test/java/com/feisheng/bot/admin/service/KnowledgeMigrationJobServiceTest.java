@@ -5,8 +5,10 @@ import com.feisheng.bot.admin.mapper.BotKnowledgeMigrationJobMapper;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -49,6 +51,25 @@ class KnowledgeMigrationJobServiceTest {
         assertEquals("CONFLICT_CHECKING", view.status());
         verify(jobs).updateById(job);
         verify(executor).execute(any(Runnable.class));
+    }
+
+    @Test
+    void queueRejectionMarksFailureWithoutRunningWorkerInline() {
+        KnowledgeMigrationSnapshotService snapshot = mock(KnowledgeMigrationSnapshotService.class);
+        BotKnowledgeMigrationJobMapper jobs = mock(BotKnowledgeMigrationJobMapper.class);
+        KnowledgeMigrationWorker worker = mock(KnowledgeMigrationWorker.class);
+        Executor executor = command -> { throw new RejectedExecutionException("full"); };
+        when(snapshot.create(10L, 7L)).thenReturn(new KnowledgeMigrationSnapshotService.SnapshotResult(
+            3L, 10L, 20L, 2, "hash", 4));
+        BotKnowledgeMigrationJob job = job(3L, "PENDING");
+        when(jobs.selectById(3L)).thenReturn(job);
+
+        KnowledgeMigrationJobService service = new KnowledgeMigrationJobService(
+            snapshot, jobs, worker, executor, 3);
+
+        assertEquals(503, assertThrows(KnowledgeMigrationJobService.MigrationJobException.class,
+            () -> service.create(10L, 7L)).status());
+        verifyNoInteractions(worker);
     }
 
     private static BotKnowledgeMigrationJob job(Long id, String status) {

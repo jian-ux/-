@@ -121,6 +121,19 @@ class StructuredKnowledgeUnitReviewServiceTest {
     }
 
     @Test
+    void approvingAUnitInDraftTargetDocumentNeverSynchronizesOnlineIndex() {
+        Fixture fixture = fixture(chunk("APPROVED", 0));
+        fixture.document.setPublishStatus("DRAFT");
+
+        StructuredKnowledgeUnitReviewService.ReviewResult result =
+            fixture.service.approve(20L);
+
+        assertTrue(result.changed());
+        assertTrue(result.indexSyncSuccess());
+        verify(fixture.indexService, never()).sync();
+    }
+
+    @Test
     void concurrentStateChangeFailsWithoutSyncingIndex() {
         Fixture fixture = fixture(chunk("APPROVED", 0));
         when(fixture.unitMapper.transitionReview(
@@ -213,6 +226,7 @@ class StructuredKnowledgeUnitReviewServiceTest {
         document.setId(5L);
         document.setStatus(2);
         document.setSourceScope("KNOWLEDGE");
+        document.setPublishStatus("PUBLISHED");
         document.setDeleted(0);
         return document;
     }

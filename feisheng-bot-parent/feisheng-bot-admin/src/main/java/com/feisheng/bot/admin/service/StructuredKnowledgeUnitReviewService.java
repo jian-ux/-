@@ -49,7 +49,8 @@ public class StructuredKnowledgeUnitReviewService {
 
     public ReviewResult approve(Long unitId, Long reviewerId, String reason) {
         ReviewResult result = approveWithoutSync(unitId, reviewerId, reason);
-        return result.changed() ? syncedResult(unitId, "APPROVED") : result;
+        return result.changed() && belongsToPublishedKnowledgeDocument(unitId)
+            ? syncedResult(unitId, "APPROVED") : result;
     }
 
     private ReviewResult approveWithoutSync(Long unitId, Long reviewerId, String reason) {
@@ -75,7 +76,8 @@ public class StructuredKnowledgeUnitReviewService {
 
     public ReviewResult reject(Long unitId, Long reviewerId, String reason) {
         ReviewResult result = rejectWithoutSync(unitId, reviewerId, reason);
-        return result.changed() ? syncedResult(unitId, "REJECTED") : result;
+        return result.changed() && belongsToPublishedKnowledgeDocument(unitId)
+            ? syncedResult(unitId, "REJECTED") : result;
     }
 
     private ReviewResult rejectWithoutSync(Long unitId, Long reviewerId, String reason) {
@@ -102,13 +104,17 @@ public class StructuredKnowledgeUnitReviewService {
         List<BatchItemResult> items = new ArrayList<>(distinctIds.size());
         int succeeded = 0;
         int changed = 0;
+        boolean onlineIndexChanged = false;
         for (Long unitId : distinctIds) {
             try {
                 ReviewResult result = "APPROVE".equals(action)
                     ? approveWithoutSync(unitId, reviewerId, normalizedReason)
                     : rejectWithoutSync(unitId, reviewerId, normalizedReason);
                 succeeded++;
-                if (result.changed()) changed++;
+                if (result.changed()) {
+                    changed++;
+                    onlineIndexChanged |= belongsToPublishedKnowledgeDocument(unitId);
+                }
                 items.add(new BatchItemResult(unitId, true, result.status(),
                     result.changed(), null, null));
             } catch (ReviewException e) {
@@ -119,7 +125,7 @@ public class StructuredKnowledgeUnitReviewService {
 
         boolean indexSyncSuccess = true;
         String indexSyncError = null;
-        if (changed > 0) {
+        if (onlineIndexChanged) {
             StructuredKnowledgeUnitIndexService.SyncReport sync = indexService.sync();
             indexSyncSuccess = sync.success();
             indexSyncError = sync.error();
@@ -164,6 +170,16 @@ public class StructuredKnowledgeUnitReviewService {
     private ReviewResult syncedResult(Long unitId, String status) {
         StructuredKnowledgeUnitIndexService.SyncReport sync = indexService.sync();
         return new ReviewResult(unitId, status, true, sync.success(), sync.error());
+    }
+
+    private boolean belongsToPublishedKnowledgeDocument(Long unitId) {
+        BotKnowledgeSemanticUnit unit = unitMapper.selectById(unitId);
+        if (unit == null) return false;
+        BotKnowledgeDocument document = documentMapper.selectById(unit.getDocumentId());
+        return document != null
+            && "PUBLISHED".equals(document.getPublishStatus())
+            && "KNOWLEDGE".equalsIgnoreCase(document.getSourceScope())
+            && !Integer.valueOf(1).equals(document.getDeleted());
     }
 
     private BotKnowledgeSemanticUnit requireUnit(Long unitId) {

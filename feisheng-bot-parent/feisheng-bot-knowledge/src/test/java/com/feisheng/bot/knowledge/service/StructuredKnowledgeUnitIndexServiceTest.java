@@ -58,7 +58,7 @@ class StructuredKnowledgeUnitIndexServiceTest {
         Map<String, Object> result = results.get(0);
         assertEquals(1L, result.get("semanticUnitId"));
         assertEquals(42L, result.get("categoryId"));
-        assertEquals("PUBLIC", result.get("sourceScope"));
+        assertEquals("KNOWLEDGE", result.get("sourceScope"));
         assertEquals("2027-01-02T03:04:05Z", result.get("expiresAt"));
         assertEquals(List.of(101L), result.get("evidenceChunkIds"));
         assertEquals(Map.of("product", "signing"), result.get("candidateMetadata"));
@@ -274,6 +274,35 @@ class StructuredKnowledgeUnitIndexServiceTest {
         assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
     }
 
+    @Test
+    void conflictRecallUsesOnlyPublishedUnitsInTheRequestedKnowledgeSet() {
+        BotKnowledgeSemanticUnitMapper unitMapper = mock(BotKnowledgeSemanticUnitMapper.class);
+        BotKnowledgeChunkMapper chunkMapper = mock(BotKnowledgeChunkMapper.class);
+        BotKnowledgeDocumentMapper documentMapper = mock(BotKnowledgeDocumentMapper.class);
+        BotKnowledgeSemanticUnit source = unit(1L, "APPROVED", "[1,0]", "[101]");
+        BotKnowledgeSemanticUnit otherSet = unit(2L, "APPROVED", "[1,0]", "[201]");
+        otherSet.setDocumentId(8L);
+        when(unitMapper.selectList(any())).thenReturn(List.of(source, otherSet));
+        when(chunkMapper.selectList(any())).thenReturn(List.of(
+            chunk(101L, 7L, "APPROVED", 0), chunk(201L, 8L, "APPROVED", 0)));
+        BotKnowledgeDocument published = document(7L, 42L);
+        BotKnowledgeDocument draft = document(8L, 84L);
+        draft.setKnowledgeSetKey("other-set");
+        draft.setPublishStatus("DRAFT");
+        when(documentMapper.selectList(any())).thenReturn(List.of(published, draft));
+        StructuredKnowledgeUnitIndexService service = new StructuredKnowledgeUnitIndexService(
+            unitMapper, chunkMapper, documentMapper, new ObjectMapper(), disabledQdrant());
+        assertTrue(service.sync().success());
+
+        List<StructuredKnowledgeUnitIndexService.ConflictCandidate> candidates =
+            service.searchConflictCandidates(new StructuredKnowledgeUnitIndexService.ConflictQuery(
+                List.of(1.0, 0.0), "set-a", 999L, 20, 0.5));
+
+        assertEquals(1, candidates.size());
+        assertEquals(1L, candidates.get(0).semanticUnit().getId());
+        assertEquals("set-a", candidates.get(0).knowledgeSetKey());
+    }
+
     private BotKnowledgeSemanticUnit unit(Long id, String status, String embedding,
                                           String evidenceChunkIds) {
         BotKnowledgeSemanticUnit unit = new BotKnowledgeSemanticUnit();
@@ -306,7 +335,9 @@ class StructuredKnowledgeUnitIndexServiceTest {
         document.setId(id);
         document.setTitle("Signing manual");
         document.setCategoryId(categoryId);
-        document.setSourceScope("PUBLIC");
+        document.setSourceScope("KNOWLEDGE");
+        document.setPublishStatus("PUBLISHED");
+        document.setKnowledgeSetKey("set-a");
         document.setExpiresAt(Date.from(Instant.parse("2027-01-02T03:04:05Z")));
         document.setStatus(2);
         document.setDeleted(0);

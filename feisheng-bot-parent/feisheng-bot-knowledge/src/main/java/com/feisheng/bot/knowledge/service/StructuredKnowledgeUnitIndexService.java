@@ -37,7 +37,8 @@ public class StructuredKnowledgeUnitIndexService {
     private static final Set<String> PROHIBITED_RESULT_FIELDS = Set.of(
         "answer", "fullAnswer", "qaAnswer", "directAnswerEnabled", "directAnswerEligible");
     private static final Set<String> TRUSTED_FILTER_FIELDS = Set.of(
-        "semanticUnitId", "documentId", "categoryId", "sourceScope", "expiresAt");
+        "semanticUnitId", "documentId", "categoryId", "sourceScope", "expiresAt",
+        "knowledgeSetKey");
 
     private final BotKnowledgeSemanticUnitMapper unitMapper;
     private final BotKnowledgeChunkMapper chunkMapper;
@@ -207,6 +208,47 @@ public class StructuredKnowledgeUnitIndexService {
         return searchMemory(queryEmbedding, topK, minScore, normalizedFilters);
     }
 
+    /**
+     * Candidate-only recall used by migration conflict detection. The authoritative
+     * in-memory snapshot is always rechecked after a remote hit, so stale Qdrant
+     * payloads cannot escape publication or knowledge-set filters.
+     */
+    public List<ConflictCandidate> searchConflictCandidates(ConflictQuery query) {
+        if (!enabled || query == null || query.queryVector() == null
+                || query.queryVector().isEmpty() || query.topK() <= 0
+                || query.knowledgeSetKey() == null || query.knowledgeSetKey().isBlank()
+                || !Double.isFinite(query.minScore())) {
+            return Collections.emptyList();
+        }
+        String key = query.knowledgeSetKey().trim();
+        int requested = Math.min(Math.max(query.topK(), 1), 100);
+        Map<String, Object> filters = Map.of("knowledgeSetKey", key);
+        List<Map<String, Object>> hits = search(query.queryVector(), requested,
+            query.minScore(), filters);
+        List<ConflictCandidate> candidates = new ArrayList<>(hits.size());
+        Set<Long> seen = new HashSet<>();
+        for (Map<String, Object> hit : hits) {
+            Long unitId = semanticUnitId(hit);
+            Long documentId = positiveLong(hit.get("documentId"));
+            if (unitId == null || documentId == null
+                    || Objects.equals(documentId, query.excludedTargetDocumentId())
+                    || !seen.add(unitId)) {
+                continue;
+            }
+            UnitEntry entry = snapshot.units().get(unitId);
+            if (entry == null || !key.equals(entry.knowledgeSetKey())
+                    || Objects.equals(entry.documentId(), query.excludedTargetDocumentId())) {
+                continue;
+            }
+            double similarity = number(hit.get("similarity"));
+            if (!Double.isFinite(similarity) || similarity < query.minScore()) continue;
+            candidates.add(new ConflictCandidate(entry.semanticUnit(), similarity,
+                entry.documentId(), entry.knowledgeSetKey()));
+            if (candidates.size() >= requested) break;
+        }
+        return List.copyOf(candidates);
+    }
+
     private List<Map<String, Object>> searchMemory(List<Double> queryEmbedding, int topK,
                                                     double minScore,
                                                     Map<String, Object> filters) {
@@ -235,7 +277,15 @@ public class StructuredKnowledgeUnitIndexService {
                 .eq(BotKnowledgeChunk::getStatus, "APPROVED"));
         List<BotKnowledgeDocument> documents = documentMapper.selectList(
             new LambdaQueryWrapper<BotKnowledgeDocument>()
-                .eq(BotKnowledgeDocument::getStatus, 2));
+                .eq(BotKnowledgeDocument::getStatus, 2)
+                .eq(BotKnowledgeDocument::getPublishStatus, "PUBLISHED")
+                .eq(BotKnowledgeDocument::getSourceScope, "KNOWLEDGE")
+                .and(wrapper -> wrapper.isNull(BotKnowledgeDocument::getEffectiveFrom)
+                    .or().le(BotKnowledgeDocument::getEffectiveFrom,
+                        java.util.Date.from(Instant.now())))
+                .and(wrapper -> wrapper.isNull(BotKnowledgeDocument::getEffectiveTo)
+                    .or().gt(BotKnowledgeDocument::getEffectiveTo,
+                        java.util.Date.from(Instant.now()))));
 
         Map<Long, Long> approvedChunkDocuments = new HashMap<>();
         for (BotKnowledgeChunk chunk : chunks) {
@@ -247,13 +297,17 @@ public class StructuredKnowledgeUnitIndexService {
         Map<Long, DocumentMeta> documentMetadata = new HashMap<>();
         for (BotKnowledgeDocument document : documents) {
             if (document.getId() == null || Integer.valueOf(1).equals(document.getDeleted())
-                    || !Integer.valueOf(2).equals(document.getStatus())) continue;
+                    || !Integer.valueOf(2).equals(document.getStatus())
+                    || !"PUBLISHED".equals(document.getPublishStatus())
+                    || !"KNOWLEDGE".equals(document.getSourceScope())
+                    || !isEffective(document)) continue;
             documentMetadata.put(document.getId(), new DocumentMeta(
                 firstNonBlank(document.getTitle(), document.getFileName(),
                     "\u6587\u6863 " + document.getId()),
                 document.getCategoryId(), nullToEmpty(document.getSourceScope()),
                 document.getExpiresAt() == null
-                    ? "" : document.getExpiresAt().toInstant().toString()));
+                    ? "" : document.getExpiresAt().toInstant().toString(),
+                nullToEmpty(document.getKnowledgeSetKey())));
         }
 
         Map<Long, UnitEntry> entries = new HashMap<>();
@@ -293,7 +347,8 @@ public class StructuredKnowledgeUnitIndexService {
                 unit.getExtractionConfidence(), nullToEmpty(unit.getExtractorModel()),
                 nullToEmpty(unit.getPromptVersion()), nullToEmpty(unit.getSchemaVersion()),
                 nullToEmpty(unit.getSourceHash()), document.title(), document.sourceScope(),
-                document.expiresAt(), vector, nullToEmpty(unit.getEmbeddingModel()),
+                document.expiresAt(), document.knowledgeSetKey(), vector,
+                unit, nullToEmpty(unit.getEmbeddingModel()),
                 nullToEmpty(unit.getEmbeddingVersion()), unit.getEmbeddingDimensions(),
                 nullToEmpty(unit.getEmbeddingContentHash())));
         }
@@ -353,6 +408,7 @@ public class StructuredKnowledgeUnitIndexService {
         payload.put("documentTitle", entry.documentTitle());
         payload.put("categoryId", entry.categoryId());
         payload.put("sourceScope", entry.sourceScope());
+        payload.put("knowledgeSetKey", entry.knowledgeSetKey());
         payload.put("expiresAt", entry.expiresAt());
         payload.put("unitKey", entry.unitKey());
         payload.put("unitType", entry.unitType());
@@ -527,6 +583,16 @@ public class StructuredKnowledgeUnitIndexService {
         return "";
     }
 
+    private boolean isEffective(BotKnowledgeDocument document) {
+        Instant now = Instant.now();
+        return (document.getEffectiveFrom() == null
+                || !document.getEffectiveFrom().toInstant().isAfter(now))
+            && (document.getEffectiveTo() == null
+                || document.getEffectiveTo().toInstant().isAfter(now))
+            && (document.getExpiresAt() == null
+                || document.getExpiresAt().toInstant().isAfter(now));
+    }
+
     private static String rootMessage(Throwable error) {
         Throwable current = error;
         while (current.getCause() != null) current = current.getCause();
@@ -557,12 +623,13 @@ public class StructuredKnowledgeUnitIndexService {
                              String metadataJson, Double extractionConfidence,
                              String extractorModel, String promptVersion, String schemaVersion,
                              String sourceHash, String documentTitle, String sourceScope,
-                             String expiresAt, List<Double> vector, String embeddingModel,
+                             String expiresAt, String knowledgeSetKey, List<Double> vector,
+                             BotKnowledgeSemanticUnit semanticUnit, String embeddingModel,
                              String embeddingVersion, Integer embeddingDimensions,
                              String embeddingContentHash) {}
 
     private record DocumentMeta(String title, Long categoryId, String sourceScope,
-                                String expiresAt) {}
+                                String expiresAt, String knowledgeSetKey) {}
 
     private record Diff(int added, int updated, int removed,
                         List<Long> changedIds, List<Long> removedIds) {
@@ -596,4 +663,11 @@ public class StructuredKnowledgeUnitIndexService {
     public record IndexStatus(long version, int units, String searchBackend,
                               boolean qdrantReady, QdrantVectorStore.QdrantStatus qdrant,
                               SyncReport lastSync) {}
+
+    public record ConflictQuery(List<Double> queryVector, String knowledgeSetKey,
+                                Long excludedTargetDocumentId, int topK, double minScore) {}
+
+    public record ConflictCandidate(BotKnowledgeSemanticUnit semanticUnit,
+                                    double similarity, Long documentId,
+                                    String knowledgeSetKey) {}
 }

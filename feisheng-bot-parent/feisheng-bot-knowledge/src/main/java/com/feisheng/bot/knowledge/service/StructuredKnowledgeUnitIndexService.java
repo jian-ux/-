@@ -208,6 +208,54 @@ public class StructuredKnowledgeUnitIndexService {
         return searchMemory(queryEmbedding, topK, minScore, normalizedFilters);
     }
 
+    /** Builds a target-only index snapshot without changing the live searchable snapshot. */
+    public ShadowIndexHandle buildShadowIndex(Long targetDocumentId) {
+        if (!enabled || targetDocumentId == null) {
+            return new ShadowIndexHandle(targetDocumentId, List.of(), false, "index disabled or target missing");
+        }
+        try {
+            List<BotKnowledgeSemanticUnit> units = unitMapper.selectList(
+                new LambdaQueryWrapper<BotKnowledgeSemanticUnit>()
+                    .eq(BotKnowledgeSemanticUnit::getDocumentId, targetDocumentId)
+                    .eq(BotKnowledgeSemanticUnit::getStatus, "APPROVED")
+                    .isNotNull(BotKnowledgeSemanticUnit::getEmbedding));
+            List<ShadowUnit> shadow = new ArrayList<>();
+            for (BotKnowledgeSemanticUnit unit : units == null ? List.<BotKnowledgeSemanticUnit>of() : units) {
+                List<Double> vector = parseVector(unit.getEmbedding());
+                List<Long> evidence = parseLongList(unit.getEvidenceChunkIdsJson());
+                if (unit.getId() == null || vector.isEmpty() || evidence.isEmpty()) {
+                    return new ShadowIndexHandle(targetDocumentId, List.copyOf(shadow), false,
+                        "approved unit has missing vector or evidence");
+                }
+                shadow.add(new ShadowUnit(unit.getId(), vector, nullToEmpty(unit.getEmbeddingModel()),
+                    nullToEmpty(unit.getEmbeddingContentHash()), evidence));
+            }
+            return new ShadowIndexHandle(targetDocumentId, List.copyOf(shadow), true, null);
+        } catch (Exception e) {
+            return new ShadowIndexHandle(targetDocumentId, List.of(), false, rootMessage(e));
+        }
+    }
+
+    public ShadowValidation validateShadowIndex(ShadowIndexHandle handle) {
+        if (handle == null || !handle.success()) {
+            return new ShadowValidation(false, handle == null ? 0 : handle.units().size(), 0,
+                handle == null ? List.of("missing handle") : List.of(handle.error()));
+        }
+        List<String> failures = new ArrayList<>();
+        int expected = handle.units().size();
+        Set<Integer> dimensions = new HashSet<>();
+        for (ShadowUnit unit : handle.units()) {
+            if (unit.vector() == null || unit.vector().isEmpty()
+                    || unit.vector().stream().anyMatch(v -> v == null || !Double.isFinite(v))) {
+                failures.add("unit " + unit.id() + " has invalid vector");
+            } else dimensions.add(unit.vector().size());
+            if (unit.evidenceChunkIds().isEmpty()) failures.add("unit " + unit.id() + " has no evidence");
+        }
+        if (dimensions.size() > 1) failures.add("embedding dimensions are inconsistent");
+        return new ShadowValidation(failures.isEmpty(), expected,
+            failures.isEmpty() ? expected : 0, List.copyOf(failures));
+    }
+
     /**
      * Candidate-only recall used by migration conflict detection. The authoritative
      * in-memory snapshot is always rechecked after a remote hit, so stale Qdrant
@@ -726,4 +774,26 @@ public class StructuredKnowledgeUnitIndexService {
     public record ConflictCandidate(BotKnowledgeSemanticUnit semanticUnit,
                                     double similarity, Long documentId,
                                     String knowledgeSetKey) {}
+
+    public record ShadowIndexHandle(Long targetDocumentId, List<ShadowUnit> units,
+                                    boolean success, String error) {
+        public ShadowIndexHandle {
+            units = units == null ? List.of() : List.copyOf(units);
+        }
+    }
+
+    public record ShadowUnit(Long id, List<Double> vector, String embeddingModel,
+                             String contentHash, List<Long> evidenceChunkIds) {
+        public ShadowUnit {
+            vector = vector == null ? List.of() : List.copyOf(vector);
+            evidenceChunkIds = evidenceChunkIds == null ? List.of() : List.copyOf(evidenceChunkIds);
+        }
+    }
+
+    public record ShadowValidation(boolean success, int expectedUnits, int indexedUnits,
+                                   List<String> smokeFailures) {
+        public ShadowValidation {
+            smokeFailures = smokeFailures == null ? List.of() : List.copyOf(smokeFailures);
+        }
+    }
 }

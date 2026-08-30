@@ -23,4 +23,8 @@ public interface BotKnowledgeDocumentMapper extends BaseMapper<BotKnowledgeDocum
 
     @Update("UPDATE bot_knowledge_document SET publish_status='ARCHIVED', effective_to=#{effectiveTo} WHERE id=#{oldId} AND publish_status='PUBLISHED' AND deleted=0")
     int archivePublishedGuarded(@Param("oldId") Long oldId, @Param("effectiveTo") Date effectiveTo);
+
+    @Update("UPDATE bot_knowledge_document SET publish_status='PUBLISHED', published_at=#{publishedAt}, effective_from=#{effectiveFrom}, effective_to=NULL WHERE id=#{targetId} AND publish_status='ARCHIVED' AND deleted=0")
+    int restoreArchivedGuarded(@Param("targetId") Long targetId, @Param("publishedAt") Date publishedAt,
+                               @Param("effectiveFrom") Date effectiveFrom);
 }

@@ -17,13 +17,22 @@ public class KnowledgeMigrationController {
     private final KnowledgeMigrationJobService jobService;
     private final KnowledgeMigrationReviewService reviewService;
     private final BotKnowledgeConflictMapper conflictMapper;
+    private final com.feisheng.bot.admin.service.KnowledgeDocumentReleaseService releaseService;
+
+    public KnowledgeMigrationController(KnowledgeMigrationJobService jobService,
+                                        KnowledgeMigrationReviewService reviewService,
+                                        BotKnowledgeConflictMapper conflictMapper,
+                                        com.feisheng.bot.admin.service.KnowledgeDocumentReleaseService releaseService) {
+        this.jobService = jobService;
+        this.reviewService = reviewService;
+        this.conflictMapper = conflictMapper;
+        this.releaseService = releaseService;
+    }
 
     public KnowledgeMigrationController(KnowledgeMigrationJobService jobService,
                                         KnowledgeMigrationReviewService reviewService,
                                         BotKnowledgeConflictMapper conflictMapper) {
-        this.jobService = jobService;
-        this.reviewService = reviewService;
-        this.conflictMapper = conflictMapper;
+        this(jobService, reviewService, conflictMapper, null);
     }
 
     @PostMapping("/migrations")
@@ -94,13 +103,26 @@ public class KnowledgeMigrationController {
     }
 
     @PostMapping("/migrations/{id}/switch")
-    public R<Void> switchVersion(@PathVariable Long id) {
-        return R.fail(501, "文档切换尚未接入发布工作流");
+    public R<com.feisheng.bot.admin.service.KnowledgeDocumentReleaseService.ReleaseResult> switchVersion(
+            @PathVariable Long id, Authentication authentication) {
+        try {
+            return R.ok(releaseService.switchMigration(id, operatorId(authentication)));
+        } catch (com.feisheng.bot.admin.service.KnowledgeDocumentReleaseService.ReleaseException e) {
+            return R.fail(e.status(), e.getMessage());
+        }
     }
 
     @PostMapping("/sets/{knowledgeSetKey}/rollback")
-    public R<Void> rollback(@PathVariable String knowledgeSetKey) {
-        return R.fail(501, "文档回滚尚未接入发布工作流");
+    public R<com.feisheng.bot.admin.service.KnowledgeDocumentReleaseService.ReleaseResult> rollback(
+            @PathVariable String knowledgeSetKey,
+            @RequestParam(required = false) Long targetDocumentId,
+            Authentication authentication) {
+        try {
+            return R.ok(releaseService.rollback(knowledgeSetKey, targetDocumentId,
+                operatorId(authentication)));
+        } catch (com.feisheng.bot.admin.service.KnowledgeDocumentReleaseService.ReleaseException e) {
+            return R.fail(e.status(), e.getMessage());
+        }
     }
 
     public record CreateRequest(Long sourceDocumentId) {}

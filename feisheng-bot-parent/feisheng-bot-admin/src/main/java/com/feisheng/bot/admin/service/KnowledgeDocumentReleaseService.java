@@ -6,7 +6,12 @@ import com.feisheng.bot.admin.entity.BotKnowledgeDocument;
 import com.feisheng.bot.admin.mapper.BotKnowledgeChunkMapper;
 import com.feisheng.bot.admin.mapper.BotKnowledgeDocumentMapper;
 import com.feisheng.bot.knowledge.service.KnowledgeIndexService;
+import com.feisheng.bot.knowledge.service.StructuredKnowledgeUnitIndexService;
+import com.feisheng.bot.admin.entity.BotKnowledgeMigrationJob;
+import com.feisheng.bot.admin.mapper.BotKnowledgeMigrationJobMapper;
+import com.feisheng.bot.common.util.EmbeddingMetadataUtil;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -15,6 +20,8 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 @Service
 public class KnowledgeDocumentReleaseService {
@@ -25,13 +32,133 @@ public class KnowledgeDocumentReleaseService {
     private final BotKnowledgeDocumentMapper documentMapper;
     private final BotKnowledgeChunkMapper chunkMapper;
     private final KnowledgeIndexService indexService;
+    private final StructuredKnowledgeUnitIndexService structuredIndexService;
+    private final BotKnowledgeMigrationJobMapper migrationJobMapper;
+    private static final ConcurrentHashMap<String, ReentrantLock> SET_LOCKS = new ConcurrentHashMap<>();
 
     public KnowledgeDocumentReleaseService(BotKnowledgeDocumentMapper documentMapper,
                                            BotKnowledgeChunkMapper chunkMapper,
                                            KnowledgeIndexService indexService) {
+        this(documentMapper, chunkMapper, indexService, null, null);
+    }
+
+    @Autowired
+    public KnowledgeDocumentReleaseService(BotKnowledgeDocumentMapper documentMapper,
+                                           BotKnowledgeChunkMapper chunkMapper,
+                                           KnowledgeIndexService indexService,
+                                           StructuredKnowledgeUnitIndexService structuredIndexService,
+                                           BotKnowledgeMigrationJobMapper migrationJobMapper) {
         this.documentMapper = documentMapper;
         this.chunkMapper = chunkMapper;
         this.indexService = indexService;
+        this.structuredIndexService = structuredIndexService;
+        this.migrationJobMapper = migrationJobMapper;
+    }
+
+    /** Guarded document-level migration switch. The old version remains published until commit. */
+    @Transactional
+    public ReleaseResult switchMigration(Long jobId, Long operatorId) {
+        requireMigrationDependencies();
+        BotKnowledgeMigrationJob job = migrationJobMapper.findByIdForUpdate(jobId);
+        if (job == null) throw new ReleaseException(404, "迁移任务不存在");
+        if (!"READY_TO_SWITCH".equals(job.getStatus())) throw new ReleaseException(409, "迁移任务尚未通过发布闸门");
+        BotKnowledgeDocument source = requireDocument(job.getSourceDocumentId());
+        BotKnowledgeDocument target = requireDocument(job.getTargetDocumentId());
+        String key = firstText(job.getKnowledgeSetKey(), target.getKnowledgeSetKey());
+        ReentrantLock lock = SET_LOCKS.computeIfAbsent(key, ignored -> new ReentrantLock());
+        lock.lock();
+        try {
+            String currentHash = sourceContentHash(source.getId());
+            if (!Objects.equals(currentHash, job.getSourceContentHash())) {
+                throw new ReleaseException(409, "源文档内容已变化，不能切换");
+            }
+            StructuredKnowledgeUnitIndexService.ShadowIndexHandle handle =
+                structuredIndexService.buildShadowIndex(target.getId());
+            StructuredKnowledgeUnitIndexService.ShadowValidation validation =
+                structuredIndexService.validateShadowIndex(handle);
+            if (!validation.success()) throw new ReleaseException(409, "影子索引校验失败: " + validation.smokeFailures());
+            if (indexService != null) {
+                KnowledgeIndexService.ShadowIndexHandle regular = indexService.buildShadowIndex(target.getId());
+                KnowledgeIndexService.ShadowValidation regularValidation = indexService.validateShadowIndex(regular);
+                if (!regularValidation.success()) {
+                    throw new ReleaseException(409, "普通索引影子校验失败: " + regularValidation.smokeFailures());
+                }
+            }
+            Date now = new Date();
+            if (documentMapper.publishDraftGuarded(target.getId(), now, now) != 1) {
+                throw new ReleaseException(409, "目标版本已被切换或不是草稿");
+            }
+            if (documentMapper.archivePublishedGuarded(source.getId(), now) != 1) {
+                throw new ReleaseException(409, "源版本已被其他操作修改");
+            }
+            target.setPublishStatus(PUBLISHED);
+            target.setPublishedAt(now);
+            target.setEffectiveFrom(now);
+            target.setEffectiveTo(null);
+            target.setSupersedesDocumentId(source.getId());
+            job.setStatus("COMPLETED");
+            job.setCurrentStep("COMPLETED");
+            job.setSwitchedAt(now);
+            job.setReviewerId(operatorId);
+            migrationJobMapper.updateById(job);
+            syncIndexAfterCommit();
+            return new ReleaseResult(target.getId(), key,
+                target.getDocumentVersion() == null ? 1 : target.getDocumentVersion(), PUBLISHED, source.getId());
+        } finally { lock.unlock(); }
+    }
+
+    @Transactional
+    public ReleaseResult rollback(String knowledgeSetKey, Long targetDocumentId, Long operatorId) {
+        requireMigrationDependencies();
+        String key = normalizeKnowledgeSetKey(knowledgeSetKey, null, null, 0L);
+        ReentrantLock lock = SET_LOCKS.computeIfAbsent(key, ignored -> new ReentrantLock());
+        lock.lock();
+        try {
+            List<BotKnowledgeDocument> versions = documentMapper.selectPublishedByKnowledgeSetKey(key);
+            BotKnowledgeDocument current = versions.isEmpty() ? null : versions.get(0);
+            BotKnowledgeDocument restored = targetDocumentId == null ? null : requireDocument(targetDocumentId);
+            if (restored == null) {
+                List<BotKnowledgeDocument> archived = documentMapper.selectList(new LambdaQueryWrapper<BotKnowledgeDocument>()
+                    .eq(BotKnowledgeDocument::getKnowledgeSetKey, key)
+                    .eq(BotKnowledgeDocument::getPublishStatus, ARCHIVED)
+                    .eq(BotKnowledgeDocument::getDeleted, 0)
+                    .orderByDesc(BotKnowledgeDocument::getDocumentVersion)
+                    .orderByDesc(BotKnowledgeDocument::getId));
+                restored = archived.isEmpty() ? null : archived.get(0);
+            }
+            if (restored == null || !ARCHIVED.equals(restored.getPublishStatus())) {
+                throw new ReleaseException(409, "没有可回滚的归档版本");
+            }
+            Date now = new Date();
+            if (current != null && documentMapper.archivePublishedGuarded(current.getId(), now) != 1) {
+                throw new ReleaseException(409, "当前版本已被其他操作修改");
+            }
+            if (documentMapper.restoreArchivedGuarded(restored.getId(), now, now) != 1) {
+                throw new ReleaseException(409, "归档版本已被其他操作修改");
+            }
+            syncIndexAfterCommit();
+            return new ReleaseResult(restored.getId(), key,
+                restored.getDocumentVersion() == null ? 1 : restored.getDocumentVersion(), PUBLISHED,
+                current == null ? null : current.getId());
+        } finally { lock.unlock(); }
+    }
+
+    private void requireMigrationDependencies() {
+        if (structuredIndexService == null || migrationJobMapper == null) {
+            throw new ReleaseException(500, "迁移发布组件未配置");
+        }
+    }
+
+    private String sourceContentHash(Long documentId) {
+        List<BotKnowledgeChunk> sourceChunks = chunkMapper.selectList(new LambdaQueryWrapper<BotKnowledgeChunk>()
+            .eq(BotKnowledgeChunk::getDocumentId, documentId)
+            .orderByAsc(BotKnowledgeChunk::getChunkIndex).orderByAsc(BotKnowledgeChunk::getId));
+        StringBuilder text = new StringBuilder();
+        for (BotKnowledgeChunk chunk : sourceChunks) {
+            text.append(chunk.getId()).append('\0').append(Objects.toString(chunk.getChunkIndex(), ""))
+                .append('\0').append(chunk.getContent()).append('\1');
+        }
+        return EmbeddingMetadataUtil.contentHash(text.toString());
     }
 
     @Transactional

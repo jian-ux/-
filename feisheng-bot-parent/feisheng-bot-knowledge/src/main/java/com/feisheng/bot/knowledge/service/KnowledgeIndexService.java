@@ -125,6 +125,45 @@ public class KnowledgeIndexService {
         return lastReport;
     }
 
+    /** Build a target-only regular chunk index candidate without replacing the live snapshot. */
+    public ShadowIndexHandle buildShadowIndex(Long targetDocumentId) {
+        if (targetDocumentId == null) return new ShadowIndexHandle(targetDocumentId, List.of(), false, "target missing");
+        try {
+            List<BotKnowledgeChunk> chunks = chunkMapper.selectList(new LambdaQueryWrapper<BotKnowledgeChunk>()
+                .eq(BotKnowledgeChunk::getDocumentId, targetDocumentId)
+                .eq(BotKnowledgeChunk::getStatus, "APPROVED"));
+            List<ShadowPoint> points = new ArrayList<>();
+            for (BotKnowledgeChunk chunk : chunks == null ? List.<BotKnowledgeChunk>of() : chunks) {
+                List<Double> vector = parseVector(chunk.getEmbedding());
+                if (chunk.getId() == null || vector.isEmpty()) {
+                    return new ShadowIndexHandle(targetDocumentId, List.copyOf(points), false, "approved chunk has missing vector");
+                }
+                points.add(new ShadowPoint(chunk.getId(), vector, nullToEmpty(chunk.getEmbeddingModel()),
+                    nullToEmpty(chunk.getEmbeddingContentHash())));
+            }
+            return new ShadowIndexHandle(targetDocumentId, List.copyOf(points), true, null);
+        } catch (Exception e) {
+            return new ShadowIndexHandle(targetDocumentId, List.of(), false, rootMessage(e));
+        }
+    }
+
+    public ShadowValidation validateShadowIndex(ShadowIndexHandle handle) {
+        if (handle == null || !handle.success()) return new ShadowValidation(false,
+            handle == null ? 0 : handle.points().size(), 0,
+            List.of(handle == null ? "missing handle" : handle.error()));
+        List<String> failures = new ArrayList<>();
+        Set<Integer> dimensions = new HashSet<>();
+        for (ShadowPoint point : handle.points()) {
+            if (point.vector() == null || point.vector().isEmpty()
+                    || point.vector().stream().anyMatch(v -> v == null || !Double.isFinite(v))) {
+                failures.add("point " + point.id() + " has invalid vector");
+            } else dimensions.add(point.vector().size());
+        }
+        if (dimensions.size() > 1) failures.add("embedding dimensions are inconsistent");
+        return new ShadowValidation(failures.isEmpty(), handle.points().size(),
+            failures.isEmpty() ? handle.points().size() : 0, List.copyOf(failures));
+    }
+
     public synchronized QdrantReindexReport reindexQdrant() {
         long started = System.currentTimeMillis();
         if (!qdrantStore.isEnabled()) {
@@ -1002,4 +1041,17 @@ public class KnowledgeIndexService {
     public record QdrantReindexReport(boolean success, int expectedPoints,
                                       int upserted, int deleted, long durationMs,
                                       String completedAt, String error) {}
+
+    public record ShadowIndexHandle(Long targetDocumentId, List<ShadowPoint> points,
+                                    boolean success, String error) {
+        public ShadowIndexHandle { points = points == null ? List.of() : List.copyOf(points); }
+    }
+    public record ShadowPoint(Long id, List<Double> vector, String embeddingModel,
+                              String contentHash) {
+        public ShadowPoint { vector = vector == null ? List.of() : List.copyOf(vector); }
+    }
+    public record ShadowValidation(boolean success, int expectedUnits, int indexedUnits,
+                                   List<String> smokeFailures) {
+        public ShadowValidation { smokeFailures = smokeFailures == null ? List.of() : List.copyOf(smokeFailures); }
+    }
 }

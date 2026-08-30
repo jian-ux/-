@@ -20,8 +20,6 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.locks.ReentrantLock;
 
 @Service
 public class KnowledgeDocumentReleaseService {
@@ -34,7 +32,6 @@ public class KnowledgeDocumentReleaseService {
     private final KnowledgeIndexService indexService;
     private final StructuredKnowledgeUnitIndexService structuredIndexService;
     private final BotKnowledgeMigrationJobMapper migrationJobMapper;
-    private static final ConcurrentHashMap<String, ReentrantLock> SET_LOCKS = new ConcurrentHashMap<>();
 
     public KnowledgeDocumentReleaseService(BotKnowledgeDocumentMapper documentMapper,
                                            BotKnowledgeChunkMapper chunkMapper,
@@ -65,10 +62,13 @@ public class KnowledgeDocumentReleaseService {
         BotKnowledgeDocument source = requireDocument(job.getSourceDocumentId());
         BotKnowledgeDocument target = requireDocument(job.getTargetDocumentId());
         String key = firstText(job.getKnowledgeSetKey(), target.getKnowledgeSetKey());
-        ReentrantLock lock = SET_LOCKS.computeIfAbsent(key, ignored -> new ReentrantLock());
-        lock.lock();
-        try {
-            String currentHash = sourceContentHash(source.getId());
+        if (!Objects.equals(key, target.getKnowledgeSetKey()) || !Objects.equals(key, source.getKnowledgeSetKey())) {
+            throw new ReleaseException(409, "源、目标与任务知识集不一致");
+        }
+        // Database row lock serializes switches across JVMs and transactions.
+        List<BotKnowledgeDocument> published = documentMapper.selectPublishedForUpdateByKnowledgeSetKey(key);
+        if (published == null) published = List.of();
+        String currentHash = sourceContentHash(source.getId());
             if (!Objects.equals(currentHash, job.getSourceContentHash())) {
                 throw new ReleaseException(409, "源文档内容已变化，不能切换");
             }
@@ -85,17 +85,21 @@ public class KnowledgeDocumentReleaseService {
                 }
             }
             Date now = new Date();
-            if (documentMapper.publishDraftGuarded(target.getId(), now, now) != 1) {
+            Long supersededId = source.getId();
+            if (documentMapper.publishDraftWithSupersedesGuarded(target.getId(), now, now, supersededId) != 1) {
                 throw new ReleaseException(409, "目标版本已被切换或不是草稿");
             }
-            if (documentMapper.archivePublishedGuarded(source.getId(), now) != 1) {
-                throw new ReleaseException(409, "源版本已被其他操作修改");
+            for (BotKnowledgeDocument current : published) {
+                if (!Objects.equals(current.getId(), target.getId())
+                        && documentMapper.archivePublishedGuarded(current.getId(), now) != 1) {
+                    throw new ReleaseException(409, "已有版本被其他操作修改");
+                }
             }
             target.setPublishStatus(PUBLISHED);
             target.setPublishedAt(now);
             target.setEffectiveFrom(now);
             target.setEffectiveTo(null);
-            target.setSupersedesDocumentId(source.getId());
+            target.setSupersedesDocumentId(supersededId);
             job.setStatus("COMPLETED");
             job.setCurrentStep("COMPLETED");
             job.setSwitchedAt(now);
@@ -104,17 +108,14 @@ public class KnowledgeDocumentReleaseService {
             syncIndexAfterCommit();
             return new ReleaseResult(target.getId(), key,
                 target.getDocumentVersion() == null ? 1 : target.getDocumentVersion(), PUBLISHED, source.getId());
-        } finally { lock.unlock(); }
+
     }
 
     @Transactional
     public ReleaseResult rollback(String knowledgeSetKey, Long targetDocumentId, Long operatorId) {
         requireMigrationDependencies();
         String key = normalizeKnowledgeSetKey(knowledgeSetKey, null, null, 0L);
-        ReentrantLock lock = SET_LOCKS.computeIfAbsent(key, ignored -> new ReentrantLock());
-        lock.lock();
-        try {
-            List<BotKnowledgeDocument> versions = documentMapper.selectPublishedByKnowledgeSetKey(key);
+        List<BotKnowledgeDocument> versions = documentMapper.selectPublishedForUpdateByKnowledgeSetKey(key);
             BotKnowledgeDocument current = versions.isEmpty() ? null : versions.get(0);
             BotKnowledgeDocument restored = targetDocumentId == null ? null : requireDocument(targetDocumentId);
             if (restored == null) {
@@ -126,21 +127,32 @@ public class KnowledgeDocumentReleaseService {
                     .orderByDesc(BotKnowledgeDocument::getId));
                 restored = archived.isEmpty() ? null : archived.get(0);
             }
-            if (restored == null || !ARCHIVED.equals(restored.getPublishStatus())) {
+            if (restored == null || !ARCHIVED.equals(restored.getPublishStatus())
+                    || !Objects.equals(key, restored.getKnowledgeSetKey())) {
                 throw new ReleaseException(409, "没有可回滚的归档版本");
             }
             Date now = new Date();
             if (current != null && documentMapper.archivePublishedGuarded(current.getId(), now) != 1) {
                 throw new ReleaseException(409, "当前版本已被其他操作修改");
             }
-            if (documentMapper.restoreArchivedGuarded(restored.getId(), now, now) != 1) {
+            if (documentMapper.restoreArchivedGuarded(restored.getId(), now, now,
+                    current == null ? null : current.getId()) != 1) {
                 throw new ReleaseException(409, "归档版本已被其他操作修改");
+            }
+            BotKnowledgeMigrationJob audit = migrationJobMapper.selectOne(new LambdaQueryWrapper<BotKnowledgeMigrationJob>()
+                .eq(BotKnowledgeMigrationJob::getTargetDocumentId, restored.getId())
+                .last("LIMIT 1"));
+            if (audit != null) {
+                audit.setReviewerId(operatorId);
+                audit.setReviewedAt(now);
+                audit.setReviewReason("ROLLBACK");
+                migrationJobMapper.updateById(audit);
             }
             syncIndexAfterCommit();
             return new ReleaseResult(restored.getId(), key,
                 restored.getDocumentVersion() == null ? 1 : restored.getDocumentVersion(), PUBLISHED,
                 current == null ? null : current.getId());
-        } finally { lock.unlock(); }
+
     }
 
     private void requireMigrationDependencies() {
@@ -272,13 +284,15 @@ public class KnowledgeDocumentReleaseService {
 
     private void syncIndexAfterCommit() {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            indexService.sync();
+            if (indexService != null) indexService.sync();
+            if (structuredIndexService != null) structuredIndexService.sync();
             return;
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                indexService.sync();
+                if (indexService != null) indexService.sync();
+                if (structuredIndexService != null) structuredIndexService.sync();
             }
         });
     }

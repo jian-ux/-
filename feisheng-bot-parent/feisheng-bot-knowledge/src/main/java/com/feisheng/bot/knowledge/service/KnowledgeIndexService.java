@@ -148,9 +148,10 @@ public class KnowledgeIndexService {
     }
 
     public ShadowValidation validateShadowIndex(ShadowIndexHandle handle) {
-        if (handle == null || !handle.success()) return new ShadowValidation(false,
+        if (handle == null || !handle.success() || handle.points().isEmpty()) return new ShadowValidation(false,
             handle == null ? 0 : handle.points().size(), 0,
-            List.of(handle == null ? "missing handle" : handle.error()));
+            List.of(handle == null ? "missing handle" : handle.points().isEmpty()
+                ? "shadow index is empty" : handle.error()));
         List<String> failures = new ArrayList<>();
         Set<Integer> dimensions = new HashSet<>();
         for (ShadowPoint point : handle.points()) {

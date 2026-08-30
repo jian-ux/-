@@ -237,21 +237,35 @@ public class StructuredKnowledgeUnitIndexService {
     }
 
     public ShadowValidation validateShadowIndex(ShadowIndexHandle handle) {
-        if (handle == null || !handle.success()) {
+        if (handle == null || !handle.success() || handle.units().isEmpty()) {
             return new ShadowValidation(false, handle == null ? 0 : handle.units().size(), 0,
-                handle == null ? List.of("missing handle") : List.of(handle.error()));
+                handle == null ? List.of("missing handle") : List.of(handle.units().isEmpty()
+                    ? "shadow index is empty" : handle.error()));
         }
         List<String> failures = new ArrayList<>();
         int expected = handle.units().size();
         Set<Integer> dimensions = new HashSet<>();
+        Set<String> models = new HashSet<>();
+        Set<Long> targetChunks = new HashSet<>();
+        List<BotKnowledgeChunk> chunks = chunkMapper.selectList(new LambdaQueryWrapper<BotKnowledgeChunk>()
+            .eq(BotKnowledgeChunk::getDocumentId, handle.targetDocumentId())
+            .eq(BotKnowledgeChunk::getStatus, "APPROVED"));
+        if (chunks != null) chunks.stream().map(BotKnowledgeChunk::getId).filter(Objects::nonNull)
+            .forEach(targetChunks::add);
         for (ShadowUnit unit : handle.units()) {
             if (unit.vector() == null || unit.vector().isEmpty()
                     || unit.vector().stream().anyMatch(v -> v == null || !Double.isFinite(v))) {
                 failures.add("unit " + unit.id() + " has invalid vector");
             } else dimensions.add(unit.vector().size());
             if (unit.evidenceChunkIds().isEmpty()) failures.add("unit " + unit.id() + " has no evidence");
+            else if (!targetChunks.containsAll(unit.evidenceChunkIds()))
+                failures.add("unit " + unit.id() + " references missing evidence");
+            if (!unit.embeddingModel().isBlank()) models.add(unit.embeddingModel());
+            if (!unit.contentHash().isBlank() && unit.contentHash().length() < 8)
+                failures.add("unit " + unit.id() + " has invalid content hash");
         }
         if (dimensions.size() > 1) failures.add("embedding dimensions are inconsistent");
+        if (models.size() > 1) failures.add("embedding models are inconsistent");
         return new ShadowValidation(failures.isEmpty(), expected,
             failures.isEmpty() ? expected : 0, List.copyOf(failures));
     }

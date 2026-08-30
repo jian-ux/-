@@ -44,16 +44,15 @@ public class KnowledgeMigrationSnapshotService {
         if (sourceChunks.isEmpty()) throw new SnapshotException(409, "源文档没有可迁移切片");
         String sourceHash = sourceHash(sourceChunks);
         String key = requireKnowledgeSetKey(source);
-        int targetVersion = releaseService.nextVersion(key);
-
         BotKnowledgeMigrationJob existing = jobMapper.selectOne(new LambdaQueryWrapper<BotKnowledgeMigrationJob>()
             .eq(BotKnowledgeMigrationJob::getSourceDocumentId, sourceDocumentId)
             .eq(BotKnowledgeMigrationJob::getSourceContentHash, sourceHash)
-            .eq(BotKnowledgeMigrationJob::getTargetVersionId, (long) targetVersion)
+            .in(BotKnowledgeMigrationJob::getStatus, List.of("PENDING", "RUNNING", "PAUSED", "COMPLETED"))
             .last("LIMIT 1"));
         if (existing != null) {
             return result(existing, sourceHash, sourceChunks.size());
         }
+        int targetVersion = releaseService.nextVersion(key);
 
         BotKnowledgeDocument target = copyDocument(source, key, targetVersion);
         documentMapper.insert(target);
@@ -103,7 +102,7 @@ public class KnowledgeMigrationSnapshotService {
         }
         List<BotKnowledgeChunk> existing = chunkMapper.selectList(new LambdaQueryWrapper<BotKnowledgeChunk>()
             .eq(BotKnowledgeChunk::getDocumentId, target.getId()));
-        if (existing.isEmpty()) cloneChunks(target.getId(), sourceChunks);
+        reconcileChunks(target.getId(), sourceChunks, existing);
         return result(job, currentHash, sourceChunks.size());
     }
 
@@ -140,6 +139,8 @@ public class KnowledgeMigrationSnapshotService {
         target.setOcrStatus(source.getOcrStatus());
         target.setOcrText(source.getOcrText());
         target.setOcrLanguage(source.getOcrLanguage());
+        target.setOcrError(source.getOcrError());
+        target.setExpiresAt(source.getExpiresAt());
         target.setFileSize(source.getFileSize());
         target.setCategoryId(source.getCategoryId());
         target.setStatus(COMPLETED);
@@ -160,7 +161,26 @@ public class KnowledgeMigrationSnapshotService {
     }
 
     private void cloneChunks(Long targetId, List<BotKnowledgeChunk> sourceChunks) {
+        reconcileChunks(targetId, sourceChunks, List.of());
+    }
+
+    private void reconcileChunks(Long targetId, List<BotKnowledgeChunk> sourceChunks, List<BotKnowledgeChunk> existing) {
+        List<BotKnowledgeChunk> remaining = new ArrayList<>(existing);
         for (BotKnowledgeChunk source : sourceChunks) {
+            int match = -1;
+            for (int i = 0; i < remaining.size(); i++) {
+                BotKnowledgeChunk candidate = remaining.get(i);
+                if (Objects.equals(candidate.getChunkIndex(), source.getChunkIndex())
+                    && Objects.equals(candidate.getContent(), source.getContent())
+                    && Objects.equals(candidate.getSectionPath(), source.getSectionPath())) {
+                    match = i;
+                    break;
+                }
+            }
+            if (match >= 0) {
+                remaining.remove(match);
+                continue;
+            }
             BotKnowledgeChunk target = new BotKnowledgeChunk();
             target.setDocumentId(targetId);
             target.setChunkIndex(source.getChunkIndex());
@@ -190,7 +210,7 @@ public class KnowledgeMigrationSnapshotService {
         for (BotKnowledgeChunk chunk : chunks) {
             source.append(chunk.getId()).append('\0')
                 .append(Objects.toString(chunk.getChunkIndex(), "")).append('\0')
-                .append(Objects.toString(chunk.getContent(), "")).append('\1');
+                .append(chunk.getContent()).append('\1');
         }
         return EmbeddingMetadataUtil.contentHash(source.toString());
     }

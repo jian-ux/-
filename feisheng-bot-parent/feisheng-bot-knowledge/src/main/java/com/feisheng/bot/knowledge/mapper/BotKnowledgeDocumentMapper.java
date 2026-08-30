@@ -7,7 +7,7 @@ import org.apache.ibatis.annotations.Param;
 
 @Mapper
 public interface BotKnowledgeDocumentMapper extends BaseMapper<BotKnowledgeDocument> {
-    @Select("SELECT COUNT(*) FROM bot_knowledge_document WHERE bucket_name=#{bucketName} AND object_key=#{objectKey} AND deleted=0")
+    @Select("SELECT COUNT(*) FROM bot_knowledge_document WHERE ((bucket_name=#{bucketName}) OR (bucket_name IS NULL AND #{bucketName} IS NULL)) AND object_key=#{objectKey} AND deleted=0")
     int countActiveObjectReferences(@Param("bucketName") String bucketName, @Param("objectKey") String objectKey);
     @Select("""
         SELECT * FROM bot_knowledge_document

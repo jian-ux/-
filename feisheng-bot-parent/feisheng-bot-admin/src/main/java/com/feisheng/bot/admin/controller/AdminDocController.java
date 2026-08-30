@@ -116,6 +116,22 @@ public class AdminDocController {
         this.migrationSnapshotService = migrationSnapshotService;
     }
 
+    /** Compatibility overload for direct construction by existing integrations/tests. */
+    public AdminDocController(BotKnowledgeDocumentMapper m, BotKnowledgeChunkMapper cm,
+                               DocumentParseService ps, ChunkingService cs,
+                               EmbeddingService es, VectorSearchService vs,
+                               MinioStorageService storageService,
+                               KnowledgeIndexService indexService,
+                               ImageOcrService imageOcrService,
+                               ImportQualityService importQualityService,
+                               KnowledgeChunkPersistenceService chunkPersistenceService,
+                               StructuredQaReviewService structuredQaReviewService,
+                               KnowledgeDocumentReleaseService releaseService) {
+        this(m, cm, ps, cs, es, vs, storageService, indexService, imageOcrService,
+            importQualityService, chunkPersistenceService, structuredQaReviewService,
+            releaseService, null);
+    }
+
     @PostMapping("/upload")
     public R<Map<String, Object>> upload(@RequestParam("file") MultipartFile file) throws Exception {
         if (file == null || file.isEmpty()) return R.fail(400, "上传文件不能为空");

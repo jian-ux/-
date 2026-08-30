@@ -13,6 +13,9 @@ public interface BotKnowledgeMigrationJobMapper extends BaseMapper<BotKnowledgeM
     @Update("UPDATE bot_knowledge_migration_job SET status=#{targetStatus}, current_step=#{currentStep}, lock_version=lock_version+1, updated_at=CURRENT_TIMESTAMP WHERE id=#{id} AND status=#{expectedStatus} AND lock_version=#{expectedLockVersion}")
     int transition(@Param("id") Long id, @Param("expectedStatus") String expectedStatus, @Param("targetStatus") String targetStatus, @Param("currentStep") String currentStep, @Param("expectedLockVersion") long expectedLockVersion);
 
+    @Update("UPDATE bot_knowledge_migration_job SET lease_until=#{leaseUntil}, updated_at=CURRENT_TIMESTAMP WHERE id=#{id} AND lease_owner=#{workerId} AND lock_version=#{expectedLockVersion}")
+    int renewLease(@Param("id") Long id, @Param("workerId") String workerId, @Param("leaseUntil") Date leaseUntil, @Param("expectedLockVersion") long expectedLockVersion);
+
     @Select("SELECT * FROM bot_knowledge_migration_job WHERE id=#{id} FOR UPDATE")
     BotKnowledgeMigrationJob findByIdForUpdate(@Param("id") Long id);
 }

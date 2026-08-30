@@ -15,6 +15,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -230,10 +232,10 @@ public class FactConflictService {
                 .eq(BotKnowledgeConflict::getTargetUnitId, target.getId())
                 .eq(BotKnowledgeConflict::getCandidateUnitId, source.getId())
                 .last("LIMIT 1"));
-        String refreshedEvidence = evidence(target, source, similarity, left, right);
+        String refreshedEvidence = evidence(target, source, similarity, result, left, right);
         if (existing != null) {
             if ((RESOLVED.equals(existing.getStatus()) || NOT_CONFLICT.equals(existing.getStatus()))
-                    && sameSnapshot(existing, refreshedEvidence, result)) return;
+                            && sameSnapshot(existing, refreshedEvidence)) return;
             existing.setSimilarity(similarity);
             existing.setConflictType(result.conflictType().name());
             existing.setSeverity(result.severity().name());
@@ -272,7 +274,7 @@ public class FactConflictService {
     }
 
     private String evidence(BotKnowledgeSemanticUnit target, BotKnowledgeSemanticUnit source,
-                            double similarity,
+                            double similarity, FactComparisonService.ComparisonResult result,
                             FactNormalizationService.NormalizedFact left,
                             FactNormalizationService.NormalizedFact right) {
         Map<String, Object> value = new LinkedHashMap<>();
@@ -294,11 +296,11 @@ public class FactConflictService {
             "targetExtractorModel", target.getExtractorModel() == null ? "" : target.getExtractorModel(),
             "sourceEmbeddingModel", source.getEmbeddingModel() == null ? "" : source.getEmbeddingModel(),
             "targetEmbeddingModel", target.getEmbeddingModel() == null ? "" : target.getEmbeddingModel()));
+        value.put("judgmentInputFingerprint", judgmentInputFingerprint(target, source, result, left, right));
         return writeJson(value);
     }
 
-    private boolean sameSnapshot(BotKnowledgeConflict existing, String refreshedEvidence,
-                                 FactComparisonService.ComparisonResult result) {
+    private boolean sameSnapshot(BotKnowledgeConflict existing, String refreshedEvidence) {
         try {
             com.fasterxml.jackson.databind.JsonNode old = objectMapper.readTree(existing.getEvidence());
             com.fasterxml.jackson.databind.JsonNode current = objectMapper.readTree(refreshedEvidence);
@@ -317,10 +319,65 @@ public class FactConflictService {
                     || !Objects.equals(oldTargetEmbedding, currentTargetEmbedding)) return false;
             com.fasterxml.jackson.databind.JsonNode oldRetrieval = old.path("retrieval");
             com.fasterxml.jackson.databind.JsonNode currentRetrieval = current.path("retrieval");
-            return Objects.equals(oldRetrieval.path("topK").asInt(), currentRetrieval.path("topK").asInt())
+            return Objects.equals(old.path("judgmentInputFingerprint").asText(null),
+                    current.path("judgmentInputFingerprint").asText(null))
+                && Objects.equals(oldRetrieval.path("topK").asInt(), currentRetrieval.path("topK").asInt())
                 && Double.compare(oldRetrieval.path("minScore").asDouble(), currentRetrieval.path("minScore").asDouble()) == 0
                 && Double.compare(oldRetrieval.path("similarity").asDouble(), currentRetrieval.path("similarity").asDouble()) == 0;
         } catch (Exception ignored) { return false; }
+    }
+
+    private String judgmentInputFingerprint(BotKnowledgeSemanticUnit target,
+                                            BotKnowledgeSemanticUnit source,
+                                            FactComparisonService.ComparisonResult result,
+                                            FactNormalizationService.NormalizedFact left,
+                                            FactNormalizationService.NormalizedFact right) {
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("sourceNormalized", canonicalFact(left));
+        input.put("targetNormalized", canonicalFact(right));
+        input.put("sourceConditions", Objects.toString(source.getConditionsJson(), ""));
+        input.put("targetConditions", Objects.toString(target.getConditionsJson(), ""));
+        input.put("sourceMetadata", Objects.toString(source.getMetadataJson(), ""));
+        input.put("targetMetadata", Objects.toString(target.getMetadataJson(), ""));
+        input.put("sourceEntities", Objects.toString(source.getEntitiesJson(), ""));
+        input.put("targetEntities", Objects.toString(target.getEntitiesJson(), ""));
+        input.put("sourceExclusions", Objects.toString(source.getExclusionsJson(), ""));
+        input.put("targetExclusions", Objects.toString(target.getExclusionsJson(), ""));
+        input.put("comparison", result);
+        input.put("ruleVersion", "deterministic-fact-comparison:v1");
+        input.put("topK", topK);
+        input.put("minScore", minScore);
+        input.put("sourceExtractorModel", Objects.toString(source.getExtractorModel(), ""));
+        input.put("targetExtractorModel", Objects.toString(target.getExtractorModel(), ""));
+        input.put("sourcePromptVersion", Objects.toString(source.getPromptVersion(), ""));
+        input.put("targetPromptVersion", Objects.toString(target.getPromptVersion(), ""));
+        input.put("sourceSchemaVersion", Objects.toString(source.getSchemaVersion(), ""));
+        input.put("targetSchemaVersion", Objects.toString(target.getSchemaVersion(), ""));
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                .digest(writeJson(input).getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(digest.length * 2);
+            for (byte b : digest) hex.append(String.format("%02x", b));
+            return hex.toString();
+        } catch (Exception ignored) {
+            return writeJson(input);
+        }
+    }
+
+    private Map<String, Object> canonicalFact(FactNormalizationService.NormalizedFact fact) {
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("normalizedQuestion", fact.normalizedQuestion());
+        value.put("normalizedStatement", fact.normalizedStatement());
+        value.put("polarity", fact.polarity());
+        value.put("numericValues", new java.util.TreeMap<>(fact.numericValues()));
+        value.put("numericRanges", new java.util.TreeMap<>(fact.numericRanges()));
+        value.put("temporalValues", new java.util.TreeMap<>(fact.temporalValues()));
+        value.put("enumValues", new java.util.TreeSet<>(fact.enumValues()));
+        value.put("processSteps", fact.processSteps());
+        value.put("scopeRelation", fact.scope().relation().name());
+        value.put("scopeFields", new java.util.TreeMap<>(fact.scope().fields()));
+        value.put("evidenceChunkIds", fact.evidenceChunkIds());
+        return value;
     }
 
     private String embeddingSnapshot(BotKnowledgeSemanticUnit unit) {

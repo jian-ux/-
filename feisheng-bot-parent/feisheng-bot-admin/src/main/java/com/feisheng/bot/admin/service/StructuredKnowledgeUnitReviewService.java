@@ -9,6 +9,7 @@ import com.feisheng.bot.knowledge.mapper.BotKnowledgeDocumentMapper;
 import com.feisheng.bot.knowledge.mapper.BotKnowledgeSemanticUnitMapper;
 import com.feisheng.bot.knowledge.service.StructuredKnowledgeUnitIndexService;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -217,8 +218,24 @@ public class StructuredKnowledgeUnitReviewService {
         try {
             evidenceIds = objectMapper.readValue(unit.getEvidenceChunkIdsJson(),
                 new TypeReference<List<Long>>() {});
+            JsonNode rawSpans = objectMapper.readTree(unit.getSourceSpansJson());
+            boolean invalidOffset = rawSpans == null || !rawSpans.isArray();
+            if (!invalidOffset) {
+                for (JsonNode span : rawSpans) {
+                    if (!span.isObject() || !validOffset(span.get("start"))
+                            || !validOffset(span.get("end"))) {
+                        invalidOffset = true;
+                        break;
+                    }
+                }
+            }
+            if (invalidOffset) {
+                throw new ReviewException(409, "原文证据位置必须是有限整数");
+            }
             spans = objectMapper.readValue(unit.getSourceSpansJson(),
                 new TypeReference<List<StructuredKnowledgeUnit.SourceSpan>>() {});
+        } catch (ReviewException e) {
+            throw e;
         } catch (Exception e) {
             throw new ReviewException(409, "结构化知识的证据 JSON 无效");
         }
@@ -257,6 +274,13 @@ public class StructuredKnowledgeUnitReviewService {
                 throw new ReviewException(409, "原文证据已变化，请重新抽取");
             }
         }
+    }
+
+    private boolean validOffset(JsonNode value) {
+        if (value == null || !value.isNumber()) return false;
+        double number = value.doubleValue();
+        return Double.isFinite(number) && number >= Integer.MIN_VALUE
+            && number <= Integer.MAX_VALUE && Math.rint(number) == number;
     }
 
     public record ReviewResult(Long unitId, String status, boolean changed,

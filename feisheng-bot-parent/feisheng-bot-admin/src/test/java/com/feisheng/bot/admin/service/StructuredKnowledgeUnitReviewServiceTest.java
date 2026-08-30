@@ -121,6 +121,22 @@ class StructuredKnowledgeUnitReviewServiceTest {
     }
 
     @Test
+    void rejectsApprovalWhenEvidenceSpanOffsetIsFractional() {
+        BotKnowledgeChunk approved = chunk("APPROVED", 0);
+        Fixture fixture = fixture(approved);
+        fixture.unit.setSourceSpansJson(
+            "[{\"chunkId\":11,\"start\":0.5,\"end\":4,\"quote\":\"证据内容\"}]");
+
+        StructuredKnowledgeUnitReviewService.ReviewException error = assertThrows(
+            StructuredKnowledgeUnitReviewService.ReviewException.class,
+            () -> fixture.service.approve(20L));
+
+        assertEquals(409, error.status());
+        verify(fixture.unitMapper, never()).transitionReview(
+            any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
     void approvingAUnitInDraftTargetDocumentNeverSynchronizesOnlineIndex() {
         Fixture fixture = fixture(chunk("APPROVED", 0));
         fixture.document.setPublishStatus("DRAFT");

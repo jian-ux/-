@@ -14,6 +14,7 @@ import com.feisheng.bot.knowledge.mapper.BotKnowledgeSemanticUnitMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -40,6 +41,7 @@ public class KnowledgeMigrationReviewService {
     private final BotKnowledgeChunkMapper chunkMapper;
     private final ObjectMapper objectMapper;
 
+    @Autowired
     public KnowledgeMigrationReviewService(BotKnowledgeMigrationJobMapper jobMapper,
                                            BotKnowledgeConflictMapper conflictMapper,
                                            BotKnowledgeSemanticUnitMapper unitMapper,

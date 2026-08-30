@@ -583,6 +583,7 @@ public class AdminDocController {
     public R<KnowledgeMigrationSnapshotService.SnapshotResult> migrate(@PathVariable Long id,
                                                                          @RequestParam(required = false) Long operatorId) {
         try {
+            if (migrationSnapshotService == null) return R.fail(503, "迁移服务不可用");
             return R.ok(migrationSnapshotService.create(id, operatorId));
         } catch (KnowledgeMigrationSnapshotService.SnapshotException e) {
             return R.fail(e.status(), e.getMessage());

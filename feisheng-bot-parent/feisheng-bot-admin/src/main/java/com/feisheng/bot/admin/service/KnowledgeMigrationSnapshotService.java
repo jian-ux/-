@@ -79,7 +79,6 @@ public class KnowledgeMigrationSnapshotService {
         return result(job, sourceHash, sourceChunks.size());
     }
 
-    @Transactional
     public SnapshotResult cloneTarget(Long jobId) {
         BotKnowledgeMigrationJob job = jobMapper.selectById(jobId);
         if (job == null) throw new SnapshotException(404, "迁移任务不存在");

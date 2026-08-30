@@ -33,3 +33,10 @@ Initial result: default `mvn` command was unavailable in PowerShell. Using the a
 - Reconcile matching remains deterministic by source chunk index and replaces stale same-index content while deleting extras.
 - Added regression coverage for stale same-index plus extra chunks and retained published-source validation.
 - Focused Maven rerun reached admin compilation but failed on pre-existing missing `com.feisheng.bot.core` symbols across unrelated admin classes; no focused tests executed in that run.
+
+## Fix Round 4
+
+- `cloneTarget` no longer runs inside the outer rollback transaction, so source-hash invalidation updates persist as `STALE` before returning the conflict response.
+- Compatibility constructor migration endpoint now returns 503 instead of throwing NPE when no migration service is supplied.
+- Source `PUBLISHED` guard and exact index-based stale/extra chunk reconciliation retained.
+- Focused command used absolute IntelliJ Maven path with `-Dsurefire.failIfNoSpecifiedTests=false`; admin compilation remains blocked by unrelated missing `com.feisheng.bot.core` symbols, so no tests executed in this round.

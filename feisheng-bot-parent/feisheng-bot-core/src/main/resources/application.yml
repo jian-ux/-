@@ -36,11 +36,17 @@ customer-service:
   intent-static-replies-enabled: ${CUSTOMER_SERVICE_INTENT_STATIC_REPLIES_ENABLED:false}
   intent-understanding:
     enabled: ${CUSTOMER_SERVICE_INTENT_UNDERSTANDING_ENABLED:true}
+    eager-enabled: ${CUSTOMER_SERVICE_INTENT_UNDERSTANDING_EAGER_ENABLED:false}
     min-confidence: ${CUSTOMER_SERVICE_INTENT_UNDERSTANDING_MIN_CONFIDENCE:0.75}
     max-history-messages: ${CUSTOMER_SERVICE_INTENT_UNDERSTANDING_MAX_HISTORY_MESSAGES:4}
     model-id: ${CUSTOMER_SERVICE_INTENT_MODEL_ID:0}
+  flash-model-id: ${CUSTOMER_SERVICE_FLASH_MODEL_ID:0}
+  flash-max-question-chars: ${CUSTOMER_SERVICE_FLASH_MAX_QUESTION_CHARS:80}
 
 rag:
+  embedding:
+    cache-ttl-seconds: ${RAG_EMBEDDING_CACHE_TTL_SECONDS:86400}
+    local-cache-max-entries: ${RAG_EMBEDDING_LOCAL_CACHE_MAX_ENTRIES:512}
   context:
     max-history-messages: ${RAG_CONTEXT_MAX_HISTORY_MESSAGES:6}
     max-retrieval-history-messages: ${RAG_CONTEXT_MAX_RETRIEVAL_HISTORY_MESSAGES:4}
@@ -165,6 +171,11 @@ ai:
     read-timeout: ${AI_LLM_READ_TIMEOUT_MS:60000}
     max-retries: ${AI_LLM_MAX_RETRIES:1}
     temperature: ${AI_LLM_TEMPERATURE:0.0}
+    max-output-tokens: ${AI_LLM_MAX_OUTPUT_TOKENS:1024}
+    deepseek-thinking-enabled: ${AI_LLM_DEEPSEEK_THINKING_ENABLED:false}
+    local:
+      warmup-enabled: ${AI_LLM_LOCAL_WARMUP_ENABLED:true}
+      keep-alive: ${AI_LLM_LOCAL_KEEP_ALIVE:-1}
 speech:
   synthesis:
     enabled: ${TTS_ENABLED:false}

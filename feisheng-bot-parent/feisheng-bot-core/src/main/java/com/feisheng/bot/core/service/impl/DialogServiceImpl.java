@@ -472,6 +472,15 @@ public class DialogServiceImpl {
     @Value("${customer-service.intent-static-replies-enabled:false}")
     private boolean intentStaticRepliesEnabled;
 
+    @Value("${customer-service.intent-understanding.eager-enabled:false}")
+    private boolean eagerIntentUnderstandingEnabled;
+
+    @Value("${customer-service.flash-model-id:0}")
+    private long flashModelId;
+
+    @Value("${customer-service.flash-max-question-chars:80}")
+    private int flashMaxQuestionChars;
+
     private final ConversationServiceImpl conversationService;
     private final MessageServiceImpl messageService;
     private final AiModelServiceImpl aiModelService;
@@ -802,7 +811,9 @@ public class DialogServiceImpl {
             && !hasText(safeModalityContext)
             && !hasEmbeddedMediaContext(safeText)
             && !isClearlyUnrelatedQuestion(understandingText)
-            && !isExplicitlyUnrelatedNativeRequest(understandingText);
+            && !isExplicitlyUnrelatedNativeRequest(understandingText)
+            && shouldUnderstandIntentBeforeRetrieval(
+                understandingText, recentMessages, directIntent);
         if (canUseSemanticUnderstanding) {
             semanticUnderstanding = understandIntent(
                 understandingText, recentMessages, preferredModelId,
@@ -1120,6 +1131,8 @@ public class DialogServiceImpl {
         boolean highRiskNoKnowledge = false;
         CustomerServiceDecisionEngine.GateResult answerabilityGate = null;
         ChatResponse aiResponse = null;
+        Long selectedResponseModelId = null;
+        String modelRoute = "not_used";
         String modelPrompt = null;
         List<PromptTrace> promptTraces = new ArrayList<>();
         List<String> modelProtocolViolations = new ArrayList<>();
@@ -1243,9 +1256,12 @@ public class DialogServiceImpl {
             SystemPromptResolution systemPrompt = customerServiceSystemPrompt(
                 emotion, safeText, nlpIntent, promptVersion);
             PromptTrace ragInvocation = addPromptTrace(promptTraces, systemPrompt.trace());
+            selectedResponseModelId = responseModelId(
+                preferredModelId, understandingText, nlpIntent, retrieval, queryResolution);
+            modelRoute = responseModelRoute(preferredModelId, selectedResponseModelId);
             long modelStarted = System.nanoTime();
             aiResponse = aiModelService.chatWithModel(
-                prompt, systemPrompt.content(), preferredModelId);
+                prompt, systemPrompt.content(), selectedResponseModelId);
             modelLatencyMs += elapsedMillis(modelStarted);
             addModelResponse(modelResponses, aiResponse);
             ModelAnswerSignalParser.ParsedAnswer parsedAnswer =
@@ -1283,7 +1299,7 @@ public class DialogServiceImpl {
                     promptTraces, systemPrompt.trace());
                 long retryModelStarted = System.nanoTime();
                 ChatResponse retryResponse = aiModelService.chatWithModel(
-                    retryPrompt, systemPrompt.content(), preferredModelId);
+                    retryPrompt, systemPrompt.content(), selectedResponseModelId);
                 modelLatencyMs += elapsedMillis(retryModelStarted);
                 addModelResponse(modelResponses, retryResponse);
                 ModelAnswerSignalParser.ParsedAnswer retryParsedAnswer =
@@ -1471,6 +1487,8 @@ public class DialogServiceImpl {
             response.put("intentUnderstanding",
                 intentUnderstandingDetails(semanticUnderstanding));
         }
+        response.put("modelRoute", modelRoute);
+        response.put("selectedResponseModelId", selectedResponseModelId);
         response.put("emotion", emotionDetails(emotion));
         response.put("promptVersion", promptVersion);
         addPromptTraceDetails(response, promptTraces);
@@ -1542,6 +1560,8 @@ public class DialogServiceImpl {
             messageMetadata.put("intentUnderstanding",
                 intentUnderstandingDetails(semanticUnderstanding));
         }
+        messageMetadata.put("modelRoute", modelRoute);
+        messageMetadata.put("selectedResponseModelId", selectedResponseModelId);
         messageMetadata.put("emotion", emotionDetails(emotion));
         messageMetadata.put("promptVersion", promptVersion);
         addPromptTraceDetails(messageMetadata, promptTraces);
@@ -2788,6 +2808,21 @@ public class DialogServiceImpl {
         return understandIntent(question, recentMessages, preferredModelId, Map.of());
     }
 
+    private boolean shouldUnderstandIntentBeforeRetrieval(
+            String question, List<BotMessage> recentMessages,
+            NlpIntentClassifier.IntentAnalysis directIntent) {
+        if (eagerIntentUnderstandingEnabled) return true;
+        if (!hasText(question)) return false;
+        ContextualQueryResolver.Resolution deterministic =
+            contextualQueryResolver.resolve(recentMessages, question);
+        if (deterministic.clarificationResolved() || deterministic.rewritten()) return false;
+        if (deterministic.contextDependent() && deterministic.unresolved()) return true;
+        if (directIntent != null
+                && directIntent.intentCode() != NlpIntentClassifier.IntentCode.UNKNOWN
+                && !directIntent.needsClarification()) return false;
+        return false;
+    }
+
     private IntentUnderstandingService.Understanding understandIntent(
             String question, List<BotMessage> recentMessages, Long preferredModelId,
             Map<String, Object> conversationState) {
@@ -2802,6 +2837,34 @@ public class DialogServiceImpl {
         return understanding == null
             ? IntentUnderstandingService.Understanding.notAttempted("service_unavailable")
             : understanding;
+    }
+
+    private Long responseModelId(Long preferredModelId, String question,
+                                 NlpIntentClassifier.IntentAnalysis intent,
+                                 RagRetrievalService.RetrievalResult retrieval,
+                                 ContextualQueryResolver.Resolution resolution) {
+        if (preferredModelId != null && preferredModelId > 0) return preferredModelId;
+        if (flashModelId <= 0 || intent == null || retrieval == null
+                || !retrieval.answerable() || retrieval.directAnswer()
+                || intent.riskLevel() != NlpIntentClassifier.RiskLevel.LOW
+                || isCompoundQuestion(question)
+                || (resolution != null && resolution.contextDependent())) {
+            return null;
+        }
+        String normalized = normalizeQuestionForMatching(question);
+        if (normalized.length() > Math.max(20, flashMaxQuestionChars)
+                || containsAny(normalized, "详细分析", "深入分析", "综合分析", "对比", "比较",
+                    "方案", "排查", "原因分析", "结合实际", "分别说明", "完整说明")) {
+            return null;
+        }
+        return flashModelId;
+    }
+
+    private String responseModelRoute(Long preferredModelId, Long selectedModelId) {
+        if (preferredModelId != null && preferredModelId > 0) return "explicit";
+        if (selectedModelId != null && selectedModelId > 0
+                && selectedModelId == flashModelId) return "flash";
+        return "default";
     }
 
     private ContextualQueryResolver.Resolution semanticResolution(

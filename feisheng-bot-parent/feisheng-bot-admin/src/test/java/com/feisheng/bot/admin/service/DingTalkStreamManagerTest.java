@@ -80,4 +80,18 @@ class DingTalkStreamManagerTest {
         verify(firstClient).stop();
         assertFalse(manager.isConnected(9L));
     }
+
+    @Test
+    void healthCheckClearsConnectionWhenCredentialsBecomeInvalid() throws Exception {
+        when(clientFactory.create("client-id", "client-secret", 4, callbackListener))
+            .thenReturn(firstClient);
+        manager.activate(9L, "client-id", "client-secret", false);
+        doThrow(new IllegalStateException("revoked"))
+            .when(clientFactory).validateCredentials("client-id", "client-secret");
+
+        manager.healthCheck();
+
+        verify(firstClient).stop();
+        assertFalse(manager.isConnected(9L));
+    }
 }

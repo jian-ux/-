@@ -79,6 +79,14 @@ public class CustomerController {
         return R.ok();
     }
 
+    @DeleteMapping("/{id}")
+    public R<Void> delete(@PathVariable Long id) {
+        BotCustomer customer = visibleCustomer(id);
+        if (customer == null) return R.fail(404, "客户不存在");
+        mapper.deleteById(customer.getId());
+        return R.ok();
+    }
+
     @GetMapping("/{id}/conversations")
     public R<Page<BotConversation>> conversations(
             @PathVariable Long id,

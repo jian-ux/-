@@ -88,6 +88,32 @@ class DingTalkStreamCallbackListenerTest {
     }
 
     @Test
+    void sendsProcessingAcknowledgementBeforeComplexQuestionCompletes() throws Exception {
+        ChannelServiceImpl channelService = mock(ChannelServiceImpl.class);
+        DingTalkStreamReplySender replySender = mock(DingTalkStreamReplySender.class);
+        when(channelService.processMessage(any())).thenReturn(Map.of("reply", "完整分析结果"));
+        AtomicReference<Runnable> pending = new AtomicReference<>();
+        DingTalkStreamCallbackListener listener = new DingTalkStreamCallbackListener(
+            channelService, replySender, pending::set);
+        String question = "请结合电子合同签署、实名认证、证据存证和争议处理，"
+            + "详细分析企业上线前需要完成哪些准备工作，并分别说明风险和建议。";
+
+        listener.execute(message(question));
+
+        verify(replySender).replyText(
+            "https://oapi.dingtalk.com/robot/sendBySession",
+            "这个问题需要进一步检索和分析，我正在处理中，稍后发送完整答复。");
+        verify(channelService, never()).processMessage(any());
+        assertNotNull(pending.get());
+
+        pending.get().run();
+
+        verify(channelService).processMessage(any());
+        verify(replySender).replyText(
+            "https://oapi.dingtalk.com/robot/sendBySession", "完整分析结果");
+    }
+
+    @Test
     void repliesWhenMediaProcessorIsNotAvailable() throws Exception {
         ChannelServiceImpl channelService = mock(ChannelServiceImpl.class);
         DingTalkStreamReplySender replySender = mock(DingTalkStreamReplySender.class);

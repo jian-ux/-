@@ -1235,7 +1235,7 @@ class DialogServiceImplTest {
     }
 
     @Test
-    void usesSemanticStandaloneQueryBeforeFirstRetrieval() {
+    void retriesIndependentUnknownQuestionWithSemanticStandaloneQuery() {
         String question = "适合哪些团队使用";
         String rewritten = "点签电子合同适合哪些团队使用？";
         when(intentUnderstandingService.understand(eq(question), anyList(), isNull()))
@@ -1253,15 +1253,14 @@ class DialogServiceImplTest {
         assertEquals("rag_ai", result.get("source"));
         assertEquals(rewritten, result.get("retrievalPrimaryQuery"));
         assertEquals(true, result.get("queryRewritten"));
-        assertEquals("semantic_intent_resolution",
+        assertEquals("semantic_retrieval_retry",
             result.get("clarificationResolutionSource"));
-        verify(retrievalService, never()).retrieve(
+        verify(retrievalService).retrieve(
             question, KNOWLEDGE_RETRIEVAL_FILTERS, true);
         verify(retrievalService).retrieve(
-            eq(rewritten), isNull(), isNull(), eq(KNOWLEDGE_RETRIEVAL_FILTERS),
-            argThat(variants -> variants.stream().anyMatch(variant ->
-                "context_follow_up".equals(variant.purpose())
-                    && question.equals(variant.query()))), eq(true));
+            rewritten, KNOWLEDGE_RETRIEVAL_FILTERS, true);
+        verify(intentUnderstandingService).understand(
+            eq(question), anyList(), isNull());
     }
 
     @Test

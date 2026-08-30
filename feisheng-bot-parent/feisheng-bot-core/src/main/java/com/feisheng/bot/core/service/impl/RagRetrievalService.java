@@ -37,7 +37,6 @@ import java.util.concurrent.TimeUnit;
 public class RagRetrievalService {
     private static final Logger log = LoggerFactory.getLogger(RagRetrievalService.class);
     private static final String CACHE_PREFIX_EMBEDDING = "rag:emb:";
-    private static final long CACHE_TTL_SECONDS = 600;
     private static final List<String> IMAGE_INTENT_TERMS = List.of(
         "图片", "产品图", "流程图", "截图", "照片", "海报", "二维码",
         "发张图", "发一张图", "发图", "看图"
@@ -97,6 +96,20 @@ public class RagRetrievalService {
     private final RedisUtil redisUtil;
     private final ObjectMapper objectMapper;
     private final BusinessSafetyBoundaryService businessSafetyBoundaryService;
+    private final Map<String, LocalEmbeddingCacheEntry> localEmbeddingCache =
+        Collections.synchronizedMap(new LinkedHashMap<>(128, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(
+                    Map.Entry<String, LocalEmbeddingCacheEntry> eldest) {
+                return size() > Math.max(1, embeddingLocalCacheMaxEntries);
+            }
+        });
+
+    @Value("${rag.embedding.cache-ttl-seconds:86400}")
+    private long embeddingCacheTtlSeconds = 86400;
+
+    @Value("${rag.embedding.local-cache-max-entries:512}")
+    private int embeddingLocalCacheMaxEntries = 512;
 
     @Value("${rag.retrieval.top-k:3}")
     private int topK;
@@ -286,15 +299,39 @@ public class RagRetrievalService {
             query, exactKeywordMatch, supplementalVariants);
         List<Map<String, Object>> candidates = new ArrayList<>();
         int recallLimit = Math.max(topK, candidateK);
+        Map<String, List<Map<String, Object>>> prefetchedLexicalMatches =
+            new LinkedHashMap<>();
+        if (isBlank(conversationContext) && isBlank(modalityContext)) {
+            long exactStarted = System.nanoTime();
+            List<Map<String, Object>> exactCandidates = lexicalMatch(
+                query, recallLimit, searchFilters);
+            prefetchedLexicalMatches.put(query, exactCandidates);
+            Map<String, Object> exactStructuredQa = exactStructuredQa(
+                query, exactCandidates);
+            timings.sparseSearchNanos += elapsedNanos(exactStarted);
+            if (exactStructuredQa != null) {
+                RetrievalResult direct = directStructuredQaResult(exactStructuredQa);
+                return direct.withStageLatencies(
+                    timings.snapshot(0, direct.candidates().size()));
+            }
+        }
         boolean semanticAvailable = false;
         List<Double> originalEmbedding = Collections.emptyList();
         if (embeddingService.isAvailable()) {
+            Map<QueryVariant, String> semanticQueries = new LinkedHashMap<>();
             for (QueryVariant variant : queryVariants) {
-                String semanticQuery = semanticQuery(
-                    variant.query(), conversationContext, modalityContext);
-                long embeddingStarted = System.nanoTime();
-                EmbeddingLookup embeddingLookup = getEmbedding(semanticQuery);
-                timings.embeddingNanos += elapsedNanos(embeddingStarted);
+                semanticQueries.put(variant, semanticQuery(
+                    variant.query(), conversationContext, modalityContext));
+            }
+            long embeddingStarted = System.nanoTime();
+            Map<String, EmbeddingLookup> embeddingLookups = getEmbeddings(
+                new ArrayList<>(semanticQueries.values()));
+            timings.embeddingNanos += elapsedNanos(embeddingStarted);
+            for (Map.Entry<QueryVariant, String> request : semanticQueries.entrySet()) {
+                QueryVariant variant = request.getKey();
+                String semanticQuery = request.getValue();
+                EmbeddingLookup embeddingLookup = embeddingLookups.getOrDefault(
+                    semanticQuery, new EmbeddingLookup(Collections.emptyList(), false));
                 if (embeddingLookup.cacheHit()) timings.embeddingCacheHits++;
                 else timings.embeddingCacheMisses++;
                 List<Double> embedding = embeddingLookup.vector();
@@ -339,8 +376,10 @@ public class RagRetrievalService {
         // Exact and near-exact text must always participate in reranking. A merely
         // related vector hit must not suppress the literal question from the document.
         for (String lexicalQuery : lexicalQueries(query)) {
-            mergeRankedMatches(candidates, lexicalMatch(
-                lexicalQuery, recallLimit, searchFilters),
+            List<Map<String, Object>> matches = prefetchedLexicalMatches.containsKey(lexicalQuery)
+                ? prefetchedLexicalMatches.get(lexicalQuery)
+                : lexicalMatch(lexicalQuery, recallLimit, searchFilters);
+            mergeRankedMatches(candidates, matches,
                 "lexicalScore", "lexical", "lexicalRank");
         }
         for (QueryVariant variant : expandedVariants(queryVariants)) {
@@ -537,27 +576,59 @@ public class RagRetrievalService {
         return List.of(citation);
     }
 
-    private EmbeddingLookup getEmbedding(String query) {
+    private Map<String, EmbeddingLookup> getEmbeddings(List<String> queries) {
+        Map<String, EmbeddingLookup> result = new LinkedHashMap<>();
+        if (queries == null || queries.isEmpty()) return result;
         EmbeddingService.EmbeddingDescriptor descriptor = embeddingService.descriptor();
         String modelVersion = descriptor == null || descriptor.version() == null
             || descriptor.version().isBlank() ? "legacy" : descriptor.version();
-        String key = CACHE_PREFIX_EMBEDDING + modelVersion + ":" + hash(query);
-        try {
-            Object cached = redisUtil.get(key);
-            if (cached != null) {
-                return new EmbeddingLookup(objectMapper.readValue(cached.toString(),
-                    new TypeReference<List<Double>>() {}), true);
+        Map<String, String> keys = new LinkedHashMap<>();
+        List<String> misses = new ArrayList<>();
+        long now = System.currentTimeMillis();
+        for (String query : new LinkedHashSet<>(queries)) {
+            String key = CACHE_PREFIX_EMBEDDING + modelVersion + ":" + hash(query);
+            keys.put(query, key);
+            LocalEmbeddingCacheEntry local = localEmbeddingCache.get(key);
+            if (local != null && local.expiresAtMillis() > now) {
+                result.put(query, new EmbeddingLookup(local.vector(), true));
+                continue;
             }
-        } catch (Exception ignored) {}
-
-        List<Double> embedding = embeddingService.embed(query);
-        if (!embedding.isEmpty()) {
             try {
-                redisUtil.setex(key, objectMapper.writeValueAsString(embedding),
-                    CACHE_TTL_SECONDS, TimeUnit.SECONDS);
+                Object cached = redisUtil.get(key);
+                if (cached != null) {
+                    List<Double> vector = objectMapper.readValue(cached.toString(),
+                        new TypeReference<List<Double>>() {});
+                    cacheLocally(key, vector, now);
+                    result.put(query, new EmbeddingLookup(vector, true));
+                    continue;
+                }
             } catch (Exception ignored) {}
+            misses.add(query);
         }
-        return new EmbeddingLookup(embedding, false);
+
+        Map<String, List<Double>> generated = misses.size() <= 1
+            ? Collections.emptyMap() : embeddingService.embedBatch(misses);
+        if (generated == null) generated = Collections.emptyMap();
+        for (String query : misses) {
+            List<Double> vector = generated.getOrDefault(query, Collections.emptyList());
+            if (vector.isEmpty()) vector = embeddingService.embed(query);
+            if (!vector.isEmpty()) {
+                String key = keys.get(query);
+                cacheLocally(key, vector, now);
+                try {
+                    redisUtil.setex(key, objectMapper.writeValueAsString(vector),
+                        Math.max(60, embeddingCacheTtlSeconds), TimeUnit.SECONDS);
+                } catch (Exception ignored) {}
+            }
+            result.put(query, new EmbeddingLookup(vector, false));
+        }
+        return result;
+    }
+
+    private void cacheLocally(String key, List<Double> vector, long now) {
+        if (embeddingLocalCacheMaxEntries <= 0 || vector == null || vector.isEmpty()) return;
+        localEmbeddingCache.put(key, new LocalEmbeddingCacheEntry(
+            List.copyOf(vector), now + Math.max(60, embeddingCacheTtlSeconds) * 1000L));
     }
 
     private String semanticQuery(String query, String conversationContext,
@@ -775,9 +846,15 @@ public class RagRetrievalService {
 
     private List<Map<String, Object>> lexicalMatch(String query, int limit,
                                                    Map<String, Object> filters) {
+        return lexicalMatch(query, limit, lexicalThreshold, filters);
+    }
+
+    private List<Map<String, Object>> lexicalMatch(String query, int limit,
+                                                   double minScore,
+                                                   Map<String, Object> filters) {
         return filters.isEmpty()
-            ? knowledgeClient.lexicalMatch(query, limit, lexicalThreshold)
-            : knowledgeClient.lexicalMatch(query, limit, lexicalThreshold, filters);
+            ? knowledgeClient.lexicalMatch(query, limit, minScore)
+            : knowledgeClient.lexicalMatch(query, limit, minScore, filters);
     }
 
     private List<Map<String, Object>> phoneticMatch(String query, int limit,
@@ -1675,6 +1752,56 @@ public class RagRetrievalService {
         return List.copyOf(result);
     }
 
+    private Map<String, Object> exactStructuredQa(
+            String query, List<Map<String, Object>> candidates) {
+        String normalized = StructuredQaUtil.normalizeQuestion(query);
+        if (normalized.isBlank() || candidates == null || candidates.isEmpty()) return null;
+        return candidates.stream()
+            .filter(candidate -> Boolean.TRUE.equals(candidate.get("structuredQa")))
+            .filter(candidate -> Boolean.TRUE.equals(candidate.get("directAnswerEligible")))
+            .filter(candidate -> !Boolean.TRUE.equals(candidate.get("qaConflict")))
+            .filter(candidate -> normalized.equals(
+                StructuredQaUtil.normalizeQuestion(structuredQuestion(candidate))))
+            .findFirst()
+            .orElse(null);
+    }
+
+    private RetrievalResult directStructuredQaResult(Map<String, Object> exactMatch) {
+        Map<String, Object> candidate = new HashMap<>(exactMatch);
+        String answer = firstNonBlank(
+            string(candidate.get("fullAnswer")), string(candidate.get("answer")));
+        candidate.put("type", "chunk");
+        candidate.put("sourceType", "document");
+        candidate.put("sourceId", candidate.getOrDefault("chunkId", candidate.get("sourceId")));
+        candidate.put("content", answer);
+        candidate.put("similarity", 1.0);
+        candidate.put("lexicalScore", 1.0);
+        candidate.put("combinedScore", 1.0);
+        candidate.put("structuredQaExactMatch", true);
+        candidate.put("directMatchMode", "normalized_exact");
+        candidate.put("finalRank", 1);
+        candidate.put("selectedForAnswer", true);
+        candidate.put("includedInContext", true);
+        candidate.put("selectionStatus", "selected");
+        candidate.put("selectionReason", "reviewed_exact_direct_answer");
+        candidate.put("rejectionReasons", Collections.emptyList());
+
+        List<Map<String, Object>> accepted = List.of(candidate);
+        List<Map<String, Object>> citations = buildCitations(accepted);
+        Map<String, Object> diagnostics = new LinkedHashMap<>();
+        diagnostics.put("reasonCode", "DIRECT_REVIEWED_STRUCTURED_QA");
+        diagnostics.put("confidence", 1.0);
+        diagnostics.put("confidenceSource", "reviewed_normalized_exact");
+        diagnostics.put("candidateCount", 1);
+        diagnostics.put("selectedCount", 1);
+        diagnostics.put("contextCandidateCount", 1);
+        diagnostics.put("thresholds", Map.of("normalizedExact", true));
+        return new RetrievalResult(true, true, answer,
+            buildContext(accepted, citations), 1.0, "structured_qa_direct", false,
+            List.copyOf(citations), copyCandidates(accepted),
+            defaultRerankDiagnostics(), defaultStageLatencies(), diagnostics);
+    }
+
     private RetrievalResult directKeywordResult(Map<String, Object> keywordMatch,
                                                  double keywordScore) {
         Map<String, Object> candidate = new HashMap<>(keywordMatch);
@@ -2152,6 +2279,8 @@ public class RagRetrievalService {
     }
 
     private record EmbeddingLookup(List<Double> vector, boolean cacheHit) {}
+
+    private record LocalEmbeddingCacheEntry(List<Double> vector, long expiresAtMillis) {}
 
     private static final class RetrievalTimingCollector {
         private final long startedNanos = System.nanoTime();

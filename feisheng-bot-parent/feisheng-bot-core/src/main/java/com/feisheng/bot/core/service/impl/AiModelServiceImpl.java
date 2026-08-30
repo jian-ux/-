@@ -76,13 +76,16 @@ public class AiModelServiceImpl {
                 String apiUrl = stringValue(model.get("apiUrl"));
                 String apiKey = stringValue(model.get("apiKey"));
                 String modelName = stringValue(model.get("modelName"));
+                String provider = stringValue(model.get("provider"));
                 if (apiUrl.isBlank() || modelName.isBlank()) {
                     return unavailableResponse("指定模型地址不可用");
                 }
                 return responseSchema == null
-                    ? llmClient.call(apiUrl, apiKey, modelName, systemPrompt, prompt, "exact")
+                    ? llmClient.call(apiUrl, apiKey, modelName, systemPrompt, prompt,
+                        provider.isBlank() ? "exact" : provider)
                     : llmClient.callJsonSchema(apiUrl, apiKey, modelName,
-                        systemPrompt, prompt, "exact", responseSchema);
+                        systemPrompt, prompt, provider.isBlank() ? "exact" : provider,
+                        responseSchema);
             }
             return unavailableResponse("指定模型未启用");
         } catch (Exception e) {
@@ -110,9 +113,11 @@ public class AiModelServiceImpl {
                     String apiUrl = stringValue(model.get("apiUrl"));
                     String apiKey = stringValue(model.get("apiKey"));
                     String modelName = stringValue(model.get("modelName"));
+                    String provider = stringValue(model.get("provider"));
                     if (apiUrl != null && !apiUrl.isEmpty() && apiKey != null && !apiKey.isEmpty()) {
                         log.info("Using DB-configured model: {}", modelName);
-                        ChatResponse resp = llmClient.call(apiUrl, apiKey, modelName, sp, prompt, "db");
+                        ChatResponse resp = llmClient.call(apiUrl, apiKey, modelName, sp, prompt,
+                            provider.isBlank() ? "db" : provider);
                         if (resp.isSuccess()) return resp;
                         log.warn("DB model {} failed, trying next", modelName);
                     }

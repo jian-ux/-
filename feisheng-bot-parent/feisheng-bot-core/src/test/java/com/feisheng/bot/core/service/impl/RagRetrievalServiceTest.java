@@ -1098,7 +1098,6 @@ class RagRetrievalServiceTest {
         String question = "如何申请开票？";
         String answer = "第一步提交开票资料。\n第二步确认抬头。\n第三步下载电子发票。";
         when(faqMatchService.match(question, true)).thenReturn(Collections.emptyMap());
-        when(embeddingService.isAvailable()).thenReturn(false);
         Map<String, Object> qa = structuredQa(71L, 20L, question, answer, 1.0, true, false);
         qa.put("lexicalScore", 1.0);
         qa.put("matchMode", "lexical");
@@ -1112,6 +1111,25 @@ class RagRetrievalServiceTest {
         assertEquals(answer, result.directAnswerText());
         assertEquals("normalized_exact", result.candidates().get(0).get("directMatchMode"));
         assertEquals("document", result.citations().get(0).get("sourceType"));
+    }
+
+    @Test
+    void returnsReviewedLegalEffectAnswerForNormalizedSynonym() {
+        String question = "电子合同具备法律效力吗？";
+        String canonicalQuestion = "电子合同具有法律效力吗？";
+        String answer = "可靠电子签名与手写签名或者盖章具有同等的法律效力。";
+        when(faqMatchService.match(question, true)).thenReturn(Collections.emptyMap());
+        Map<String, Object> qa = structuredQa(
+            72L, 20L, canonicalQuestion, answer, 0.96, true, false);
+        when(knowledgeClient.lexicalMatch(question, 10, 0.72)).thenReturn(List.of(qa));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(question);
+
+        assertTrue(result.directAnswer());
+        assertEquals("structured_qa_direct", result.decision());
+        assertEquals(answer, result.directAnswerText());
+        verify(embeddingService, never()).isAvailable();
+        verify(rerankService, never()).rerank(anyString(), anyList());
     }
 
     @Test
@@ -1181,7 +1199,6 @@ class RagRetrievalServiceTest {
     void exactReviewedCanonicalQaWinsOverDisabledDuplicate() {
         String question = "如何申请开票？";
         when(faqMatchService.match(question, true)).thenReturn(Collections.emptyMap());
-        when(embeddingService.isAvailable()).thenReturn(false);
         Map<String, Object> disabled = structuredQa(70L, 19L, question,
             "旧答案。", 1.0, false, false);
         Map<String, Object> canonical = structuredQa(71L, 20L, question,

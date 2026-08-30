@@ -147,7 +147,14 @@ public class ChannelConfigService {
         Map<String, Object> values = parse(config.getConfigJson());
         String clientId = firstText(values.get("clientId"), values.get("appKey"));
         String clientSecret = firstText(values.get("clientSecret"), values.get("appSecret"));
-        dingTalkStreamManager.validateCredentials(clientId, clientSecret);
+        try {
+            dingTalkStreamManager.validateCredentials(clientId, clientSecret);
+        } catch (BusinessException e) {
+            // A config may still have an older client in memory after its
+            // credentials were edited. Do not report that stale client as connected.
+            dingTalkStreamManager.deactivate(id);
+            throw e;
+        }
         if (Integer.valueOf(1).equals(config.getStatus())) {
             dingTalkStreamManager.activate(id, clientId, clientSecret, false);
             return new ChannelConnectionTestResult(true, "CONNECTED", "钉钉 Stream 已连接");

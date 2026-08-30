@@ -86,6 +86,21 @@ class CustomerControllerTest {
     }
 
     @Test
+    void deleteSoftRemovesVisibleCustomer() {
+        BotCustomerMapper customerMapper = mock(BotCustomerMapper.class);
+        BotCustomer customer = new BotCustomer();
+        customer.setId(7L);
+        customer.setChannelType("web");
+        when(customerMapper.selectById(7L)).thenReturn(customer);
+        CustomerController controller = new CustomerController(
+            customerMapper, mock(BotConversationMapper.class), mock(CustomerProfileSyncService.class));
+
+        controller.delete(7L);
+
+        verify(customerMapper).deleteById(7L);
+    }
+
+    @Test
     void syncEndpointUpdatesCustomerProfiles() throws Exception {
         BotCustomerMapper customerMapper = mock(BotCustomerMapper.class);
         BotConversationMapper conversationMapper = mock(BotConversationMapper.class);

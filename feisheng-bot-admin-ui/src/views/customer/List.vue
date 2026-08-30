@@ -75,9 +75,19 @@
       <el-table-column prop="lastContactTime" label="最后联系" width="180">
         <template #default="{ row }">{{ formatDateTime(row.lastContactTime) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="82" fixed="right">
+      <el-table-column label="操作" width="132" fixed="right" align="center">
         <template #default="{ row }">
-          <el-button size="small" @click.stop="goDetail(row)">详情</el-button>
+          <div class="table-actions" @click.stop>
+            <el-tooltip content="查看详情" placement="top">
+              <el-button class="action-button" size="small" :icon="View" aria-label="查看详情" @click.stop="goDetail(row)" />
+            </el-tooltip>
+            <el-tooltip content="编辑客户" placement="top">
+              <el-button class="action-button" size="small" type="primary" plain :icon="Edit" aria-label="编辑客户" @click.stop="openEdit(row)" />
+            </el-tooltip>
+            <el-tooltip content="删除客户" placement="top">
+              <el-button class="action-button" size="small" type="danger" plain :icon="Delete" aria-label="删除客户" @click.stop="deleteCustomer(row)" />
+            </el-tooltip>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -100,7 +110,11 @@
           <div class="full-row"><dt>备注</dt><dd>{{ customer.remark || '-' }}</dd></div>
           <div class="full-row"><dt>最后联系</dt><dd>{{ formatDateTime(customer.lastContactTime) }}</dd></div>
         </dl>
-        <el-button class="detail-button" size="small" @click="goDetail(customer)">查看详情</el-button>
+        <div class="mobile-actions">
+          <el-button size="small" :icon="View" @click="goDetail(customer)">详情</el-button>
+          <el-button size="small" type="primary" plain :icon="Edit" @click="openEdit(customer)">编辑</el-button>
+          <el-button size="small" type="danger" plain :icon="Delete" @click="deleteCustomer(customer)">删除</el-button>
+        </div>
       </article>
       <el-empty v-if="!loading && !customers.length" description="暂无客户资料" />
     </div>
@@ -115,13 +129,34 @@
       />
     </div>
   </el-card>
+
+  <el-dialog v-model="editVisible" title="编辑客户资料" width="min(500px, 92vw)" destroy-on-close>
+    <el-form :model="editForm" label-width="80px">
+      <el-form-item label="姓名" prop="name">
+        <el-input v-model="editForm.name" maxlength="100" />
+      </el-form-item>
+      <el-form-item label="手机" prop="phone">
+        <el-input v-model="editForm.phone" maxlength="20" />
+      </el-form-item>
+      <el-form-item label="邮箱" prop="email">
+        <el-input v-model="editForm.email" maxlength="100" />
+      </el-form-item>
+      <el-form-item label="备注" prop="remark">
+        <el-input v-model="editForm.remark" type="textarea" :rows="4" maxlength="500" show-word-limit />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button :disabled="saving" @click="editVisible = false">取消</el-button>
+      <el-button type="primary" :loading="saving" @click="saveCustomer">保存</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Refresh, Search, UserFilled } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { Delete, Edit, Refresh, Search, UserFilled, View } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '../../api/index.js'
 import { loadChannelOptions } from '../../utils/channelOptions.js'
 import { channelTypeText, formatDateTime } from '../../utils/displayText.js'
@@ -136,6 +171,10 @@ const keyword = ref('')
 const channelType = ref('')
 const loading = ref(false)
 const syncing = ref(false)
+const saving = ref(false)
+const editVisible = ref(false)
+const editingCustomerId = ref(null)
+const editForm = reactive({ name: '', phone: '', email: '', remark: '' })
 const isMobile = ref(window.matchMedia('(max-width: 720px)').matches)
 
 async function fetchCustomers() {
@@ -195,6 +234,55 @@ function goDetail(customer) {
   router.push(`/customer/${customer.id}`)
 }
 
+function openEdit(customer) {
+  editingCustomerId.value = customer.id
+  Object.assign(editForm, {
+    name: customer.name || '',
+    phone: customer.phone || '',
+    email: customer.email || '',
+    remark: customer.remark || ''
+  })
+  editVisible.value = true
+}
+
+async function saveCustomer() {
+  if (editingCustomerId.value == null) return
+  saving.value = true
+  try {
+    await request.put(`/admin/customer/${editingCustomerId.value}`, {
+      name: editForm.name.trim(),
+      phone: editForm.phone.trim(),
+      email: editForm.email.trim(),
+      remark: editForm.remark.trim()
+    })
+    ElMessage.success('客户资料已更新')
+    editVisible.value = false
+    await fetchCustomers()
+  } finally {
+    saving.value = false
+  }
+}
+
+async function deleteCustomer(customer) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除客户“${customerDisplayName(customer)}”吗？删除后将不再出现在客户管理中。`,
+      '删除客户',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消'
+      }
+    )
+  } catch {
+    return
+  }
+  await request.delete(`/admin/customer/${customer.id}`)
+  ElMessage.success('客户已删除')
+  if (customers.value.length === 1 && page.value > 1) page.value--
+  await fetchCustomers()
+}
+
 function updateMobileLayout() {
   isMobile.value = window.matchMedia('(max-width: 720px)').matches
 }
@@ -225,6 +313,9 @@ onUnmounted(() => window.removeEventListener('resize', updateMobileLayout))
 .customer-identity strong,
 .customer-identity span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .customer-identity span { color:#909399; font-size:12px; }
+.table-actions { display:flex; align-items:center; justify-content:center; gap:6px; }
+.table-actions .el-button { margin:0; }
+.action-button { width:28px; height:28px; padding:0; }
 .mobile-customer-list { display:none; }
 .pagination-wrap { display:flex; justify-content:flex-end; margin-top:16px; overflow-x:auto; }
 @media (max-width: 720px) {
@@ -244,7 +335,8 @@ onUnmounted(() => window.removeEventListener('resize', updateMobileLayout))
   .customer-meta dt { margin-bottom:3px; color:#909399; font-size:12px; }
   .customer-meta dd { margin:0; overflow-wrap:anywhere; }
   .customer-meta .full-row { grid-column:1 / -1; }
-  .detail-button { display:block; margin-left:auto; }
+  .mobile-actions { display:flex; justify-content:flex-end; gap:8px; }
+  .mobile-actions .el-button { margin:0; }
   .pagination-wrap { justify-content:center; }
 }
 </style>

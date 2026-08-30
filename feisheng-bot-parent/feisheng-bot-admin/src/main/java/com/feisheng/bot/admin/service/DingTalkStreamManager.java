@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.util.Collections;
@@ -36,6 +37,11 @@ public class DingTalkStreamManager {
 
     private OpenDingTalkClient activeClient;
     private Long activeConfigId;
+    private String activeClientId;
+    private String activeClientSecret;
+    private long nextReconnectAtMillis;
+
+    private static final long RECONNECT_INTERVAL_MILLIS = 60_000L;
 
     public DingTalkStreamManager(
             BotChannelConfigMapper mapper,
@@ -90,6 +96,7 @@ public class DingTalkStreamManager {
         try {
             clientFactory.validateCredentials(clientId.trim(), clientSecret.trim());
         } catch (Exception e) {
+            clearIfActiveCredentials(clientId, clientSecret);
             log.warn("DingTalk credential validation failed for clientId={}", mask(clientId));
             throw new BusinessException(400,
                 "钉钉 Stream 鉴权失败，请确认应用凭证及机器人 Stream 模式配置");
@@ -99,14 +106,22 @@ public class DingTalkStreamManager {
     public synchronized void activate(Long configId, String clientId, String clientSecret,
                                       boolean validateCredentials) {
         requireCredentials(clientId, clientSecret);
-        if (validateCredentials) validateCredentials(clientId, clientSecret);
+        if (validateCredentials) {
+            try {
+                validateCredentials(clientId, clientSecret);
+            } catch (RuntimeException e) {
+                clearActiveConfig(configId);
+                throw e;
+            }
+        }
 
-        OpenDingTalkClient candidate;
+        OpenDingTalkClient candidate = null;
         try {
             candidate = clientFactory.create(
                 clientId.trim(), clientSecret.trim(), consumeThreads, callbackListener);
             candidate.start();
         } catch (Exception e) {
+            if (candidate != null) stopQuietly(candidate);
             log.error("Failed to start DingTalk Stream connection for config id={}", configId, e);
             throw new BusinessException(502, "钉钉 Stream 连接启动失败，请稍后重试");
         }
@@ -114,6 +129,9 @@ public class DingTalkStreamManager {
         OpenDingTalkClient previous = activeClient;
         activeClient = candidate;
         activeConfigId = configId;
+        activeClientId = clientId.trim();
+        activeClientSecret = clientSecret.trim();
+        nextReconnectAtMillis = 0L;
         stopQuietly(previous);
         log.info("DingTalk Stream connection active for config id={}", configId);
     }
@@ -123,6 +141,8 @@ public class DingTalkStreamManager {
         OpenDingTalkClient previous = activeClient;
         activeClient = null;
         activeConfigId = null;
+        activeClientId = null;
+        activeClientSecret = null;
         stopQuietly(previous);
         log.info("DingTalk Stream connection stopped for config id={}", configId);
     }
@@ -136,6 +156,103 @@ public class DingTalkStreamManager {
         OpenDingTalkClient previous = activeClient;
         activeClient = null;
         activeConfigId = null;
+        activeClientId = null;
+        activeClientSecret = null;
+        stopQuietly(previous);
+    }
+
+    /**
+     * The Stream SDK keeps retrying its socket internally and does not expose a
+     * disconnect callback. Revalidate the active credentials periodically so a
+     * revoked credential or permanently failed connection cannot remain marked
+     * as CONNECTED forever, then recover an enabled database configuration.
+     */
+    @Scheduled(fixedDelay = RECONNECT_INTERVAL_MILLIS, initialDelay = RECONNECT_INTERVAL_MILLIS)
+    public void healthCheck() {
+        Long configId;
+        String clientId;
+        String clientSecret;
+        synchronized (this) {
+            configId = activeConfigId;
+            clientId = activeClientId;
+            clientSecret = activeClientSecret;
+        }
+
+        if (hasText(clientId) && hasText(clientSecret)) {
+            try {
+                clientFactory.validateCredentials(clientId, clientSecret);
+                return;
+            } catch (Exception e) {
+                log.warn("DingTalk Stream health check failed for config id={}; marking it disconnected",
+                    configId, e);
+                synchronized (this) {
+                    if (Objects.equals(activeConfigId, configId)
+                            && Objects.equals(activeClientId, clientId)
+                            && Objects.equals(activeClientSecret, clientSecret)) {
+                        OpenDingTalkClient previous = activeClient;
+                        activeClient = null;
+                        activeConfigId = null;
+                        activeClientId = null;
+                        activeClientSecret = null;
+                        nextReconnectAtMillis = System.currentTimeMillis() + RECONNECT_INTERVAL_MILLIS;
+                        stopQuietly(previous);
+                    }
+                }
+            }
+        }
+
+        long now = System.currentTimeMillis();
+        synchronized (this) {
+            if (activeClient != null || now < nextReconnectAtMillis) return;
+        }
+        BotChannelConfig config = mapper.selectOne(
+            new LambdaQueryWrapper<BotChannelConfig>()
+                .eq(BotChannelConfig::getChannelType, "dingtalk")
+                .eq(BotChannelConfig::getStatus, 1)
+                .orderByDesc(BotChannelConfig::getId)
+                .last("LIMIT 1"));
+        try {
+            if (config != null) {
+                Map<String, Object> values = parse(config.getConfigJson());
+                activate(config.getId(), firstText(values.get("clientId"), values.get("appKey")),
+                    firstText(values.get("clientSecret"), values.get("appSecret")), true);
+            } else if (environmentEnabled && hasText(environmentClientId)
+                    && hasText(environmentClientSecret)) {
+                activate(null, environmentClientId, environmentClientSecret, true);
+            } else {
+                return;
+            }
+        } catch (Exception e) {
+            synchronized (this) {
+                nextReconnectAtMillis = System.currentTimeMillis() + RECONNECT_INTERVAL_MILLIS;
+            }
+            log.warn("DingTalk Stream reconnect failed for config id={}",
+                config == null ? null : config.getId(), e);
+        }
+    }
+
+    private synchronized void clearIfActiveCredentials(String clientId, String clientSecret) {
+        if (!Objects.equals(activeClientId, clientId == null ? null : clientId.trim())
+                || !Objects.equals(activeClientSecret, clientSecret == null ? null : clientSecret.trim())) {
+            return;
+        }
+        OpenDingTalkClient previous = activeClient;
+        activeClient = null;
+        activeConfigId = null;
+        activeClientId = null;
+        activeClientSecret = null;
+        nextReconnectAtMillis = System.currentTimeMillis() + RECONNECT_INTERVAL_MILLIS;
+        stopQuietly(previous);
+    }
+
+    private synchronized void clearActiveConfig(Long configId) {
+        if (configId == null || !Objects.equals(activeConfigId, configId)) return;
+        OpenDingTalkClient previous = activeClient;
+        activeClient = null;
+        activeConfigId = null;
+        activeClientId = null;
+        activeClientSecret = null;
+        nextReconnectAtMillis = System.currentTimeMillis() + RECONNECT_INTERVAL_MILLIS;
         stopQuietly(previous);
     }
 

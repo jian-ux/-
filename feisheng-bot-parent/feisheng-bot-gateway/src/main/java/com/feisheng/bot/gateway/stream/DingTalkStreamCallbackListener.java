@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -39,6 +40,9 @@ public class DingTalkStreamCallbackListener
     private static final String EMPTY_TEXT_REPLY = "请发送文本内容，我会尽力帮您解答。";
     private static final String ERROR_REPLY = "服务暂时不可用，请稍后再试。";
     private static final String PROCESSING_BUSY_REPLY = "当前咨询较多，请稍后重试。";
+    private static final String COMPLEX_PROCESSING_REPLY =
+        "这个问题需要进一步检索和分析，我正在处理中，稍后发送完整答复。";
+    private static final long PROCESSING_ACK_TTL_MILLIS = TimeUnit.HOURS.toMillis(24);
     private static final String MEDIA_UNAVAILABLE_REPLY =
         "当前未启用图片或语音识别，请改用文字发送。";
     private static final String MEDIA_BUSY_REPLY =
@@ -53,6 +57,13 @@ public class DingTalkStreamCallbackListener
     private final Executor mediaExecutor;
     private final ThreadPoolExecutor managedProcessingExecutor;
     private final ThreadPoolExecutor managedMediaExecutor;
+    private final Map<String, Long> processingAcknowledgements = new ConcurrentHashMap<>();
+
+    @Value("${dingtalk.stream.complex-ack-enabled:true}")
+    private boolean complexAckEnabled = true;
+
+    @Value("${dingtalk.stream.complex-ack-min-chars:60}")
+    private int complexAckMinChars = 60;
 
     @Autowired
     public DingTalkStreamCallbackListener(ChannelServiceImpl channelService,
@@ -185,11 +196,19 @@ public class DingTalkStreamCallbackListener
 
     public boolean dispatchText(ChannelMessageDTO dto, String sessionWebhook,
                                 ReplyTarget replyTarget) {
+        boolean acknowledged = shouldAcknowledgeComplex(dto)
+            && reserveProcessingAcknowledgement(dto.getMsgId());
+        if (acknowledged) {
+            replySafely(sessionWebhook, COMPLEX_PROCESSING_REPLY, dto.getMsgId());
+        }
         try {
             processingExecutor.execute(() ->
                 processAndReply(dto, sessionWebhook, null, replyTarget));
             return true;
         } catch (RuntimeException e) {
+            if (acknowledged) {
+                processingAcknowledgements.remove(value(dto.getMsgId()));
+            }
             log.warn("DingTalk processing queue rejected text message, msgId={}", dto.getMsgId());
             replySafely(sessionWebhook, PROCESSING_BUSY_REPLY, dto.getMsgId());
             return false;
@@ -300,6 +319,28 @@ public class DingTalkStreamCallbackListener
         } catch (RuntimeException e) {
             log.warn("DingTalk image reply failed, msgId={}: {}", msgId, e.getMessage());
         }
+    }
+
+    private boolean shouldAcknowledgeComplex(ChannelMessageDTO dto) {
+        if (!complexAckEnabled || dto == null || dto.getContent() == null) return false;
+        String text = dto.getContent().trim();
+        if (text.length() >= Math.max(20, complexAckMinChars)) return true;
+        long questionMarks = text.chars().filter(ch -> ch == '?' || ch == '？').count();
+        if (questionMarks >= 2) return true;
+        return List.of("详细分析", "深入分析", "综合分析", "对比", "比较", "制定方案",
+                "排查原因", "结合实际", "分别说明", "完整说明", "给出方案")
+            .stream().anyMatch(text::contains);
+    }
+
+    private boolean reserveProcessingAcknowledgement(String msgId) {
+        String key = value(msgId);
+        if (key.isBlank()) return false;
+        long now = System.currentTimeMillis();
+        if (processingAcknowledgements.size() > 1024) {
+            processingAcknowledgements.entrySet().removeIf(
+                entry -> now - entry.getValue() > PROCESSING_ACK_TTL_MILLIS);
+        }
+        return processingAcknowledgements.putIfAbsent(key, now) == null;
     }
 
     private void replySafely(String sessionWebhook, String content, String msgId) {

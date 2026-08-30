@@ -16,6 +16,7 @@ public final class StructuredQaUtil {
     public static String normalizeQuestion(String value) {
         String normalized = QUESTION_SEPARATORS.matcher(safe(value).toLowerCase(Locale.ROOT))
             .replaceAll("");
+        normalized = normalized.replace("具备法律效力", "具有法律效力");
         boolean changed;
         do {
             changed = false;

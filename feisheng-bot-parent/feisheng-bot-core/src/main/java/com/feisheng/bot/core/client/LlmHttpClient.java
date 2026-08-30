@@ -34,6 +34,15 @@ public class LlmHttpClient {
     @Value("${ai.llm.temperature:0.0}")
     private double temperature;
 
+    @Value("${ai.llm.max-output-tokens:1024}")
+    private int maxOutputTokens;
+
+    @Value("${ai.llm.deepseek-thinking-enabled:false}")
+    private boolean deepSeekThinkingEnabled;
+
+    @Value("${ai.llm.local.keep-alive:-1}")
+    private long localKeepAlive;
+
     @Value("${ai.llm.system-prompt:You are a helpful customer service assistant.}")
     private String defaultSystemPrompt;
 
@@ -109,6 +118,14 @@ public class LlmHttpClient {
                 Map<String, Object> body = new HashMap<>();
                 body.put("model", m);
                 body.put("temperature", temperature);
+                if (maxOutputTokens > 0) body.put("max_tokens", maxOutputTokens);
+                if (isLocalOllama(apiUrl, providerCode)) {
+                    body.put("keep_alive", localKeepAlive);
+                }
+                if (isDeepSeekCloud(apiUrl, providerCode)) {
+                    body.put("thinking", Map.of(
+                        "type", deepSeekThinkingEnabled ? "enabled" : "disabled"));
+                }
                 if (responseFormat != null) body.put("response_format", responseFormat);
                 body.put("messages", Arrays.asList(
                     Map.of("role", "system", "content", sp),
@@ -143,7 +160,12 @@ public class LlmHttpClient {
                             if (usage.get("completion_tokens") != null)
                                 outTokens = ((Number) usage.get("completion_tokens")).intValue();
                         }
-                        return new ChatResponse(content, true, m, providerCode, inTokens, outTokens);
+                        boolean hasContent = content != null && !content.isBlank();
+                        if (!hasContent) {
+                            log.warn("LLM returned empty content: provider={}, model={}, finishReason={}, outputTokens={}",
+                                providerCode, m, choices.get(0).get("finish_reason"), outTokens);
+                        }
+                        return new ChatResponse(content, hasContent, m, providerCode, inTokens, outTokens);
                     }
                 }
                 // 响应格式异常，重试无意义
@@ -166,4 +188,49 @@ public class LlmHttpClient {
     }
 
     public String getDefaultSystemPrompt() { return defaultSystemPrompt; }
+
+    /** Loads an Ollama model without generating a response and keeps it resident. */
+    public boolean warmupLocalModel(String apiUrl, String model, String providerCode) {
+        if (!isLocalOllama(apiUrl, providerCode) || model == null || model.isBlank()) {
+            return false;
+        }
+        try {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("model", model);
+            body.put("messages", Collections.emptyList());
+            body.put("stream", false);
+            body.put("keep_alive", localKeepAlive);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            rest.exchange(ollamaChatUrl(apiUrl), HttpMethod.POST,
+                new HttpEntity<>(body, headers), Map.class);
+            return true;
+        } catch (Exception e) {
+            log.warn("Local model warmup failed for {}: {}", model, e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean isLocalOllama(String apiUrl, String providerCode) {
+        String provider = providerCode == null ? "" : providerCode.toLowerCase(Locale.ROOT);
+        String url = apiUrl == null ? "" : apiUrl.toLowerCase(Locale.ROOT);
+        return provider.contains("ollama") || url.contains(":11434/");
+    }
+
+    private boolean isDeepSeekCloud(String apiUrl, String providerCode) {
+        String provider = providerCode == null ? "" : providerCode.toLowerCase(Locale.ROOT);
+        String url = apiUrl == null ? "" : apiUrl.toLowerCase(Locale.ROOT);
+        return provider.contains("deepseek") || url.contains("api.deepseek.com");
+    }
+
+    private String ollamaChatUrl(String apiUrl) {
+        String normalized = apiUrl == null ? "" : apiUrl.trim().replaceAll("/+$", "");
+        if (normalized.endsWith("/v1/chat/completions")) {
+            normalized = normalized.substring(0,
+                normalized.length() - "/v1/chat/completions".length());
+        } else if (normalized.endsWith("/api/chat")) {
+            return normalized;
+        }
+        return normalized + "/api/chat";
+    }
 }

@@ -2,6 +2,7 @@ import asyncio
 import hmac
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import Any
@@ -26,9 +27,9 @@ INSTRUCTION = os.getenv(
     "evidence, even when they do not affirm the assumption.",
 )
 MAX_CANDIDATES = int(os.getenv("RERANK_MAX_CANDIDATES", "10"))
-MAX_LENGTH = int(os.getenv("RERANK_MAX_LENGTH", "2048"))
-BATCH_SIZE = int(os.getenv("RERANK_BATCH_SIZE", "1"))
-CACHE_MAX_ENTRIES = max(0, int(os.getenv("RERANK_CACHE_MAX_ENTRIES", "256")))
+MAX_LENGTH = int(os.getenv("RERANK_MAX_LENGTH", "1024"))
+BATCH_SIZE = int(os.getenv("RERANK_BATCH_SIZE", "8"))
+CACHE_MAX_ENTRIES = max(0, int(os.getenv("RERANK_CACHE_MAX_ENTRIES", "1024")))
 SCORE_TEMPERATURE = max(0.1, float(os.getenv("RERANK_SCORE_TEMPERATURE", "1.0")))
 API_KEY = os.getenv("RERANK_API_KEY", "").strip()
 
@@ -69,6 +70,9 @@ def _load_model() -> None:
         raise RuntimeError("RERANK_API_KEY must be configured")
     if DEVICE.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError("CUDA is required but no CUDA device is available")
+    if DEVICE.startswith("cuda"):
+        torch.set_float32_matmul_precision("high")
+        torch.backends.cuda.matmul.allow_tf32 = True
 
     dtype = getattr(torch, DTYPE, None)
     if dtype is None:
@@ -138,6 +142,8 @@ def health() -> dict[str, Any]:
         "device": DEVICE,
         "gpu": gpu,
         "score_temperature": SCORE_TEMPERATURE,
+        "max_length": MAX_LENGTH,
+        "batch_size": BATCH_SIZE,
         "cache": {
             "max_entries": CACHE_MAX_ENTRIES,
             "entries": cache_info.currsize,
@@ -161,6 +167,7 @@ async def rerank(
             detail=f"Requested model {request.model!r} does not match loaded model {MODEL_ID!r}",
         )
 
+    started = time.perf_counter()
     async with _inference_lock:
         scores, cache_hit = await asyncio.to_thread(
             _predict, request.query, request.documents)
@@ -170,6 +177,7 @@ async def rerank(
     return {
         "model": MODEL_ID,
         "cache_hit": cache_hit,
+        "latency_ms": round((time.perf_counter() - started) * 1000, 2),
         "results": [
             {"index": index, "relevance_score": score}
             for index, score in ranked

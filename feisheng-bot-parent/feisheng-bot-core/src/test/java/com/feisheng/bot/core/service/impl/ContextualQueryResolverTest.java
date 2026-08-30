@@ -201,6 +201,24 @@ class ContextualQueryResolverTest {
     }
 
     @Test
+    void returnsToAnEarlierStandaloneTopicAfterAnInterveningTopic() {
+        String topicA = "电子合同有法律效力吗？";
+        String topicB = "企业认证需要什么材料？";
+
+        ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
+            message("user", topicA),
+            message("ai", "符合条件的可靠电子签名可以使电子合同具有法律效力。"),
+            message("user", topicB),
+            message("ai", "企业认证通常需要营业执照等主体材料。"),
+            message("user", topicA)), topicA);
+
+        assertFalse(result.contextDependent());
+        assertFalse(result.rewritten());
+        assertEquals(topicA, result.query());
+        assertFalse(result.query().contains("企业认证"));
+    }
+
+    @Test
     void carriesHistoryForAnaphoricAttachmentFollowUp() {
         ContextualQueryResolver.Resolution result = resolver.resolve(List.of(
             message("user", "合同双方都已经签署完成了。"),

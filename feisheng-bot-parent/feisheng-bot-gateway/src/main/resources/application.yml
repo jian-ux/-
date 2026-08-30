@@ -43,6 +43,8 @@ dingtalk:
     consume-threads: ${DINGTALK_STREAM_CONSUME_THREADS:4}
     processing-worker-threads: ${DINGTALK_STREAM_PROCESSING_WORKER_THREADS:4}
     processing-queue-capacity: ${DINGTALK_STREAM_PROCESSING_QUEUE_CAPACITY:100}
+    complex-ack-enabled: ${DINGTALK_STREAM_COMPLEX_ACK_ENABLED:true}
+    complex-ack-min-chars: ${DINGTALK_STREAM_COMPLEX_ACK_MIN_CHARS:60}
   media:
     worker-threads: ${DINGTALK_MEDIA_WORKER_THREADS:2}
     queue-capacity: ${DINGTALK_MEDIA_QUEUE_CAPACITY:50}
@@ -60,3 +62,9 @@ wecom:
   callback-token: ${WECOM_CALLBACK_TOKEN:}
   callback-aes-key: ${WECOM_CALLBACK_AES_KEY:}
   api-base: ${WECOM_API_BASE:https://qyapi.weixin.qq.com}
+web:
+  async:
+    worker-threads: ${WEB_ASYNC_WORKER_THREADS:4}
+    queue-capacity: ${WEB_ASYNC_QUEUE_CAPACITY:100}
+    result-ttl-seconds: ${WEB_ASYNC_RESULT_TTL_SECONDS:600}
+    max-jobs: ${WEB_ASYNC_MAX_JOBS:1000}

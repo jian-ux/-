@@ -29,6 +29,20 @@ class KnowledgeMigrationSnapshotServiceTest {
     }
 
     @Test
+    void rejectsDraftSource() {
+        BotKnowledgeDocument source = new BotKnowledgeDocument();
+        source.setId(1L); source.setStatus(2); source.setSourceScope("KNOWLEDGE"); source.setPublishStatus("DRAFT");
+        BotKnowledgeDocumentMapper docs = mock(BotKnowledgeDocumentMapper.class);
+        when(docs.selectById(1L)).thenReturn(source);
+        KnowledgeMigrationSnapshotService service = new KnowledgeMigrationSnapshotService(
+            docs, mock(BotKnowledgeChunkMapper.class), mock(BotKnowledgeMigrationJobMapper.class),
+            mock(KnowledgeDocumentReleaseService.class));
+        KnowledgeMigrationSnapshotService.SnapshotException error = assertThrows(
+            KnowledgeMigrationSnapshotService.SnapshotException.class, () -> service.create(1L, 2L));
+        assertEquals(409, error.status());
+    }
+
+    @Test
     void reusesExistingHashBeforeAllocatingVersion() {
         BotKnowledgeDocument source = new BotKnowledgeDocument();
         source.setId(1L); source.setStatus(2); source.setSourceScope("KNOWLEDGE"); source.setPublishStatus("PUBLISHED"); source.setKnowledgeSetKey("k");

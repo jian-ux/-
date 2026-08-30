@@ -21,3 +21,9 @@ Initial result: default `mvn` command was unavailable in PowerShell. Using the a
 ## Remaining Concerns
 
 - The focused test set is intentionally compact; broader integration coverage remains outside this task.
+
+## Fix Round 2
+
+- Reconcile now matches target chunks by stable chunk position/index, replaces stale content, and removes unmatched extras.
+- Source snapshots reject non-published documents.
+- Focused rerun (absolute IntelliJ Maven path): `Tests run: 4, Failures: 0, Errors: 0, Skipped: 0; BUILD SUCCESS (41.204 s)`.

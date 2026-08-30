@@ -169,13 +169,15 @@ public class KnowledgeMigrationSnapshotService {
 
     private void reconcileChunks(Long targetId, List<BotKnowledgeChunk> sourceChunks, List<BotKnowledgeChunk> existing) {
         List<BotKnowledgeChunk> remaining = new ArrayList<>(existing);
-        for (BotKnowledgeChunk source : sourceChunks) {
+        for (int position = 0; position < sourceChunks.size(); position++) {
+            BotKnowledgeChunk source = sourceChunks.get(position);
             int match = -1;
             for (int i = 0; i < remaining.size(); i++) {
                 BotKnowledgeChunk candidate = remaining.get(i);
-                if (Objects.equals(candidate.getChunkIndex(), source.getChunkIndex())
-                    && Objects.equals(candidate.getContent(), source.getContent())
-                    && Objects.equals(candidate.getSectionPath(), source.getSectionPath())) {
+                boolean samePosition = source.getChunkIndex() != null
+                    ? Objects.equals(candidate.getChunkIndex(), source.getChunkIndex())
+                    : candidate.getChunkIndex() == null && i == position;
+                if (samePosition) {
                     match = i;
                     break;
                 }

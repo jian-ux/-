@@ -27,6 +27,7 @@ public class KnowledgeMigrationWorker {
     private final KnowledgeMigrationSnapshotService snapshotService;
     private final StructuredKnowledgeExtractionService extractionService;
     private final FactConflictService conflictService;
+    private final KnowledgeMigrationObservability observability;
     private final long leaseMillis;
     private final Long preferredModelId;
 
@@ -38,12 +39,27 @@ public class KnowledgeMigrationWorker {
                                     FactConflictService conflictService,
                                     @Value("${knowledge.migration.lease-duration-ms:300000}") long leaseMillis,
                                     @Value("${knowledge.migration.preferred-model-id:0}") Long preferredModelId) {
+        this(jobMapper, documentMapper, chunkMapper, snapshotService, extractionService, conflictService,
+            leaseMillis, preferredModelId, new KnowledgeMigrationObservability(null));
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public KnowledgeMigrationWorker(BotKnowledgeMigrationJobMapper jobMapper,
+                                    BotKnowledgeDocumentMapper documentMapper,
+                                    BotKnowledgeChunkMapper chunkMapper,
+                                    KnowledgeMigrationSnapshotService snapshotService,
+                                    StructuredKnowledgeExtractionService extractionService,
+                                    FactConflictService conflictService,
+                                    @Value("${knowledge.migration.lease-duration-ms:300000}") long leaseMillis,
+                                    @Value("${knowledge.migration.preferred-model-id:0}") Long preferredModelId,
+                                    KnowledgeMigrationObservability observability) {
         this.jobMapper = Objects.requireNonNull(jobMapper, "jobMapper");
         this.documentMapper = Objects.requireNonNull(documentMapper, "documentMapper");
         this.chunkMapper = Objects.requireNonNull(chunkMapper, "chunkMapper");
         this.snapshotService = Objects.requireNonNull(snapshotService, "snapshotService");
         this.extractionService = Objects.requireNonNull(extractionService, "extractionService");
         this.conflictService = Objects.requireNonNull(conflictService, "conflictService");
+        this.observability = Objects.requireNonNull(observability, "observability");
         this.leaseMillis = Math.max(1000L, leaseMillis);
         this.preferredModelId = preferredModelId == null || preferredModelId <= 0 ? null : preferredModelId;
     }
@@ -62,6 +78,10 @@ public class KnowledgeMigrationWorker {
         int claimed = jobMapper.claim(jobId, Objects.toString(job.getStatus(), "PENDING"), owner,
             new Date(System.currentTimeMillis() + leaseMillis), version);
         if (claimed != 1) return;
+        long queueWaitMillis = job.getUpdatedAt() == null ? 0L
+            : Math.max(0L, System.currentTimeMillis() - job.getUpdatedAt().getTime());
+        observability.queueWait(job.getId(), job.getKnowledgeSetKey(), job.getSourceVersionId(),
+            job.getTargetVersionId(), queueWaitMillis);
         job.setLeaseOwner(owner);
         job.setLeaseUntil(new Date(System.currentTimeMillis() + leaseMillis));
         job.setStatus("RUNNING");
@@ -105,6 +125,9 @@ public class KnowledgeMigrationWorker {
             }
             FactConflictService.ConflictReport conflicts = conflictService.check(
                 job.getId(), job.getSourceDocumentId(), job.getTargetDocumentId());
+            observability.conflicts(job.getId(), job.getKnowledgeSetKey(), job.getSourceVersionId(),
+                job.getTargetVersionId(), conflicts.candidatePairs(),
+                conflicts.blocking() + conflicts.warning() + conflicts.info(), conflicts.unknown());
             job.setConflictUnits(conflicts.blocking() + conflicts.warning());
             persist(job);
             advance(job, KnowledgeMigrationStatus.REVIEW_REQUIRED);
@@ -132,6 +155,11 @@ public class KnowledgeMigrationWorker {
         job.setStatus(next.name());
         job.setCurrentStep(next.name());
         job.setLockVersion(version + 1);
+        long elapsedMillis = job.getUpdatedAt() == null ? 0L
+            : Math.max(0L, System.currentTimeMillis() - job.getUpdatedAt().getTime());
+        job.setUpdatedAt(new Date());
+        observability.transition(job.getId(), job.getKnowledgeSetKey(), job.getSourceVersionId(),
+            job.getTargetVersionId(), expected, next.name(), elapsedMillis);
         log.info("migrationJobId={} knowledgeSetKey={} sourceVersion={} targetVersion={} step={}",
             job.getId(), job.getKnowledgeSetKey(), job.getSourceVersionId(),
             job.getTargetVersionId(), next);
@@ -170,6 +198,15 @@ public class KnowledgeMigrationWorker {
         log.warn("migrationJobId={} knowledgeSetKey={} sourceVersion={} targetVersion={} step={} error={}",
             job.getId(), job.getKnowledgeSetKey(), job.getSourceVersionId(),
             job.getTargetVersionId(), status, message);
+        observability.failure(job.getId(), job.getKnowledgeSetKey(), job.getSourceVersionId(),
+            job.getTargetVersionId(), failedStep, failureKind(failedStep));
+    }
+
+    private static String failureKind(String step) {
+        if (KnowledgeMigrationStatus.EXTRACTING.name().equals(step)) return "extraction";
+        if (KnowledgeMigrationStatus.EMBEDDING.name().equals(step)) return "vector";
+        if (KnowledgeMigrationStatus.CONFLICT_CHECKING.name().equals(step)) return "model";
+        return "worker";
     }
 
     private boolean terminal(String status) {

@@ -50,6 +50,8 @@ knowledge:
     preferred-model-id: ${KNOWLEDGE_MIGRATION_PREFERRED_MODEL_ID:0}
     conflict-top-k: ${KNOWLEDGE_MIGRATION_CONFLICT_TOP_K:20}
     conflict-min-score: ${KNOWLEDGE_MIGRATION_CONFLICT_MIN_SCORE:0.82}
+    rollback-retention-days: ${KNOWLEDGE_MIGRATION_ROLLBACK_RETENTION_DAYS:30}
+    retry-delay-ms: ${KNOWLEDGE_MIGRATION_RETRY_DELAY_MS:1000}
   structured-extraction:
     batch-size: ${KNOWLEDGE_STRUCTURED_EXTRACTION_BATCH_SIZE:8}
     max-source-chars: ${KNOWLEDGE_STRUCTURED_EXTRACTION_MAX_SOURCE_CHARS:8000}
@@ -65,6 +67,11 @@ knowledge:
     url-ttl-seconds: ${KNOWLEDGE_IMAGE_URL_TTL_SECONDS:3600}
     max-bytes: ${KNOWLEDGE_IMAGE_MAX_BYTES:10485760}
     max-per-reply: ${KNOWLEDGE_IMAGE_MAX_PER_REPLY:3}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: ${MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE:health,info,metrics}
 dingtalk:
   app-secret: ${DINGTALK_APP_SECRET:}
   token: ${DINGTALK_TOKEN:}

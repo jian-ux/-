@@ -18,6 +18,9 @@ public interface BotKnowledgeDocumentMapper extends BaseMapper<BotKnowledgeDocum
     @Select("SELECT * FROM bot_knowledge_document WHERE knowledge_set_key=#{key} AND publish_status='PUBLISHED' AND source_scope='KNOWLEDGE' AND deleted=0 ORDER BY document_version DESC, id DESC FOR UPDATE")
     List<BotKnowledgeDocument> selectPublishedForUpdateByKnowledgeSetKey(@Param("key") String key);
 
+    @Select("SELECT * FROM bot_knowledge_document WHERE knowledge_set_key=#{key} AND source_scope='KNOWLEDGE' AND deleted=0 ORDER BY document_version DESC, id DESC FOR UPDATE")
+    List<BotKnowledgeDocument> selectForUpdateByKnowledgeSetKey(@Param("key") String key);
+
     @Select("SELECT COUNT(*) FROM bot_knowledge_document WHERE ((bucket_name=#{bucketName}) OR (bucket_name IS NULL AND #{bucketName} IS NULL)) AND object_key=#{objectKey} AND deleted=0")
     int countActiveObjectReferences(@Param("bucketName") String bucketName, @Param("objectKey") String objectKey);
 
@@ -34,4 +37,9 @@ public interface BotKnowledgeDocumentMapper extends BaseMapper<BotKnowledgeDocum
     @Update("UPDATE bot_knowledge_document SET publish_status='PUBLISHED', published_at=#{publishedAt}, effective_from=#{effectiveFrom}, effective_to=NULL, supersedes_document_id=#{supersedesId} WHERE id=#{targetId} AND publish_status='ARCHIVED' AND deleted=0")
     int restoreArchivedGuarded(@Param("targetId") Long targetId, @Param("publishedAt") Date publishedAt,
                                @Param("effectiveFrom") Date effectiveFrom, @Param("supersedesId") Long supersedesId);
+
+    @Update("UPDATE bot_knowledge_document SET publish_status='PUBLISHED', published_at=#{publishedAt}, effective_from=#{effectiveFrom}, effective_to=NULL, supersedes_document_id=#{supersedesId} WHERE id=#{targetId} AND knowledge_set_key=#{knowledgeSetKey} AND publish_status='ARCHIVED' AND deleted=0")
+    int restoreArchivedGuardedInSet(@Param("targetId") Long targetId, @Param("knowledgeSetKey") String knowledgeSetKey,
+                                    @Param("publishedAt") Date publishedAt, @Param("effectiveFrom") Date effectiveFrom,
+                                    @Param("supersedesId") Long supersedesId);
 }

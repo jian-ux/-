@@ -1,5 +1,6 @@
 package com.feisheng.bot.admin.controller;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.feisheng.bot.admin.entity.BotKnowledgeConflict;
 import com.feisheng.bot.admin.mapper.BotKnowledgeConflictMapper;
 import com.feisheng.bot.admin.service.KnowledgeMigrationJobService;
@@ -14,15 +15,41 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.mock;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class KnowledgeMigrationControllerTest {
+    @Test
+    void conflictListingPaginatesAndClampsInvalidRequestValues() throws Exception {
+        KnowledgeMigrationJobService jobService = mock(KnowledgeMigrationJobService.class);
+        BotKnowledgeConflictMapper conflictMapper = mock(BotKnowledgeConflictMapper.class);
+        Page<BotKnowledgeConflict> conflicts = new Page<>(1, 100);
+        conflicts.setTotal(1);
+        conflicts.setRecords(List.of(new BotKnowledgeConflict()));
+        when(conflictMapper.selectPage(any(Page.class), any())).thenReturn(conflicts);
+        KnowledgeMigrationController controller = new KnowledgeMigrationController(
+            jobService, mock(KnowledgeMigrationReviewService.class), conflictMapper);
+
+        MockMvcBuilders.standaloneSetup(controller).build()
+            .perform(get("/api/admin/knowledge/migrations/4/conflicts")
+                .param("page", "0")
+                .param("size", "999"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value(200))
+            .andExpect(jsonPath("$.data.records").isArray())
+            .andExpect(jsonPath("$.data.total").value(1));
+
+        verify(conflictMapper).selectPage(
+            argThat(page -> page.getCurrent() == 1 && page.getSize() == 100), any());
+    }
+
     @Test
     void resolveUsesAuthenticatedReviewerAndReturnsServiceErrorsAsApiResponse() throws Exception {
         KnowledgeMigrationReviewService reviewService = mock(KnowledgeMigrationReviewService.class);

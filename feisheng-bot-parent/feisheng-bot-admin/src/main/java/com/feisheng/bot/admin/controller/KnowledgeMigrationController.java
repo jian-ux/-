@@ -1,6 +1,7 @@
 package com.feisheng.bot.admin.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.feisheng.bot.admin.entity.BotKnowledgeConflict;
 import com.feisheng.bot.admin.mapper.BotKnowledgeConflictMapper;
 import com.feisheng.bot.admin.service.KnowledgeMigrationJobService;
@@ -55,6 +56,11 @@ public class KnowledgeMigrationController {
         }
     }
 
+    @GetMapping("/migrations")
+    public R<List<KnowledgeMigrationJobService.MigrationJobView>> list() {
+        return R.ok(jobService.list());
+    }
+
     @PostMapping("/migrations/{id}/retry")
     public R<KnowledgeMigrationJobService.MigrationJobView> retry(@PathVariable Long id,
                                                                    Authentication authentication) {
@@ -66,10 +72,15 @@ public class KnowledgeMigrationController {
     }
 
     @GetMapping("/migrations/{id}/conflicts")
-    public R<List<BotKnowledgeConflict>> conflicts(@PathVariable Long id) {
+    public R<Page<BotKnowledgeConflict>> conflicts(@PathVariable Long id,
+                                                   @RequestParam(defaultValue = "1") long page,
+                                                   @RequestParam(defaultValue = "20") long size) {
         try {
             jobService.get(id);
-            return R.ok(conflictMapper.selectList(new LambdaQueryWrapper<BotKnowledgeConflict>()
+            long safePage = Math.max(1, page);
+            long safeSize = Math.min(100, Math.max(1, size));
+            return R.ok(conflictMapper.selectPage(new Page<>(safePage, safeSize),
+                new LambdaQueryWrapper<BotKnowledgeConflict>()
                 .eq(BotKnowledgeConflict::getMigrationJobId, id)
                 .orderByDesc(BotKnowledgeConflict::getSeverity)
                 .orderByAsc(BotKnowledgeConflict::getId)));
@@ -106,6 +117,7 @@ public class KnowledgeMigrationController {
     public R<com.feisheng.bot.admin.service.KnowledgeDocumentReleaseService.ReleaseResult> switchVersion(
             @PathVariable Long id, Authentication authentication) {
         try {
+            if (releaseService == null) return R.fail(501, "迁移发布组件未配置");
             return R.ok(releaseService.switchMigration(id, operatorId(authentication)));
         } catch (com.feisheng.bot.admin.service.KnowledgeDocumentReleaseService.ReleaseException e) {
             return R.fail(e.status(), e.getMessage());
@@ -116,10 +128,12 @@ public class KnowledgeMigrationController {
     public R<com.feisheng.bot.admin.service.KnowledgeDocumentReleaseService.ReleaseResult> rollback(
             @PathVariable String knowledgeSetKey,
             @RequestParam(required = false) Long targetDocumentId,
+            @RequestParam(required = false) String reason,
             Authentication authentication) {
         try {
+            if (releaseService == null) return R.fail(501, "迁移发布组件未配置");
             return R.ok(releaseService.rollback(knowledgeSetKey, targetDocumentId,
-                operatorId(authentication)));
+                operatorId(authentication), reason));
         } catch (com.feisheng.bot.admin.service.KnowledgeDocumentReleaseService.ReleaseException e) {
             return R.fail(e.status(), e.getMessage());
         }

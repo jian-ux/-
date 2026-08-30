@@ -68,6 +68,43 @@ class KnowledgeMigrationWorkerTest {
     }
 
     @Test
+    void recordsQueueWaitOnlyAfterAWorkerClaimsTheJob() {
+        BotKnowledgeMigrationJobMapper jobs = mock(BotKnowledgeMigrationJobMapper.class);
+        BotKnowledgeMigrationJob job = job(1L, 10L, 20L);
+        job.setUpdatedAt(new java.util.Date(System.currentTimeMillis() - 1000L));
+        when(jobs.selectById(1L)).thenReturn(job);
+        when(jobs.claim(any(), any(), any(), any(), anyLong())).thenReturn(0);
+        KnowledgeMigrationObservability observability = mock(KnowledgeMigrationObservability.class);
+
+        new KnowledgeMigrationWorker(jobs, mock(BotKnowledgeDocumentMapper.class),
+            mock(BotKnowledgeChunkMapper.class), mock(KnowledgeMigrationSnapshotService.class),
+            mock(StructuredKnowledgeExtractionService.class), mock(FactConflictService.class),
+            60_000L, null, observability).run(1L);
+
+        verify(observability, never()).queueWait(any(), any(), any(), any(), anyLong());
+    }
+
+    @Test
+    void recordsQueueWaitWhenAWorkerClaimsTheJob() {
+        BotKnowledgeMigrationJobMapper jobs = mock(BotKnowledgeMigrationJobMapper.class);
+        BotKnowledgeMigrationJob job = job(1L, 10L, 20L);
+        java.util.Date queuedAt = new java.util.Date(System.currentTimeMillis() - 1_000L);
+        job.setUpdatedAt(queuedAt);
+        when(jobs.selectById(1L)).thenReturn(job);
+        when(jobs.claim(any(), any(), any(), any(), anyLong())).thenReturn(1);
+        when(jobs.transitionOwned(any(), any(), any(), any(), anyString(), anyLong())).thenReturn(0);
+        KnowledgeMigrationObservability observability = mock(KnowledgeMigrationObservability.class);
+
+        new KnowledgeMigrationWorker(jobs, mock(BotKnowledgeDocumentMapper.class),
+            mock(BotKnowledgeChunkMapper.class), mock(KnowledgeMigrationSnapshotService.class),
+            mock(StructuredKnowledgeExtractionService.class), mock(FactConflictService.class),
+            60_000L, null, observability).run(1L);
+
+        verify(observability).queueWait(eq(1L), eq("set"), eq(1L), eq(2L),
+            argThat(elapsed -> elapsed >= 0L));
+    }
+
+    @Test
     void expiredRunningLeaseResumesFromPersistedStep() {
         BotKnowledgeMigrationJobMapper jobs = mock(BotKnowledgeMigrationJobMapper.class);
         BotKnowledgeMigrationJob job = job(1L, 10L, 20L);

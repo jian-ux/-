@@ -14,6 +14,7 @@ const accessibleRoutes = [
   ['knowledge:faq:list', '/knowledge/faq'],
   ['knowledge:upload:view', '/knowledge/upload'],
   ['knowledge:semantic:view', '/knowledge/semantic-units'],
+  ['knowledge:migration:view', '/knowledge/migrations'],
   ['knowledge:quality:view', '/knowledge/quality-audit'],
   ['knowledge:unmatched:view', '/knowledge/unmatched'],
   ['system:user:list', '/system/user'],
@@ -41,6 +42,8 @@ const routes = [
           { path: 'faq', component: () => import('../views/knowledge/FaqList.vue'), meta: { title: '常见问题管理', permission: 'knowledge:faq:list' } },
           { path: 'upload', component: () => import('../views/knowledge/Upload.vue'), meta: { title: '知识库上传', permission: 'knowledge:upload:view' } },
           { path: 'semantic-units', component: () => import('../views/knowledge/SemanticUnits.vue'), meta: { title: '结构化知识审核', permission: 'knowledge:semantic:view' } },
+          { path: 'migrations', component: () => import('../views/knowledge/MigrationJobs.vue'), meta: { title: '文档迁移', permission: 'knowledge:migration:view' } },
+          { path: 'migrations/:id', component: () => import('../views/knowledge/MigrationDetail.vue'), meta: { title: '迁移详情', permission: 'knowledge:migration:view' } },
           { path: 'quality-audit', component: () => import('../views/knowledge/QualityAudit.vue'), meta: { title: '知识质量审计', permission: 'knowledge:quality:view' } },
           { path: 'unmatched', component: () => import('../views/knowledge/UnmatchedList.vue'), meta: { title: '问题改进池', permission: 'knowledge:unmatched:view' } }
         ]

@@ -1,7 +1,7 @@
 <template>
   <section class="knowledge-shell">
     <nav class="knowledge-nav" aria-label="知识库管理">
-      <el-tabs :model-value="route.path" @tab-change="openSection">
+      <el-tabs :model-value="activeSection" @tab-change="openSection">
         <el-tab-pane
           v-for="section in sections"
           :key="section.path"
@@ -16,6 +16,7 @@
 
 <script setup>
 import { useRoute, useRouter } from 'vue-router'
+import { computed } from 'vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -23,9 +24,14 @@ const sections = [
   { path: '/knowledge/faq', label: '常见问题' },
   { path: '/knowledge/upload', label: '文档上传' },
   { path: '/knowledge/semantic-units', label: '结构化审核' },
+  { path: '/knowledge/migrations', label: '文档迁移' },
   { path: '/knowledge/quality-audit', label: '质量审计' },
   { path: '/knowledge/unmatched', label: '问题改进池' }
 ]
+
+const activeSection = computed(() => route.path.startsWith('/knowledge/migrations')
+  ? '/knowledge/migrations'
+  : route.path)
 
 function openSection(path) {
   if (path && path !== route.path) router.push(path)

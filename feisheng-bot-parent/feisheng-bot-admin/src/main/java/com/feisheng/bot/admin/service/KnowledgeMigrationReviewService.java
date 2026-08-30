@@ -40,8 +40,8 @@ public class KnowledgeMigrationReviewService {
     private final BotKnowledgeDocumentMapper documentMapper;
     private final BotKnowledgeChunkMapper chunkMapper;
     private final ObjectMapper objectMapper;
+    private final KnowledgeMigrationObservability observability;
 
-    @Autowired
     public KnowledgeMigrationReviewService(BotKnowledgeMigrationJobMapper jobMapper,
                                            BotKnowledgeConflictMapper conflictMapper,
                                            BotKnowledgeSemanticUnitMapper unitMapper,
@@ -49,7 +49,19 @@ public class KnowledgeMigrationReviewService {
                                            BotKnowledgeChunkMapper chunkMapper,
                                            ObjectMapper objectMapper) {
         this(jobMapper, conflictMapper, unitMapper, documentMapper, chunkMapper, objectMapper,
-            ValidationPolicy.defaults());
+            ValidationPolicy.defaults(), new KnowledgeMigrationObservability(null));
+    }
+
+    @Autowired
+    public KnowledgeMigrationReviewService(BotKnowledgeMigrationJobMapper jobMapper,
+                                           BotKnowledgeConflictMapper conflictMapper,
+                                           BotKnowledgeSemanticUnitMapper unitMapper,
+                                           BotKnowledgeDocumentMapper documentMapper,
+                                           BotKnowledgeChunkMapper chunkMapper,
+                                           ObjectMapper objectMapper,
+                                           KnowledgeMigrationObservability observability) {
+        this(jobMapper, conflictMapper, unitMapper, documentMapper, chunkMapper, objectMapper,
+            ValidationPolicy.defaults(), observability);
     }
 
     public KnowledgeMigrationReviewService(BotKnowledgeMigrationJobMapper jobMapper,
@@ -59,6 +71,18 @@ public class KnowledgeMigrationReviewService {
                                            BotKnowledgeChunkMapper chunkMapper,
                                            ObjectMapper objectMapper,
                                            ValidationPolicy validationPolicy) {
+        this(jobMapper, conflictMapper, unitMapper, documentMapper, chunkMapper, objectMapper,
+            validationPolicy, new KnowledgeMigrationObservability(null));
+    }
+
+    private KnowledgeMigrationReviewService(BotKnowledgeMigrationJobMapper jobMapper,
+                                            BotKnowledgeConflictMapper conflictMapper,
+                                            BotKnowledgeSemanticUnitMapper unitMapper,
+                                            BotKnowledgeDocumentMapper documentMapper,
+                                            BotKnowledgeChunkMapper chunkMapper,
+                                            ObjectMapper objectMapper,
+                                            ValidationPolicy validationPolicy,
+                                            KnowledgeMigrationObservability observability) {
         this.jobMapper = jobMapper;
         this.conflictMapper = conflictMapper;
         this.unitMapper = unitMapper;
@@ -66,6 +90,7 @@ public class KnowledgeMigrationReviewService {
         this.chunkMapper = chunkMapper;
         this.objectMapper = objectMapper;
         this.validationPolicy = validationPolicy == null ? ValidationPolicy.defaults() : validationPolicy;
+        this.observability = Objects.requireNonNull(observability, "observability");
     }
 
     public ConflictResolution resolveConflict(Long jobId, Long conflictId,
@@ -101,6 +126,8 @@ public class KnowledgeMigrationReviewService {
         conflict.setReviewedAt(now);
         conflict.setUpdatedAt(now);
         conflictMapper.updateById(conflict);
+        observability.review(job.getId(), job.getKnowledgeSetKey(), job.getSourceVersionId(),
+            job.getTargetVersionId(), reviewerId, "conflict_resolution", 0L);
         return new ConflictResolution(job.getId(), conflict.getId(), conflict.getStatus(),
             conflict.getResolution(), reviewerId, now);
     }
@@ -176,6 +203,13 @@ public class KnowledgeMigrationReviewService {
         job.setReviewReason(reason);
         job.setReviewAuditJson(audit);
         job.setLockVersion(value(job.getLockVersion()) + 1);
+        long reviewMillis = job.getUpdatedAt() == null ? 0L
+            : Math.max(0L, reviewedAt.getTime() - job.getUpdatedAt().getTime());
+        observability.transition(job.getId(), job.getKnowledgeSetKey(), job.getSourceVersionId(),
+            job.getTargetVersionId(), KnowledgeMigrationStatus.REVIEW_REQUIRED.name(),
+            KnowledgeMigrationStatus.READY_TO_SWITCH.name(), reviewMillis);
+        observability.review(job.getId(), job.getKnowledgeSetKey(), job.getSourceVersionId(),
+            job.getTargetVersionId(), reviewerId, "document_confirmation", reviewMillis);
         return report;
     }
 

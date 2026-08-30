@@ -1,12 +1,16 @@
 package com.feisheng.bot.admin.service;
 
 import com.feisheng.bot.admin.entity.BotKnowledgeMigrationJob;
+import com.feisheng.bot.admin.entity.BotKnowledgeConflict;
+import com.feisheng.bot.admin.mapper.BotKnowledgeConflictMapper;
 import com.feisheng.bot.admin.mapper.BotKnowledgeMigrationJobMapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.Date;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
@@ -19,6 +23,7 @@ public class KnowledgeMigrationJobService {
     private final KnowledgeMigrationWorker worker;
     private final Executor executor;
     private final int maxRetries;
+    private final BotKnowledgeConflictMapper conflictMapper;
 
     public KnowledgeMigrationJobService(
             KnowledgeMigrationSnapshotService snapshotService,
@@ -26,11 +31,23 @@ public class KnowledgeMigrationJobService {
             KnowledgeMigrationWorker worker,
             @Qualifier("knowledgeMigrationExecutor") Executor executor,
             @Value("${knowledge.migration.retry-limit:3}") int maxRetries) {
+        this(snapshotService, jobMapper, worker, executor, maxRetries, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public KnowledgeMigrationJobService(
+            KnowledgeMigrationSnapshotService snapshotService,
+            BotKnowledgeMigrationJobMapper jobMapper,
+            KnowledgeMigrationWorker worker,
+            @Qualifier("knowledgeMigrationExecutor") Executor executor,
+            @Value("${knowledge.migration.retry-limit:3}") int maxRetries,
+            BotKnowledgeConflictMapper conflictMapper) {
         this.snapshotService = Objects.requireNonNull(snapshotService, "snapshotService");
         this.jobMapper = Objects.requireNonNull(jobMapper, "jobMapper");
         this.worker = Objects.requireNonNull(worker, "worker");
         this.executor = Objects.requireNonNull(executor, "executor");
         this.maxRetries = Math.max(0, maxRetries);
+        this.conflictMapper = conflictMapper;
     }
 
     public MigrationJobView create(Long sourceDocumentId, Long operatorId) {
@@ -43,7 +60,12 @@ public class KnowledgeMigrationJobService {
     public MigrationJobView get(Long jobId) {
         BotKnowledgeMigrationJob job = jobMapper.selectById(jobId);
         if (job == null) throw new MigrationJobException(404, "迁移任务不存在");
-        return MigrationJobView.from(job);
+        return view(job);
+    }
+
+    public List<MigrationJobView> list() {
+        return jobMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<BotKnowledgeMigrationJob>()
+                .orderByDesc("updated_at")).stream().map(this::view).toList();
     }
 
     public MigrationJobView retry(Long jobId, Long operatorId) {
@@ -65,7 +87,7 @@ public class KnowledgeMigrationJobService {
         job.setUpdatedAt(new Date());
         jobMapper.updateById(job);
         enqueue(job.getId());
-        return MigrationJobView.from(job);
+        return view(job);
     }
 
     private String retryStatus(String step) {
@@ -94,15 +116,30 @@ public class KnowledgeMigrationJobService {
         }
     }
 
+    private MigrationJobView view(BotKnowledgeMigrationJob job) {
+        return MigrationJobView.from(job, pendingBlockingConflicts(job.getId()));
+    }
+
+    private int pendingBlockingConflicts(Long jobId) {
+        if (conflictMapper == null || jobId == null) return 0;
+        Long count = conflictMapper.selectCount(new LambdaQueryWrapper<BotKnowledgeConflict>()
+            .eq(BotKnowledgeConflict::getMigrationJobId, jobId)
+            .eq(BotKnowledgeConflict::getStatus, "PENDING")
+            .eq(BotKnowledgeConflict::getSeverity, "BLOCKING"));
+        return count == null ? 0 : Math.toIntExact(count);
+    }
+
     public record MigrationJobView(Long id, Long sourceDocumentId, Long targetDocumentId,
-                                   String knowledgeSetKey, String status, String currentStep,
+                                   Long sourceVersionId, Long targetVersionId, String knowledgeSetKey,
+                                   String status, String currentStep,
                                    int totalUnits, int processedUnits, int conflictUnits,
-                                   int approvedUnits, int retryCount, String lastError) {
-        static MigrationJobView from(BotKnowledgeMigrationJob job) {
+                                   int blockingConflicts, int approvedUnits, int retryCount, String lastError) {
+        static MigrationJobView from(BotKnowledgeMigrationJob job, int blockingConflicts) {
             return new MigrationJobView(job.getId(), job.getSourceDocumentId(),
-                job.getTargetDocumentId(), job.getKnowledgeSetKey(), job.getStatus(),
+                job.getTargetDocumentId(), job.getSourceVersionId(), job.getTargetVersionId(),
+                job.getKnowledgeSetKey(), job.getStatus(),
                 job.getCurrentStep(), value(job.getTotalUnits()), value(job.getProcessedUnits()),
-                value(job.getConflictUnits()), value(job.getApprovedUnits()),
+                value(job.getConflictUnits()), blockingConflicts, value(job.getApprovedUnits()),
                 value(job.getRetryCount()), job.getErrorMessage());
         }
         private static int value(Integer value) { return value == null ? 0 : value; }

@@ -1,0 +1,31 @@
+<template>
+  <section class="migration-detail" v-loading="loading">
+    <header class="page-header"><div><el-button link @click="$router.push('/knowledge/migrations')">返回任务</el-button><h1>迁移任务 #{{ job?.id }}</h1><p v-if="job">{{ job.knowledgeSetKey }} · {{ job.status }}</p></div><el-button :icon="Refresh" @click="load">刷新</el-button></header>
+    <el-alert v-if="error" :title="error" type="error" show-icon />
+    <el-descriptions v-if="job" :column="3" border><el-descriptions-item label="源文档">{{ job.sourceDocumentId }}</el-descriptions-item><el-descriptions-item label="目标文档">{{ job.targetDocumentId }}</el-descriptions-item><el-descriptions-item label="状态">{{ job.status }}</el-descriptions-item><el-descriptions-item label="已处理">{{ job.processedUnits }} / {{ job.totalUnits }}</el-descriptions-item><el-descriptions-item label="冲突单元">{{ job.conflictUnits }}</el-descriptions-item><el-descriptions-item label="最近错误">{{ job.lastError || '-' }}</el-descriptions-item></el-descriptions>
+    <el-card v-if="job" class="review-card"><template #header>冲突与文档审核</template><el-table :data="conflicts" border><el-table-column prop="id" label="ID" width="70" /><el-table-column prop="severity" label="级别" width="100" /><el-table-column prop="conflictType" label="类型" width="130" /><el-table-column prop="similarity" label="相似度" width="100" /><el-table-column prop="scopeRelation" label="范围" width="120" /><el-table-column label="判断依据" min-width="320"><template #default="{row}"><div>证据：{{ row.evidence || '-' }}</div><div class="muted">规则：{{ row.ruleResult || '-' }}</div><div class="muted">LLM：{{ row.llmResult || '-' }}</div></template></el-table-column><el-table-column label="处理" width="190"><template #default="{row}"><el-select v-model="row._resolution" size="small" placeholder="选择" :disabled="row.status !== 'PENDING'"><el-option v-for="value in resolutions" :key="value" :label="value" :value="value" /></el-select><el-button link type="primary" @click="resolve(row)" :disabled="row.status !== 'PENDING' || !row._resolution">提交</el-button></template></el-table-column></el-table><el-empty v-if="!conflicts.length" description="没有冲突记录" /><el-pagination v-if="total" class="conflict-pagination" v-model:current-page="conflictPage" v-model:page-size="pageSize" :total="total" :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next" @current-change="handleConflictPageChange" @size-change="handleConflictPageSizeChange" />
+      <el-divider /><el-alert v-if="gate" :title="gate.blockers?.join('；') || (gate.passed ? '审核通过，可申请切换' : '存在阻断项')" :type="gate.passed ? 'success' : 'warning'" show-icon /><div class="actions"><el-button type="primary" @click="confirmReview">确认文档审核</el-button><el-button type="success" :disabled="!gate?.passed" @click="switchVersion">切换上线</el-button><el-button type="warning" @click="rollback">回滚归档版本</el-button></div>
+    </el-card>
+  </section>
+</template>
+<script setup>
+import { onMounted, onUnmounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { Refresh } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import request from '../../api/index.js'
+const route = useRoute(); const router = useRouter(); const id = route.params.id; const job = ref(null); const conflicts = ref([]); const conflictPage = ref(1); const pageSize = ref(20); const total = ref(0); const gate = ref(null); const loading = ref(false); const error = ref(''); let timer
+const resolutions = ['ADOPT_TARGET','KEEP_SOURCE','MERGE','SPLIT_SCOPE','NOT_CONFLICT']
+const active = new Set(['PENDING','EXTRACTING','EMBEDDING','CONFLICT_CHECKING','REVIEW_REQUIRED','READY_TO_SWITCH','RUNNING'])
+async function load () { loading.value = true; error.value = ''; try { const [j, c] = await Promise.all([request.get(`/admin/knowledge/migrations/${id}`), request.get(`/admin/knowledge/migrations/${id}/conflicts`, { params: { page: conflictPage.value, size: pageSize.value } })]); job.value = j.data; conflicts.value = (c.data?.records || []).map(row => ({ ...row, _resolution: row.resolution || '' })); total.value = c.data?.total || 0 } catch (e) { error.value = e?.message || '迁移详情加载失败' } finally { loading.value = false } }
+function handleConflictPageChange (page) { conflictPage.value = page; load() }
+function handleConflictPageSizeChange (size) { pageSize.value = size; conflictPage.value = 1; load() }
+async function resolve (row) { try { await request.post(`/admin/knowledge/migrations/${id}/conflicts/${row.id}/resolve`, { resolution: row._resolution, note: '管理台审核' }); ElMessage.success('冲突已处理'); await load() } catch (e) { error.value = e?.message || '冲突处理失败' } }
+async function confirmReview () { try { const r = await request.post(`/admin/knowledge/migrations/${id}/review/confirm`, { reason: '管理台文档确认' }); gate.value = r.data; if (gate.value?.passed) ElMessage.success('文档审核通过'); await load() } catch (e) { error.value = e?.message || '文档确认失败' } }
+async function switchVersion () { try { await ElMessageBox.confirm('确认整份文档切换上线？','发布确认'); await request.post(`/admin/knowledge/migrations/${id}/switch`); ElMessage.success('已切换上线'); await load() } catch (e) { if (e !== 'cancel' && e !== 'close') error.value = e?.message || '切换失败' } }
+async function rollback () { try { await ElMessageBox.confirm('确认回滚到归档版本？','回滚确认'); await request.post(`/admin/knowledge/sets/${job.value.knowledgeSetKey}/rollback`, null, { params: { targetDocumentId: job.value.sourceDocumentId, reason: '管理台回滚' } }); ElMessage.success('已提交回滚'); router.push('/knowledge/migrations') } catch (e) { if (e !== 'cancel' && e !== 'close') error.value = e?.message || '回滚失败' } }
+onMounted(async () => { await load(); timer = window.setInterval(() => { if (active.has(job.value?.status)) load() }, 5000) }); onUnmounted(() => window.clearInterval(timer))
+</script>
+<style scoped>
+.page-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }.page-header h1 { display:inline-block; margin:0 0 6px 8px; font-size:20px; }.page-header p { margin:0 0 0 78px; color:#909399; }.review-card { margin-top:16px; }.muted { color:#909399; font-size:12px; }.conflict-pagination { margin-top:14px; justify-content:flex-end; }.actions { display:flex; gap:10px; justify-content:flex-end; }
+</style>

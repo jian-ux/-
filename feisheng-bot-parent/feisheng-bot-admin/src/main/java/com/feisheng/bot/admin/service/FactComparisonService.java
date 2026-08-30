@@ -21,12 +21,12 @@ public class FactComparisonService {
         if (!Objects.equals(left.processSteps(), right.processSteps()) && !left.processSteps().isEmpty() && !right.processSteps().isEmpty()) { fields.add("processSteps"); type = ConflictType.PROCESS; }
         if (!Objects.equals(left.enumValues(), right.enumValues()) && !left.enumValues().isEmpty() && !right.enumValues().isEmpty()) { fields.add("enumValues"); type = ConflictType.ENUM; }
         if (!fields.isEmpty()) {
-            if (type == ConflictType.ENUM) return result(Relation.UNKNOWN, type, Severity.WARNING, fields, "枚举值或表述无法自动合并");
+            if (type == ConflictType.ENUM) return result(Relation.UNKNOWN, type, Severity.BLOCKING, fields, "枚举值或表述无法自动合并");
             return result(Relation.CONFLICT, type, severityFor(type), fields, "重叠范围内事实结论不一致");
         }
         if (Objects.equals(left.normalizedQuestion(), right.normalizedQuestion()) && (Objects.equals(left.normalizedStatement(), right.normalizedStatement()) || numericValuesEquivalent(left.numericValues(), right.numericValues())))
             return result(Relation.NOT_CONFLICT, ConflictType.OTHER, Severity.INFO, List.of(), "事实重复");
-        return result(Relation.UNKNOWN, ConflictType.OTHER, Severity.WARNING, List.of("statement"), "无法确定事实关系");
+        return result(Relation.UNKNOWN, ConflictType.OTHER, Severity.BLOCKING, List.of("statement"), "无法确定事实关系");
     }
     private boolean knownDifferent(String a,String b){return !"UNKNOWN".equals(a)&&!"UNKNOWN".equals(b)&&!Objects.equals(a,b);}
     private boolean mutuallyExclusive(FactNormalizationService.Scope a, FactNormalizationService.Scope b){ for(String key:a.fields().keySet()) if(b.fields().containsKey(key)&&!Objects.equals(a.fields().get(key),b.fields().get(key))) return true; return false; }

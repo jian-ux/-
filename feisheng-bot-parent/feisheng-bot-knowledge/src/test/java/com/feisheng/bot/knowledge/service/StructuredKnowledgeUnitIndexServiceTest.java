@@ -303,6 +303,34 @@ class StructuredKnowledgeUnitIndexServiceTest {
         assertEquals("set-a", candidates.get(0).knowledgeSetKey());
     }
 
+    @Test
+    void conflictRecallAppliesAuthoritativeSourceAndAudienceScope() {
+        BotKnowledgeSemanticUnitMapper unitMapper = mock(BotKnowledgeSemanticUnitMapper.class);
+        BotKnowledgeChunkMapper chunkMapper = mock(BotKnowledgeChunkMapper.class);
+        BotKnowledgeDocumentMapper documentMapper = mock(BotKnowledgeDocumentMapper.class);
+        BotKnowledgeSemanticUnit source = unit(1L, "APPROVED", "[1,0]", "[101]");
+        source.setDocumentId(7L);
+        source.setMetadataJson("{\"product\":\"signing\",\"channel\":\"web\",\"audience\":\"enterprise\"}");
+        BotKnowledgeSemanticUnit wrongSource = unit(2L, "APPROVED", "[1,0]", "[201]");
+        wrongSource.setDocumentId(8L);
+        wrongSource.setMetadataJson("{\"product\":\"signing\",\"channel\":\"web\",\"audience\":\"enterprise\"}");
+        when(unitMapper.selectList(any())).thenReturn(List.of(source, wrongSource));
+        when(chunkMapper.selectList(any())).thenReturn(List.of(
+            chunk(101L, 7L, "APPROVED", 0), chunk(201L, 8L, "APPROVED", 0)));
+        BotKnowledgeDocument first = document(7L, 42L);
+        BotKnowledgeDocument second = document(8L, 42L);
+        when(documentMapper.selectList(any())).thenReturn(List.of(first, second));
+        StructuredKnowledgeUnitIndexService service = new StructuredKnowledgeUnitIndexService(
+            unitMapper, chunkMapper, documentMapper, new ObjectMapper(), disabledQdrant());
+        service.sync();
+        List<StructuredKnowledgeUnitIndexService.ConflictCandidate> candidates =
+            service.searchConflictCandidates(new StructuredKnowledgeUnitIndexService.ConflictQuery(
+                List.of(1.0, 0.0), "set-a", 999L, 20, 0.5, 7L,
+                Map.of("product", "signing", "channel", "web", "audience", "enterprise")));
+        assertEquals(1, candidates.size());
+        assertEquals(1L, candidates.get(0).semanticUnit().getId());
+    }
+
     private BotKnowledgeSemanticUnit unit(Long id, String status, String embedding,
                                           String evidenceChunkIds) {
         BotKnowledgeSemanticUnit unit = new BotKnowledgeSemanticUnit();

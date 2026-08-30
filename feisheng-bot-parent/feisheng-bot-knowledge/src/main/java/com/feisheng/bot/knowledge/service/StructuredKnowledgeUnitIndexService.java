@@ -237,6 +237,9 @@ public class StructuredKnowledgeUnitIndexService {
             }
             UnitEntry entry = snapshot.units().get(unitId);
             if (entry == null || !key.equals(entry.knowledgeSetKey())
+                    || (query.sourceDocumentId() != null
+                        && !Objects.equals(entry.documentId(), query.sourceDocumentId()))
+                    || !scopeMatches(entry.scopeFields(), query.scopeFields())
                     || Objects.equals(entry.documentId(), query.excludedTargetDocumentId())) {
                 continue;
             }
@@ -247,6 +250,17 @@ public class StructuredKnowledgeUnitIndexService {
             if (candidates.size() >= requested) break;
         }
         return List.copyOf(candidates);
+    }
+
+    private boolean scopeMatches(Map<String, String> candidate, Map<String, String> requested) {
+        if (requested == null || requested.isEmpty()) return true;
+        for (Map.Entry<String, String> entry : requested.entrySet()) {
+            String key = entry.getKey() == null ? "" : entry.getKey().trim().toLowerCase();
+            if (!Set.of("product", "channel", "audience").contains(key)) continue;
+            String actual = candidate == null ? null : candidate.get(key);
+            if (actual == null || !actual.equalsIgnoreCase(String.valueOf(entry.getValue()))) return false;
+        }
+        return true;
     }
 
     private List<Map<String, Object>> searchMemory(List<Double> queryEmbedding, int topK,
@@ -347,12 +361,38 @@ public class StructuredKnowledgeUnitIndexService {
                 unit.getExtractionConfidence(), nullToEmpty(unit.getExtractorModel()),
                 nullToEmpty(unit.getPromptVersion()), nullToEmpty(unit.getSchemaVersion()),
                 nullToEmpty(unit.getSourceHash()), document.title(), document.sourceScope(),
-                document.expiresAt(), document.knowledgeSetKey(), vector,
+                document.expiresAt(), document.knowledgeSetKey(), scopeFields(unit), vector,
                 unit, nullToEmpty(unit.getEmbeddingModel()),
                 nullToEmpty(unit.getEmbeddingVersion()), unit.getEmbeddingDimensions(),
                 nullToEmpty(unit.getEmbeddingContentHash())));
         }
         return new Snapshot(version, Map.copyOf(entries));
+    }
+
+    private Map<String, String> scopeFields(BotKnowledgeSemanticUnit unit) {
+        Map<String, String> fields = new LinkedHashMap<>();
+        collectScopeFields(unit.getMetadataJson(), fields);
+        collectScopeFields(unit.getConditionsJson(), fields);
+        return Map.copyOf(fields);
+    }
+
+    private void collectScopeFields(String json, Map<String, String> fields) {
+        if (json == null || json.isBlank()) return;
+        try { collectScopeFields(objectMapper.readTree(json), fields); }
+        catch (Exception ignored) { }
+    }
+
+    private void collectScopeFields(com.fasterxml.jackson.databind.JsonNode node,
+                                    Map<String, String> fields) {
+        if (node == null || !node.isObject()) return;
+        node.fields().forEachRemaining(entry -> {
+            String key = entry.getKey().toLowerCase();
+            com.fasterxml.jackson.databind.JsonNode value = entry.getValue();
+            if (Set.of("product", "channel", "audience").contains(key) && value.isValueNode()) {
+                String text = value.asText();
+                if (!text.isBlank()) fields.putIfAbsent(key, text.trim());
+            } else if (value.isObject()) collectScopeFields(value, fields);
+        });
     }
 
     private QdrantSyncResult syncQdrant(Snapshot next, Diff diff, boolean wasReady) {
@@ -409,6 +449,7 @@ public class StructuredKnowledgeUnitIndexService {
         payload.put("categoryId", entry.categoryId());
         payload.put("sourceScope", entry.sourceScope());
         payload.put("knowledgeSetKey", entry.knowledgeSetKey());
+        entry.scopeFields().forEach((key, value) -> payload.put(key, value));
         payload.put("expiresAt", entry.expiresAt());
         payload.put("unitKey", entry.unitKey());
         payload.put("unitType", entry.unitType());
@@ -623,7 +664,8 @@ public class StructuredKnowledgeUnitIndexService {
                              String metadataJson, Double extractionConfidence,
                              String extractorModel, String promptVersion, String schemaVersion,
                              String sourceHash, String documentTitle, String sourceScope,
-                             String expiresAt, String knowledgeSetKey, List<Double> vector,
+                             String expiresAt, String knowledgeSetKey, Map<String, String> scopeFields,
+                             List<Double> vector,
                              BotKnowledgeSemanticUnit semanticUnit, String embeddingModel,
                              String embeddingVersion, Integer embeddingDimensions,
                              String embeddingContentHash) {}
@@ -665,7 +707,17 @@ public class StructuredKnowledgeUnitIndexService {
                               SyncReport lastSync) {}
 
     public record ConflictQuery(List<Double> queryVector, String knowledgeSetKey,
-                                Long excludedTargetDocumentId, int topK, double minScore) {}
+                                Long excludedTargetDocumentId, int topK, double minScore,
+                                Long sourceDocumentId, Map<String, String> scopeFields) {
+        public ConflictQuery(List<Double> queryVector, String knowledgeSetKey,
+                             Long excludedTargetDocumentId, int topK, double minScore) {
+            this(queryVector, knowledgeSetKey, excludedTargetDocumentId, topK, minScore,
+                null, Map.of());
+        }
+        public ConflictQuery {
+            scopeFields = scopeFields == null ? Map.of() : Map.copyOf(scopeFields);
+        }
+    }
 
     public record ConflictCandidate(BotKnowledgeSemanticUnit semanticUnit,
                                     double similarity, Long documentId,

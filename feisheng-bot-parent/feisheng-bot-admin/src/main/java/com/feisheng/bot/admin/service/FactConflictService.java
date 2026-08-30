@@ -6,6 +6,8 @@ import com.feisheng.bot.admin.entity.BotKnowledgeConflict;
 import com.feisheng.bot.admin.entity.BotKnowledgeDocument;
 import com.feisheng.bot.admin.mapper.BotKnowledgeConflictMapper;
 import com.feisheng.bot.admin.mapper.BotKnowledgeDocumentMapper;
+import com.feisheng.bot.admin.mapper.BotKnowledgeMigrationJobMapper;
+import com.feisheng.bot.admin.entity.BotKnowledgeMigrationJob;
 import com.feisheng.bot.knowledge.entity.BotKnowledgeSemanticUnit;
 import com.feisheng.bot.knowledge.mapper.BotKnowledgeSemanticUnitMapper;
 import com.feisheng.bot.knowledge.service.StructuredKnowledgeUnitIndexService;
@@ -29,6 +31,7 @@ public class FactConflictService {
     private final BotKnowledgeDocumentMapper documentMapper;
     private final BotKnowledgeSemanticUnitMapper unitMapper;
     private final BotKnowledgeConflictMapper conflictMapper;
+    private final BotKnowledgeMigrationJobMapper migrationJobMapper;
     private final StructuredKnowledgeUnitIndexService indexService;
     private final FactNormalizationService normalizationService;
     private final FactComparisonService comparisonService;
@@ -36,7 +39,6 @@ public class FactConflictService {
     private final int topK;
     private final double minScore;
 
-    @Autowired
     public FactConflictService(BotKnowledgeDocumentMapper documentMapper,
                                BotKnowledgeSemanticUnitMapper unitMapper,
                                BotKnowledgeConflictMapper conflictMapper,
@@ -46,9 +48,23 @@ public class FactConflictService {
                                ObjectMapper objectMapper,
                                @Value("${knowledge.migration.conflict-top-k:20}") int topK,
                                @Value("${knowledge.migration.conflict-min-score:0.82}") double minScore) {
+        this(documentMapper, unitMapper, conflictMapper, null, indexService,
+            normalizationService, comparisonService, objectMapper, topK, minScore);
+    }
+
+    @Autowired
+    public FactConflictService(BotKnowledgeDocumentMapper documentMapper,
+                               BotKnowledgeSemanticUnitMapper unitMapper,
+                               BotKnowledgeConflictMapper conflictMapper,
+                               BotKnowledgeMigrationJobMapper migrationJobMapper,
+                               StructuredKnowledgeUnitIndexService indexService,
+                               FactNormalizationService normalizationService,
+                               FactComparisonService comparisonService,
+                               ObjectMapper objectMapper, int topK, double minScore) {
         this.documentMapper = Objects.requireNonNull(documentMapper, "documentMapper");
         this.unitMapper = Objects.requireNonNull(unitMapper, "unitMapper");
         this.conflictMapper = Objects.requireNonNull(conflictMapper, "conflictMapper");
+        this.migrationJobMapper = migrationJobMapper;
         this.indexService = Objects.requireNonNull(indexService, "indexService");
         this.normalizationService = Objects.requireNonNull(normalizationService, "normalizationService");
         this.comparisonService = Objects.requireNonNull(comparisonService, "comparisonService");
@@ -67,6 +83,14 @@ public class FactConflictService {
                 || target.getKnowledgeSetKey().isBlank()) {
             throw new IllegalArgumentException("target document has no knowledgeSetKey");
         }
+        if (migrationJobMapper != null) {
+            BotKnowledgeMigrationJob job = migrationJobMapper.selectById(migrationJobId);
+            if (job == null || !Objects.equals(sourceDocumentId, job.getSourceDocumentId())
+                    || (job.getTargetDocumentId() != null
+                        && !Objects.equals(targetDocumentId, job.getTargetDocumentId()))) {
+                throw new IllegalArgumentException("migration job is not bound to source/target document");
+            }
+        }
         List<BotKnowledgeSemanticUnit> targets = unitMapper.selectList(
             new LambdaQueryWrapper<BotKnowledgeSemanticUnit>()
                 .eq(BotKnowledgeSemanticUnit::getDocumentId, targetDocumentId)
@@ -78,21 +102,40 @@ public class FactConflictService {
         int unknown = 0;
         for (BotKnowledgeSemanticUnit targetUnit : targets) {
             List<Double> vector = parseVector(targetUnit.getEmbedding());
-            if (vector.isEmpty()) {
+            if (!validVector(vector)) {
                 unknown++;
+                blocking++;
+                persistBlocking(migrationJobId, targetUnit, "VECTOR", "target vector missing or invalid");
+                continue;
+            }
+            FactNormalizationService.NormalizedFact right = normalizationService.normalize(targetUnit);
+            if (!validEvidence(targetUnit.getEvidenceChunkIdsJson())
+                    || right.scope().relation() == FactNormalizationService.ScopeRelation.UNKNOWN) {
+                unknown++;
+                blocking++;
+                persistBlocking(migrationJobId, targetUnit, "EVIDENCE_OR_SCOPE",
+                    !validEvidence(targetUnit.getEvidenceChunkIdsJson())
+                        ? "target evidence is malformed" : "target scope is unknown");
                 continue;
             }
             List<StructuredKnowledgeUnitIndexService.ConflictCandidate> candidates =
                 indexService.searchConflictCandidates(
                     new StructuredKnowledgeUnitIndexService.ConflictQuery(
-                        vector, target.getKnowledgeSetKey(), targetDocumentId, topK, minScore));
+                        vector, target.getKnowledgeSetKey(), targetDocumentId, topK, minScore,
+                        sourceDocumentId, scopeFields(right)));
             for (StructuredKnowledgeUnitIndexService.ConflictCandidate candidate : candidates) {
                 BotKnowledgeSemanticUnit sourceUnit = candidate.semanticUnit();
                 if (sourceUnit == null || sourceUnit.getId() == null
                         || Objects.equals(sourceUnit.getDocumentId(), targetDocumentId)) continue;
                 FactNormalizationService.NormalizedFact left = normalizationService.normalize(sourceUnit);
-                FactNormalizationService.NormalizedFact right = normalizationService.normalize(targetUnit);
                 FactComparisonService.ComparisonResult result = comparisonService.compare(left, right);
+                if (!validEvidence(sourceUnit.getEvidenceChunkIdsJson())) {
+                    result = new FactComparisonService.ComparisonResult(
+                        FactComparisonService.Relation.UNKNOWN,
+                        FactComparisonService.ConflictType.SCOPE,
+                        FactComparisonService.Severity.BLOCKING,
+                        List.of("evidence"), "source evidence is malformed");
+                }
                 persist(migrationJobId, targetUnit, sourceUnit, candidate.similarity(), result, left, right);
                 candidatePairs++;
                 switch (result.severity()) {
@@ -104,6 +147,69 @@ public class FactConflictService {
             }
         }
         return new ConflictReport(targets.size(), candidatePairs, blocking, warning, info, unknown);
+    }
+
+    private Map<String, String> scopeFields(FactNormalizationService.NormalizedFact fact) {
+        Map<String, String> fields = new LinkedHashMap<>();
+        for (String key : List.of("product", "channel", "audience")) {
+            String value = fact.scope().fields().get(key);
+            if (value != null && !value.isBlank()) fields.put(key, value);
+        }
+        return fields;
+    }
+
+    private boolean validVector(List<Double> vector) {
+        return vector != null && !vector.isEmpty() && vector.stream().allMatch(v -> v != null && Double.isFinite(v));
+    }
+
+    private boolean validEvidence(String json) {
+        if (json == null || json.isBlank()) return false;
+        try {
+            com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(json);
+            if (!node.isArray() || node.isEmpty()) return false;
+            for (com.fasterxml.jackson.databind.JsonNode value : node) {
+                if (!value.canConvertToLong() || value.asLong() <= 0) return false;
+            }
+            return true;
+        } catch (Exception ignored) { return false; }
+    }
+
+    private void persistBlocking(Long migrationJobId, BotKnowledgeSemanticUnit target,
+                                 String type, String message) {
+        if (target == null || target.getId() == null) return;
+        BotKnowledgeConflict existing = conflictMapper.selectOne(
+            new LambdaQueryWrapper<BotKnowledgeConflict>()
+                .eq(BotKnowledgeConflict::getMigrationJobId, migrationJobId)
+                .eq(BotKnowledgeConflict::getTargetUnitId, target.getId())
+                .eq(BotKnowledgeConflict::getCandidateUnitId, 0L)
+                .last("LIMIT 1"));
+        if (existing != null) {
+            if (RESOLVED.equals(existing.getStatus()) || NOT_CONFLICT.equals(existing.getStatus())) return;
+            existing.setSeverity("BLOCKING");
+            existing.setStatus(PENDING);
+            existing.setConflictType(type);
+            existing.setScopeRelation("UNKNOWN");
+            existing.setEvidence(writeJson(Map.of("targetUnitId", target.getId(), "message", message)));
+            existing.setRuleResult(writeJson(Map.of("judgment", "UNKNOWN", "reason", message)));
+            existing.setLlmResult(writeJson(Map.of("model", "deterministic-fact-comparison", "version", "v1")));
+            existing.setUpdatedAt(new Date());
+            conflictMapper.updateById(existing);
+            return;
+        }
+        BotKnowledgeConflict conflict = new BotKnowledgeConflict();
+        conflict.setMigrationJobId(migrationJobId);
+        conflict.setTargetUnitId(target.getId());
+        conflict.setCandidateUnitId(0L);
+        conflict.setConflictType(type);
+        conflict.setSeverity("BLOCKING");
+        conflict.setStatus(PENDING);
+        conflict.setScopeRelation("UNKNOWN");
+        conflict.setEvidence(writeJson(Map.of("targetUnitId", target.getId(), "message", message)));
+        conflict.setRuleResult(writeJson(Map.of("judgment", "UNKNOWN", "reason", message)));
+        conflict.setLlmResult(writeJson(Map.of("model", "deterministic-fact-comparison", "version", "v1")));
+        conflict.setCreateTime(new Date());
+        conflict.setUpdatedAt(new Date());
+        conflictMapper.insert(conflict);
     }
 
     private void persist(Long migrationJobId, BotKnowledgeSemanticUnit target,
@@ -124,8 +230,10 @@ public class FactConflictService {
             existing.setConflictType(result.conflictType().name());
             existing.setSeverity(result.severity().name());
             existing.setScopeRelation(result.relation().name());
-            existing.setEvidence(evidence(target, source, left, right));
+            existing.setEvidence(evidence(target, source, similarity, left, right));
             existing.setRuleResult(writeJson(result));
+            existing.setLlmResult(writeJson(Map.of("model", "deterministic-fact-comparison",
+                "version", "v1", "judgment", result)));
             existing.setUpdatedAt(new Date());
             conflictMapper.updateById(existing);
             return;
@@ -141,14 +249,17 @@ public class FactConflictService {
         conflict.setStatus(result.relation() == FactComparisonService.Relation.NOT_CONFLICT
             || result.relation() == FactComparisonService.Relation.SCOPE_DIFFERENCE
             ? NOT_CONFLICT : PENDING);
-        conflict.setEvidence(evidence(target, source, left, right));
+        conflict.setEvidence(evidence(target, source, similarity, left, right));
         conflict.setRuleResult(writeJson(result));
+        conflict.setLlmResult(writeJson(Map.of("model", "deterministic-fact-comparison",
+            "version", "v1", "judgment", result)));
         conflict.setCreateTime(new Date());
         conflict.setUpdatedAt(new Date());
         conflictMapper.insert(conflict);
     }
 
     private String evidence(BotKnowledgeSemanticUnit target, BotKnowledgeSemanticUnit source,
+                            double similarity,
                             FactNormalizationService.NormalizedFact left,
                             FactNormalizationService.NormalizedFact right) {
         Map<String, Object> value = new LinkedHashMap<>();
@@ -160,6 +271,12 @@ public class FactConflictService {
         value.put("sourceStatement", left.originalStatement());
         value.put("targetQuestion", right.originalQuestion());
         value.put("targetStatement", right.originalStatement());
+        value.put("retrieval", Map.of("similarity", similarity, "topK", topK,
+            "minScore", minScore,
+            "sourceExtractorModel", source.getExtractorModel() == null ? "" : source.getExtractorModel(),
+            "targetExtractorModel", target.getExtractorModel() == null ? "" : target.getExtractorModel(),
+            "sourceEmbeddingModel", source.getEmbeddingModel() == null ? "" : source.getEmbeddingModel(),
+            "targetEmbeddingModel", target.getEmbeddingModel() == null ? "" : target.getEmbeddingModel()));
         return writeJson(value);
     }
 
@@ -171,8 +288,9 @@ public class FactConflictService {
     private List<Double> parseVector(String json) {
         if (json == null || json.isBlank()) return List.of();
         try {
-            return objectMapper.readValue(json,
+            List<Double> values = objectMapper.readValue(json,
                 objectMapper.getTypeFactory().constructCollectionType(List.class, Double.class));
+            return validVector(values) ? values : List.of();
         } catch (Exception ignored) { return List.of(); }
     }
 

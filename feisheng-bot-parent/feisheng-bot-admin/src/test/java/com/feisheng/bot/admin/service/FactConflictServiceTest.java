@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.feisheng.bot.admin.entity.BotKnowledgeDocument;
 import com.feisheng.bot.admin.mapper.BotKnowledgeConflictMapper;
 import com.feisheng.bot.admin.mapper.BotKnowledgeDocumentMapper;
+import com.feisheng.bot.admin.mapper.BotKnowledgeMigrationJobMapper;
 import com.feisheng.bot.knowledge.entity.BotKnowledgeSemanticUnit;
 import com.feisheng.bot.knowledge.mapper.BotKnowledgeSemanticUnitMapper;
 import com.feisheng.bot.knowledge.service.StructuredKnowledgeUnitIndexService;
@@ -46,7 +47,7 @@ class FactConflictServiceTest {
     }
 
     @Test
-    void missingTargetVectorIsBlockingUnknownWithoutCandidateRow() {
+    void missingTargetVectorIsBlockingUnknownWithReviewRow() {
         BotKnowledgeDocumentMapper documents = mock(BotKnowledgeDocumentMapper.class);
         BotKnowledgeSemanticUnitMapper units = mock(BotKnowledgeSemanticUnitMapper.class);
         BotKnowledgeConflictMapper conflicts = mock(BotKnowledgeConflictMapper.class);
@@ -65,7 +66,30 @@ class FactConflictServiceTest {
 
         assertEquals(1, report.unknown());
         assertEquals(0, report.candidatePairs());
-        verifyNoInteractions(conflicts, index);
+        verify(conflicts).insert(any(com.feisheng.bot.admin.entity.BotKnowledgeConflict.class));
+        verifyNoInteractions(index);
+    }
+
+    @Test
+    void rejectsJobBoundToDifferentSourceDocument() {
+        BotKnowledgeDocumentMapper documents = mock(BotKnowledgeDocumentMapper.class);
+        BotKnowledgeSemanticUnitMapper units = mock(BotKnowledgeSemanticUnitMapper.class);
+        BotKnowledgeConflictMapper conflicts = mock(BotKnowledgeConflictMapper.class);
+        BotKnowledgeMigrationJobMapper jobs = mock(BotKnowledgeMigrationJobMapper.class);
+        StructuredKnowledgeUnitIndexService index = mock(StructuredKnowledgeUnitIndexService.class);
+        BotKnowledgeDocument target = new BotKnowledgeDocument();
+        target.setKnowledgeSetKey("set-a");
+        when(documents.selectById(20L)).thenReturn(target);
+        com.feisheng.bot.admin.entity.BotKnowledgeMigrationJob job =
+            new com.feisheng.bot.admin.entity.BotKnowledgeMigrationJob();
+        job.setSourceDocumentId(11L);
+        when(jobs.selectById(1L)).thenReturn(job);
+        FactConflictService service = new FactConflictService(documents, units, conflicts, jobs,
+            index, new FactNormalizationService(new ObjectMapper()), new FactComparisonService(),
+            new ObjectMapper(), 20, 0.82d);
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+            () -> service.check(1L, 10L, 20L));
+        verifyNoInteractions(units, conflicts, index);
     }
 
     private BotKnowledgeSemanticUnit unit(Long id, Long documentId, String statement) {

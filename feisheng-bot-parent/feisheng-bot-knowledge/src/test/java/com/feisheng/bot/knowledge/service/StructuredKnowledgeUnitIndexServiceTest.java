@@ -331,6 +331,32 @@ class StructuredKnowledgeUnitIndexServiceTest {
         assertEquals(1L, candidates.get(0).semanticUnit().getId());
     }
 
+    @Test
+    void conflictRecallFiltersScopeBeforeApplyingTopK() {
+        BotKnowledgeSemanticUnitMapper unitMapper = mock(BotKnowledgeSemanticUnitMapper.class);
+        BotKnowledgeChunkMapper chunkMapper = mock(BotKnowledgeChunkMapper.class);
+        BotKnowledgeDocumentMapper documentMapper = mock(BotKnowledgeDocumentMapper.class);
+        BotKnowledgeSemanticUnit wrongScope = unit(1L, "APPROVED", "[1,0]", "[101]");
+        wrongScope.setMetadataJson("{\"product\":\"signing\",\"audience\":\"consumer\"}");
+        BotKnowledgeSemanticUnit matchingScope = unit(2L, "APPROVED", "[0.9,0.1]", "[102]");
+        matchingScope.setMetadataJson("{\"product\":\"signing\",\"audience\":\"enterprise\"}");
+        when(unitMapper.selectList(any())).thenReturn(List.of(wrongScope, matchingScope));
+        when(chunkMapper.selectList(any())).thenReturn(List.of(
+            chunk(101L, 7L, "APPROVED", 0), chunk(102L, 7L, "APPROVED", 0)));
+        when(documentMapper.selectList(any())).thenReturn(List.of(document(7L, 42L)));
+        StructuredKnowledgeUnitIndexService service = new StructuredKnowledgeUnitIndexService(
+            unitMapper, chunkMapper, documentMapper, new ObjectMapper(), disabledQdrant());
+        service.sync();
+
+        List<StructuredKnowledgeUnitIndexService.ConflictCandidate> candidates =
+            service.searchConflictCandidates(new StructuredKnowledgeUnitIndexService.ConflictQuery(
+                List.of(1.0, 0.0), "set-a", 999L, 1, 0.5, 7L,
+                Map.of("product", "signing", "audience", "enterprise")));
+
+        assertEquals(1, candidates.size());
+        assertEquals(2L, candidates.get(0).semanticUnit().getId());
+    }
+
     private BotKnowledgeSemanticUnit unit(Long id, String status, String embedding,
                                           String evidenceChunkIds) {
         BotKnowledgeSemanticUnit unit = new BotKnowledgeSemanticUnit();

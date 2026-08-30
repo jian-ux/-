@@ -223,7 +223,11 @@ public class StructuredKnowledgeUnitIndexService {
         String key = query.knowledgeSetKey().trim();
         int requested = Math.min(Math.max(query.topK(), 1), 100);
         Map<String, Object> filters = Map.of("knowledgeSetKey", key);
-        List<Map<String, Object>> hits = search(query.queryVector(), requested,
+        // Source-document and scope checks happen after vector retrieval. Retrieve the
+        // complete authoritative snapshot first so an excluded high-scoring hit cannot
+        // consume the caller's requested top-K slots.
+        int recallLimit = Math.max(requested, snapshot.units().size());
+        List<Map<String, Object>> hits = search(query.queryVector(), recallLimit,
             query.minScore(), filters);
         List<ConflictCandidate> candidates = new ArrayList<>(hits.size());
         Set<Long> seen = new HashSet<>();

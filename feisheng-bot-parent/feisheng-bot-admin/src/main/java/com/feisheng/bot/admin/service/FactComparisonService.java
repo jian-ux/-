@@ -13,6 +13,9 @@ public class FactComparisonService {
             return result(Relation.UNKNOWN, ConflictType.SCOPE, Severity.BLOCKING, List.of("scope"), "适用范围未知，无法比较");
         if (mutuallyExclusive(left.scope(), right.scope()))
             return result(Relation.SCOPE_DIFFERENCE, ConflictType.SCOPE, Severity.INFO, List.of("scope"), "适用范围互斥");
+        if ("UNKNOWN".equals(left.polarity()) || "UNKNOWN".equals(right.polarity()))
+            return result(Relation.UNKNOWN, ConflictType.POLARITY, Severity.BLOCKING,
+                List.of("polarity"), "事实极性未知，无法自动判断是否冲突");
         List<String> fields = new ArrayList<>(); ConflictType type = ConflictType.OTHER;
         if (knownDifferent(left.polarity(), right.polarity())) { fields.add("polarity"); type = ConflictType.POLARITY; }
         if (!numericValuesEquivalent(left.numericValues(), right.numericValues())) { fields.add("numericValues"); type = classifyNumeric(left, right); }

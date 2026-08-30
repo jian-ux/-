@@ -65,7 +65,9 @@ public class FactConflictService {
                                StructuredKnowledgeUnitIndexService indexService,
                                FactNormalizationService normalizationService,
                                FactComparisonService comparisonService,
-                               ObjectMapper objectMapper, int topK, double minScore) {
+                               ObjectMapper objectMapper,
+                               @Value("${knowledge.migration.conflict-top-k:20}") int topK,
+                               @Value("${knowledge.migration.conflict-min-score:0.82}") double minScore) {
         this.documentMapper = Objects.requireNonNull(documentMapper, "documentMapper");
         this.unitMapper = Objects.requireNonNull(unitMapper, "unitMapper");
         this.conflictMapper = Objects.requireNonNull(conflictMapper, "conflictMapper");

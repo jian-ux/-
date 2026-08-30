@@ -9,7 +9,9 @@ import com.feisheng.bot.knowledge.entity.BotKnowledgeSemanticUnit;
 import com.feisheng.bot.knowledge.mapper.BotKnowledgeSemanticUnitMapper;
 import com.feisheng.bot.knowledge.service.StructuredKnowledgeUnitIndexService;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Value;
 
+import java.lang.reflect.Constructor;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -44,6 +46,21 @@ class FactConflictServiceTest {
         assertEquals(1, report.candidatePairs());
         assertEquals(1, report.blocking());
         verify(conflicts).insert(any(com.feisheng.bot.admin.entity.BotKnowledgeConflict.class));
+    }
+
+    @Test
+    void springConstructorInjectsConflictRecallConfiguration() throws Exception {
+        Constructor<?> constructor = java.util.Arrays.stream(FactConflictService.class.getDeclaredConstructors())
+            .filter(candidate -> candidate.isAnnotationPresent(org.springframework.beans.factory.annotation.Autowired.class))
+            .findFirst().orElseThrow();
+
+        Value topK = constructor.getParameters()[8].getAnnotation(Value.class);
+        Value minScore = constructor.getParameters()[9].getAnnotation(Value.class);
+
+        org.junit.jupiter.api.Assertions.assertNotNull(topK);
+        org.junit.jupiter.api.Assertions.assertNotNull(minScore);
+        assertEquals("${knowledge.migration.conflict-top-k:20}", topK.value());
+        assertEquals("${knowledge.migration.conflict-min-score:0.82}", minScore.value());
     }
 
     @Test

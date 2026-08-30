@@ -9,6 +9,7 @@ import com.feisheng.bot.admin.mapper.BotKnowledgeMigrationJobMapper;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.lang.reflect.Method;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -40,6 +41,23 @@ class KnowledgeMigrationSnapshotServiceTest {
         KnowledgeMigrationSnapshotService.SnapshotException error = assertThrows(
             KnowledgeMigrationSnapshotService.SnapshotException.class, () -> service.create(1L, 2L));
         assertEquals(409, error.status());
+    }
+
+    @Test
+    void reconcilesStaleSameIndexAndExtraChunks() throws Exception {
+        BotKnowledgeChunkMapper chunks = mock(BotKnowledgeChunkMapper.class);
+        KnowledgeMigrationSnapshotService service = new KnowledgeMigrationSnapshotService(
+            mock(BotKnowledgeDocumentMapper.class), chunks, mock(BotKnowledgeMigrationJobMapper.class),
+            mock(KnowledgeDocumentReleaseService.class));
+        BotKnowledgeChunk source = new BotKnowledgeChunk(); source.setChunkIndex(0); source.setContent("new"); source.setSectionPath("s");
+        BotKnowledgeChunk stale = new BotKnowledgeChunk(); stale.setId(11L); stale.setChunkIndex(0); stale.setContent("old"); stale.setSectionPath("s");
+        BotKnowledgeChunk extra = new BotKnowledgeChunk(); extra.setId(12L); extra.setChunkIndex(9); extra.setContent("extra");
+        Method method = KnowledgeMigrationSnapshotService.class.getDeclaredMethod("reconcileChunks", Long.class, List.class, List.class);
+        method.setAccessible(true);
+        method.invoke(service, 2L, List.of(source), List.of(stale, extra));
+        verify(chunks).deleteById(11L);
+        verify(chunks).deleteById(12L);
+        verify(chunks).insert(any(BotKnowledgeChunk.class));
     }
 
     @Test

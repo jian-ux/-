@@ -27,3 +27,9 @@ Initial result: default `mvn` command was unavailable in PowerShell. Using the a
 - Reconcile now matches target chunks by stable chunk position/index, replaces stale content, and removes unmatched extras.
 - Source snapshots reject non-published documents.
 - Focused rerun (absolute IntelliJ Maven path): `Tests run: 4, Failures: 0, Errors: 0, Skipped: 0; BUILD SUCCESS (41.204 s)`.
+
+## Fix Round 3
+
+- Reconcile matching remains deterministic by source chunk index and replaces stale same-index content while deleting extras.
+- Added regression coverage for stale same-index plus extra chunks and retained published-source validation.
+- Focused Maven rerun reached admin compilation but failed on pre-existing missing `com.feisheng.bot.core` symbols across unrelated admin classes; no focused tests executed in that run.

@@ -40,3 +40,9 @@ Initial result: default `mvn` command was unavailable in PowerShell. Using the a
 - Compatibility constructor migration endpoint now returns 503 instead of throwing NPE when no migration service is supplied.
 - Source `PUBLISHED` guard and exact index-based stale/extra chunk reconciliation retained.
 - Focused command used absolute IntelliJ Maven path with `-Dsurefire.failIfNoSpecifiedTests=false`; admin compilation remains blocked by unrelated missing `com.feisheng.bot.core` symbols, so no tests executed in this round.
+
+## Fix Round 5
+
+- Existing target documents are now validated as completed `DRAFT` snapshots before reconciliation; active/published targets are rejected without mutation.
+- Added compatibility `/migrate` regression coverage for the legacy constructor returning 503 when migration service is absent.
+- Focused Maven: `Tests run: 6, Failures: 0, Errors: 0, Skipped: 0; BUILD SUCCESS (34.783 s)`.

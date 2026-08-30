@@ -98,6 +98,9 @@ public class KnowledgeMigrationSnapshotService {
             documentMapper.insert(target);
             job.setTargetDocumentId(target.getId());
             jobMapper.updateById(job);
+        } else if (!Objects.equals(target.getStatus(), COMPLETED)
+            || !KnowledgeDocumentReleaseService.DRAFT.equals(target.getPublishStatus())) {
+            throw new SnapshotException(409, "目标文档不是可编辑草稿");
         }
         List<BotKnowledgeChunk> existing = chunkMapper.selectList(new LambdaQueryWrapper<BotKnowledgeChunk>()
             .eq(BotKnowledgeChunk::getDocumentId, target.getId()));

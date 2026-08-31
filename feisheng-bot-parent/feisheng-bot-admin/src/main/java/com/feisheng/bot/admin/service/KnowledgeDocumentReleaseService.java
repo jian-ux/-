@@ -203,7 +203,7 @@ public class KnowledgeDocumentReleaseService {
             appendRollbackAudit(audit, operatorId, current == null ? null : current.getId(), restored.getId(), key, reason, now);
             syncIndexAfterCommit();
             observability.release(audit == null ? null : audit.getId(), key,
-                current == null ? null : current.getDocumentVersion().longValue(),
+                current == null || current.getDocumentVersion() == null ? null : current.getDocumentVersion().longValue(),
                 restored.getDocumentVersion() == null ? null : restored.getDocumentVersion().longValue(), true, true);
             return new ReleaseResult(restored.getId(), key,
                 restored.getDocumentVersion() == null ? 1 : restored.getDocumentVersion(), PUBLISHED,

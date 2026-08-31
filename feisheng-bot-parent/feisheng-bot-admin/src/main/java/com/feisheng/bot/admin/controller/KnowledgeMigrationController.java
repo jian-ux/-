@@ -8,6 +8,7 @@ import com.feisheng.bot.admin.service.KnowledgeMigrationJobService;
 import com.feisheng.bot.admin.service.KnowledgeMigrationReviewService;
 import com.feisheng.bot.common.vo.R;
 import org.springframework.security.core.Authentication;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -20,6 +21,7 @@ public class KnowledgeMigrationController {
     private final BotKnowledgeConflictMapper conflictMapper;
     private final com.feisheng.bot.admin.service.KnowledgeDocumentReleaseService releaseService;
 
+    @Autowired
     public KnowledgeMigrationController(KnowledgeMigrationJobService jobService,
                                         KnowledgeMigrationReviewService reviewService,
                                         BotKnowledgeConflictMapper conflictMapper,

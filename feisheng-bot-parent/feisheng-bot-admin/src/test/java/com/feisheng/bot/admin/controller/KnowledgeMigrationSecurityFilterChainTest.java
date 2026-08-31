@@ -19,6 +19,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.FilterType;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
@@ -30,6 +31,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @WebMvcTest(value = KnowledgeMigrationController.class,
     excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = JwtAuthFilter.class))
+@ContextConfiguration(classes = {
+    KnowledgeMigrationController.class, SecurityConfig.class, JwtAuthFilter.class, JwtUtil.class
+})
 @Import({SecurityConfig.class, JwtAuthFilter.class, JwtUtil.class})
 @TestPropertySource(properties = "jwt.secret=01234567890123456789012345678901")
 class KnowledgeMigrationSecurityFilterChainTest {

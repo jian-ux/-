@@ -12,6 +12,7 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.longThat;
 import static org.mockito.Mockito.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -101,7 +102,7 @@ class KnowledgeMigrationWorkerTest {
             60_000L, null, observability).run(1L);
 
         verify(observability).queueWait(eq(1L), eq("set"), eq(1L), eq(2L),
-            argThat(elapsed -> elapsed >= 0L));
+            longThat(elapsed -> elapsed >= 0L));
     }
 
     @Test

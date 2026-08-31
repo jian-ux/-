@@ -3,6 +3,7 @@ package com.feisheng.bot.admin.service;
 import com.feisheng.bot.admin.entity.BotKnowledgeChunk;
 import com.feisheng.bot.admin.entity.BotKnowledgeDocument;
 import com.feisheng.bot.admin.entity.BotKnowledgeMigrationJob;
+import com.feisheng.bot.admin.entity.SysOperationLog;
 import com.feisheng.bot.admin.mapper.BotKnowledgeChunkMapper;
 import com.feisheng.bot.admin.mapper.BotKnowledgeDocumentMapper;
 import com.feisheng.bot.admin.mapper.BotKnowledgeMigrationJobMapper;
@@ -87,7 +88,7 @@ class KnowledgeDocumentReleaseMigrationTest {
         assertEquals("approved release", audit.getReviewReason());
         assertEquals("{\"gateReport\":{\"passed\":true}}", audit.getReviewAuditJson());
         verify(f.jobs, never()).updateById(audit);
-        verify(f.operationLogs).insert(argThat(log -> log.getUserId().equals(9L)
+        verify(f.operationLogs).insert(argThat((SysOperationLog log) -> log.getUserId().equals(9L)
             && "knowledge.migration.rollback".equals(log.getAction())
             && log.getParams().contains("\"jobId\":8")
             && log.getParams().contains("\"reason\":\"operator requested rollback\"")));

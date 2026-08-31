@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented and committed as `eeaa15d` (`perf: move customer memory updates to outbox`).
+Implemented and committed as `b6db1bd` (`perf: move customer memory updates to outbox`), with worker fix `3f4062e` and report update `ceff068`.
 
 ## Changes
 

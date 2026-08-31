@@ -2,6 +2,8 @@ package com.feisheng.bot.admin.controller;
 
 import com.feisheng.bot.admin.mapper.BotConversationMapper;
 import com.feisheng.bot.admin.mapper.BotCustomerMapper;
+import com.feisheng.bot.admin.mapper.BotMessageMapper;
+import com.feisheng.bot.admin.dto.CustomerTimelineItem;
 import com.feisheng.bot.admin.entity.BotCustomer;
 import com.feisheng.bot.admin.service.CustomerProfileSyncService;
 import com.feisheng.bot.common.exception.BusinessException;
@@ -22,6 +24,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -118,6 +121,28 @@ class CustomerControllerTest {
             .andExpect(jsonPath("$.data.conversationProfiles").value(3))
             .andExpect(jsonPath("$.data.affectedRows").value(5));
         verify(syncService).sync();
+    }
+
+    @Test
+    void timelineLoadsMessagesAcrossAllCustomerConversations() {
+        BotCustomerMapper customerMapper = mock(BotCustomerMapper.class);
+        BotMessageMapper messageMapper = mock(BotMessageMapper.class);
+        BotCustomer customer = new BotCustomer();
+        customer.setId(7L);
+        customer.setChannelType("web");
+        customer.setChannelUserId("user-7");
+        when(customerMapper.selectById(7L)).thenReturn(customer);
+        Page<CustomerTimelineItem> expected = new Page<>(1, 100);
+        when(messageMapper.selectCustomerTimeline(any(), any(), any())).thenReturn(expected);
+
+        CustomerController controller = new CustomerController(
+            customerMapper, mock(BotConversationMapper.class), messageMapper,
+            mock(CustomerProfileSyncService.class));
+
+        assertEquals(expected, controller.timeline(7L, 0, 500).getData());
+        verify(messageMapper).selectCustomerTimeline(any(),
+            org.mockito.ArgumentMatchers.eq("web"),
+            org.mockito.ArgumentMatchers.eq("user-7"));
     }
 
     @Test

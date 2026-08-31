@@ -4,11 +4,14 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.feisheng.bot.admin.entity.BotConversation;
 import com.feisheng.bot.admin.entity.BotCustomer;
+import com.feisheng.bot.admin.dto.CustomerTimelineItem;
 import com.feisheng.bot.admin.mapper.BotConversationMapper;
 import com.feisheng.bot.admin.mapper.BotCustomerMapper;
+import com.feisheng.bot.admin.mapper.BotMessageMapper;
 import com.feisheng.bot.admin.service.CustomerProfileSyncService;
 import com.feisheng.bot.common.exception.BusinessException;
 import com.feisheng.bot.common.vo.R;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,13 +21,23 @@ public class CustomerController {
     private static final String PLAYGROUND_CHANNEL = "playground";
     private final BotCustomerMapper mapper;
     private final BotConversationMapper conversationMapper;
+    private final BotMessageMapper messageMapper;
     private final CustomerProfileSyncService profileSyncService;
 
     public CustomerController(BotCustomerMapper mapper,
                               BotConversationMapper conversationMapper,
                               CustomerProfileSyncService profileSyncService) {
+        this(mapper, conversationMapper, null, profileSyncService);
+    }
+
+    @Autowired
+    public CustomerController(BotCustomerMapper mapper,
+                              BotConversationMapper conversationMapper,
+                              BotMessageMapper messageMapper,
+                              CustomerProfileSyncService profileSyncService) {
         this.mapper = mapper;
         this.conversationMapper = conversationMapper;
+        this.messageMapper = messageMapper;
         this.profileSyncService = profileSyncService;
     }
 
@@ -100,6 +113,22 @@ public class CustomerController {
                 .eq(BotConversation::getChannelType, customer.getChannelType())
                 .eq(BotConversation::getChannelUserId, customer.getChannelUserId())
                 .orderByDesc(BotConversation::getUpdateTime)));
+    }
+
+    @GetMapping("/{id}/timeline")
+    public R<Page<CustomerTimelineItem>> timeline(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        BotCustomer customer = mapper.selectById(id);
+        int safePage = Math.max(page, 1);
+        int safeSize = Math.min(Math.max(size, 1), 100);
+        if (!isVisibleCustomer(customer) || messageMapper == null) {
+            return R.ok(new Page<>(safePage, safeSize));
+        }
+        return R.ok(messageMapper.selectCustomerTimeline(
+            new Page<>(safePage, safeSize), customer.getChannelType(),
+            customer.getChannelUserId()));
     }
 
     @GetMapping("/by-channel")

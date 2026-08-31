@@ -14,6 +14,9 @@ import com.feisheng.bot.core.service.ConversationSummaryFormat;
 import com.feisheng.bot.core.service.CustomerServiceDecisionEngine;
 import com.feisheng.bot.core.service.CustomerServicePromptProvider;
 import com.feisheng.bot.core.service.CustomerProfileService;
+import com.feisheng.bot.core.service.CustomerLongTermMemoryService;
+import com.feisheng.bot.core.service.CustomerMediaMemoryService;
+import com.feisheng.bot.core.service.CustomerConversationHistoryService;
 import com.feisheng.bot.core.service.EmotionService;
 import com.feisheng.bot.core.service.HandoffCoordinator;
 import com.feisheng.bot.core.service.IntentService;
@@ -505,6 +508,12 @@ public class DialogServiceImpl {
     private final CustomerProfileService customerProfileService;
     private final ConversationContextAssembler conversationContextAssembler;
     private final ConversationSummaryFormat conversationSummaryFormat;
+    @Autowired(required = false)
+    private CustomerLongTermMemoryService customerLongTermMemoryService;
+    @Autowired(required = false)
+    private CustomerMediaMemoryService customerMediaMemoryService;
+    @Autowired(required = false)
+    private CustomerConversationHistoryService customerConversationHistoryService;
 
     @Autowired
     public DialogServiceImpl(ConversationServiceImpl conversationService,
@@ -701,6 +710,9 @@ public class DialogServiceImpl {
             channelType, channelUserId, safeTitle);
         BotMessage userMessage = saveMessage(conversation.getId(), "user", safeText,
             userMessageMetadata, normalizedContentType(userMessageContentType));
+        if (customerMediaMemoryService != null) {
+            customerMediaMemoryService.saveFromMessage(channelType, channelUserId, userMessage);
+        }
         List<BotMessage> recentMessages = messageService.getByConversation(conversation.getId());
         ConversationStateService.Snapshot conversationState =
             conversationStateService.load(conversation, recentMessages);
@@ -711,6 +723,9 @@ public class DialogServiceImpl {
         String contextSummary = conversation.getContextSummary();
         boolean profileUpdated = false;
         String profileContext = null;
+        String customerLongTermSummary = null;
+        String customerMemoryContext = null;
+        String customerHistoryContext = null;
         EmotionService.EmotionResult emotion = emotionService.analyze(
             safeText, recentMessages, userMessage.getId());
         messageService.updateMetadata(userMessage, mergeMetadata(userMessage.getMetadata(),
@@ -745,6 +760,18 @@ public class DialogServiceImpl {
                 .updateAndLoad(channelType, channelUserId, safeText);
             profileUpdated = profile.updated();
             profileContext = customerProfileService.contextFor(understandingText, profile);
+        }
+        if (customerLongTermMemoryService != null) {
+            CustomerLongTermMemoryService.Snapshot customerMemory =
+                customerLongTermMemoryService.updateFromCustomerMessage(
+                    channelType, channelUserId, safeText, userMessage.getId());
+            customerLongTermSummary = customerMemory.summary();
+            customerMemoryContext = customerLongTermMemoryService
+                .contextFor(understandingText, customerMemory).orElse(null);
+        }
+        if (customerConversationHistoryService != null) {
+            customerHistoryContext = customerConversationHistoryService.contextFor(
+                channelType, channelUserId, conversation.getId());
         }
         if (isPreviousQuestionRequest(understandingText)) {
             return previousQuestionResponse(
@@ -829,7 +856,9 @@ public class DialogServiceImpl {
                 conversation.getSummaryMessageId(), contextSummary,
                 conversationStateService.turnContext(
                     conversationState, stateMerge, understandingText),
-                profileContext, maxHistoryMessages,
+                profileContext, customerLongTermSummary, customerMemoryContext,
+                customerHistoryContext,
+                maxHistoryMessages,
                 value -> redact(value, redactedTypes));
 
         CustomerServiceDecisionEngine.PendingResult pendingResult =

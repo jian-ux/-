@@ -17,6 +17,9 @@ public class ConversationContextAssembler {
     private static final String TASK_STATE = "【当前任务状态】";
     private static final String OLD_SUMMARY = "【旧聊天摘要】";
     private static final String USER_PROFILE = "【与本轮有关的用户信息】";
+    private static final String CUSTOMER_SUMMARY = "【客户长期摘要】";
+    private static final String CUSTOMER_MEMORY = "【客户长期记忆】";
+    private static final String CUSTOMER_HISTORY = "【客户历史片段】";
 
     private final ObjectMapper objectMapper;
     private final ConversationSummaryFormat summaryFormat;
@@ -37,6 +40,40 @@ public class ConversationContextAssembler {
             String profileContext,
             int maxRecentMessages,
             UnaryOperator<String> sanitizer) {
+        return assemble(currentQuestion, messages, currentMessageId, summaryMessageId,
+            summary, taskState, profileContext, null, null, null, maxRecentMessages, sanitizer);
+    }
+
+    public AssembledContext assemble(
+            String currentQuestion,
+            List<BotMessage> messages,
+            Long currentMessageId,
+            Long summaryMessageId,
+            String summary,
+            Map<String, Object> taskState,
+            String profileContext,
+            String customerLongTermSummary,
+            String customerMemoryContext,
+            int maxRecentMessages,
+            UnaryOperator<String> sanitizer) {
+        return assemble(currentQuestion, messages, currentMessageId, summaryMessageId,
+            summary, taskState, profileContext, customerLongTermSummary, customerMemoryContext,
+            null, maxRecentMessages, sanitizer);
+    }
+
+    public AssembledContext assemble(
+            String currentQuestion,
+            List<BotMessage> messages,
+            Long currentMessageId,
+            Long summaryMessageId,
+            String summary,
+            Map<String, Object> taskState,
+            String profileContext,
+            String customerLongTermSummary,
+            String customerMemoryContext,
+            String customerHistoryContext,
+            int maxRecentMessages,
+            UnaryOperator<String> sanitizer) {
         UnaryOperator<String> safeSanitizer = sanitizer == null
             ? UnaryOperator.identity() : sanitizer;
         String question = sanitize(currentQuestion, safeSanitizer);
@@ -49,7 +86,10 @@ public class ConversationContextAssembler {
             recent,
             serializeTaskState(taskState, safeSanitizer),
             sanitize(normalizedSummary, safeSanitizer),
-            sanitize(profileContext, safeSanitizer)
+            sanitize(profileContext, safeSanitizer),
+            sanitize(customerLongTermSummary, safeSanitizer),
+            sanitize(customerMemoryContext, safeSanitizer),
+            sanitize(customerHistoryContext, safeSanitizer)
         );
     }
 
@@ -132,14 +172,22 @@ public class ConversationContextAssembler {
         private final String taskState;
         private final String oldSummary;
         private final String userProfile;
+        private final String customerLongTermSummary;
+        private final String customerMemoryContext;
+        private final String customerHistoryContext;
 
         private AssembledContext(String currentQuestion, List<RecentMessage> recentMessages,
-                                 String taskState, String oldSummary, String userProfile) {
+                                 String taskState, String oldSummary, String userProfile,
+                                 String customerLongTermSummary, String customerMemoryContext,
+                                 String customerHistoryContext) {
             this.currentQuestion = currentQuestion == null ? "" : currentQuestion;
             this.recentMessages = recentMessages == null ? List.of() : List.copyOf(recentMessages);
             this.taskState = taskState == null || taskState.isBlank() ? "无" : taskState;
             this.oldSummary = oldSummary == null ? "" : oldSummary;
             this.userProfile = userProfile == null ? "" : userProfile;
+            this.customerLongTermSummary = customerLongTermSummary == null ? "" : customerLongTermSummary;
+            this.customerMemoryContext = customerMemoryContext == null ? "" : customerMemoryContext;
+            this.customerHistoryContext = customerHistoryContext == null ? "" : customerHistoryContext;
         }
 
         public String currentQuestion() {
@@ -149,7 +197,7 @@ public class ConversationContextAssembler {
         public int mandatoryChars() {
             int from = Math.max(0, recentMessages.size() - 2);
             return renderSections(recentMessages.subList(from, recentMessages.size()),
-                false, false).length();
+                false, false, false, false, false).length();
         }
 
         public String render(int maxChars) {
@@ -157,24 +205,48 @@ public class ConversationContextAssembler {
             List<RecentMessage> recent = new ArrayList<>(recentMessages);
             boolean includeSummary = !oldSummary.isBlank();
             boolean includeProfile = !userProfile.isBlank();
-            String rendered = renderSections(recent, includeSummary, includeProfile);
+            boolean includeCustomerSummary = !customerLongTermSummary.isBlank();
+            boolean includeCustomerMemory = !customerMemoryContext.isBlank();
+            boolean includeCustomerHistory = !customerHistoryContext.isBlank();
+            String rendered = renderSections(recent, includeSummary, includeProfile,
+                includeCustomerSummary, includeCustomerMemory, includeCustomerHistory);
             if (rendered.length() <= limit) return rendered;
 
             includeSummary = false;
-            rendered = renderSections(recent, false, includeProfile);
+            rendered = renderSections(recent, false, includeProfile,
+                includeCustomerSummary, includeCustomerMemory, includeCustomerHistory);
             while (rendered.length() > limit && recent.size() > 2) {
                 recent.remove(0);
-                rendered = renderSections(recent, false, includeProfile);
+                rendered = renderSections(recent, false, includeProfile,
+                    includeCustomerSummary, includeCustomerMemory, includeCustomerHistory);
             }
             if (rendered.length() > limit && includeProfile) {
                 includeProfile = false;
-                rendered = renderSections(recent, false, false);
+                rendered = renderSections(recent, false, false,
+                    includeCustomerSummary, includeCustomerMemory, includeCustomerHistory);
+            }
+            if (rendered.length() > limit && includeCustomerHistory) {
+                includeCustomerHistory = false;
+                rendered = renderSections(recent, false, includeProfile,
+                    includeCustomerSummary, includeCustomerMemory, false);
+            }
+            if (rendered.length() > limit && includeCustomerMemory) {
+                includeCustomerMemory = false;
+                rendered = renderSections(recent, false, includeProfile,
+                    includeCustomerSummary, false, includeCustomerHistory);
+            }
+            if (rendered.length() > limit && includeCustomerSummary) {
+                includeCustomerSummary = false;
+                rendered = renderSections(recent, false, includeProfile,
+                    false, false, includeCustomerHistory);
             }
             return rendered;
         }
 
         private String renderSections(List<RecentMessage> recent,
-                                      boolean includeSummary, boolean includeProfile) {
+                                      boolean includeSummary, boolean includeProfile,
+                                      boolean includeCustomerSummary, boolean includeCustomerMemory,
+                                      boolean includeCustomerHistory) {
             List<String> sections = new ArrayList<>();
             sections.add(CURRENT_QUESTION + "\n" + valueOrNone(currentQuestion));
             if (recent != null && !recent.isEmpty()) {
@@ -184,6 +256,9 @@ public class ConversationContextAssembler {
             sections.add(TASK_STATE + "\n" + valueOrNone(taskState));
             if (includeSummary) sections.add(OLD_SUMMARY + "\n" + oldSummary);
             if (includeProfile) sections.add(USER_PROFILE + "\n" + userProfile);
+            if (includeCustomerSummary) sections.add(CUSTOMER_SUMMARY + "\n" + customerLongTermSummary);
+            if (includeCustomerMemory) sections.add(CUSTOMER_MEMORY + "\n" + customerMemoryContext);
+            if (includeCustomerHistory) sections.add(CUSTOMER_HISTORY + "\n" + customerHistoryContext);
             return String.join("\n\n", sections);
         }
 

@@ -61,6 +61,38 @@ class ConversationContextAssemblerTest {
         assertFalse(rendered.contains("【与本轮有关的用户信息】"));
     }
 
+    @Test
+    void includesCustomerSummaryAndControlledMemoryAsSeparateSections() {
+        ConversationContextAssembler.AssembledContext context = assembler.assemble(
+            "这个合同怎么操作？", List.of(message(1L, "user", "之前的问题")), 1L, null,
+            null, Map.of(), "【用户画像参考】\n客户身份：管理员",
+            "客户长期使用点签电子合同，已咨询认证流程。",
+            "以下是客户明确提供的长期事实，不是知识库事实：\n企业名称：星河科技",
+            6, value -> value);
+
+        String rendered = context.render(2000);
+
+        assertTrue(rendered.contains("【与本轮有关的用户信息】"));
+        assertTrue(rendered.contains("【客户长期摘要】"));
+        assertTrue(rendered.contains("【客户长期记忆】"));
+        assertTrue(rendered.contains("星河科技"));
+        assertFalse(rendered.contains("【知识库事实】"));
+    }
+
+    @Test
+    void includesCrossConversationHistoryAsItsOwnSection() {
+        ConversationContextAssembler.AssembledContext context = assembler.assemble(
+            "这个合同怎么操作？", List.of(), null, null, null, Map.of(), null,
+            null, null,
+            "以下为该客户其他会话中的最近片段，不是知识库事实：\n客户：之前咨询过认证",
+            6, value -> value);
+
+        String rendered = context.render(2000);
+
+        assertTrue(rendered.contains("【客户历史片段】"));
+        assertTrue(rendered.contains("之前咨询过认证"));
+    }
+
     private BotMessage message(Long id, String role, String content) {
         BotMessage message = new BotMessage();
         message.setId(id);

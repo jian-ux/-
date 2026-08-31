@@ -43,6 +43,16 @@ customer-service:
   flash-model-id: ${CUSTOMER_SERVICE_FLASH_MODEL_ID:0}
   flash-max-question-chars: ${CUSTOMER_SERVICE_FLASH_MAX_QUESTION_CHARS:80}
 
+customer-memory:
+  outbox:
+    enabled: ${CUSTOMER_MEMORY_OUTBOX_ENABLED:true}
+    batch-size: ${CUSTOMER_MEMORY_OUTBOX_BATCH_SIZE:20}
+    poll-delay-ms: ${CUSTOMER_MEMORY_OUTBOX_POLL_DELAY_MS:1000}
+    executor:
+      core-threads: ${CUSTOMER_MEMORY_OUTBOX_EXECUTOR_CORE_THREADS:2}
+      max-threads: ${CUSTOMER_MEMORY_OUTBOX_EXECUTOR_MAX_THREADS:4}
+      queue-capacity: ${CUSTOMER_MEMORY_OUTBOX_EXECUTOR_QUEUE_CAPACITY:64}
+
 rag:
   embedding:
     cache-ttl-seconds: ${RAG_EMBEDDING_CACHE_TTL_SECONDS:86400}

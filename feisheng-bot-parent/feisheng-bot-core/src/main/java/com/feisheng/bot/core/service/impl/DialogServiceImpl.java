@@ -16,9 +16,11 @@ import com.feisheng.bot.core.service.CustomerServicePromptProvider;
 import com.feisheng.bot.core.service.CustomerProfileService;
 import com.feisheng.bot.core.service.CustomerLongTermMemoryService;
 import com.feisheng.bot.core.service.CustomerMediaMemoryService;
+import com.feisheng.bot.core.service.CustomerMemoryOutboxService;
 import com.feisheng.bot.core.service.CustomerConversationHistoryService;
 import com.feisheng.bot.core.service.CustomerContextRecallService;
 import com.feisheng.bot.core.service.CustomerContextSnapshot;
+import com.feisheng.bot.core.service.DialogResponseMetadata;
 import com.feisheng.bot.core.service.DialogFailure;
 import com.feisheng.bot.core.service.EmotionService;
 import com.feisheng.bot.core.service.HandoffCoordinator;
@@ -28,6 +30,7 @@ import com.feisheng.bot.core.service.ModelAnswerSignalParser;
 import com.feisheng.bot.core.service.NlpIntentClassifier;
 import com.feisheng.bot.core.service.PlainTextReplyFormatter;
 import com.feisheng.bot.core.service.ReplyAttachmentService;
+import com.feisheng.bot.core.service.RedactionMemoizer;
 import com.feisheng.bot.core.service.RichReplyFormatter;
 import com.feisheng.bot.core.service.SensitiveDataService;
 import com.feisheng.bot.core.service.TextCorrectionService;
@@ -511,6 +514,7 @@ public class DialogServiceImpl {
     private final CustomerProfileService customerProfileService;
     private final ConversationContextAssembler conversationContextAssembler;
     private final ConversationSummaryFormat conversationSummaryFormat;
+    private final ThreadLocal<RedactionMemoizer> requestRedactionMemoizer = new ThreadLocal<>();
     @Autowired(required = false)
     private CustomerLongTermMemoryService customerLongTermMemoryService;
     @Autowired(required = false)
@@ -519,6 +523,8 @@ public class DialogServiceImpl {
     private CustomerConversationHistoryService customerConversationHistoryService;
     @Autowired(required = false)
     private CustomerContextRecallService customerContextRecallService;
+    @Autowired(required = false)
+    private com.feisheng.bot.core.service.CustomerMemoryOutboxService customerMemoryOutboxService;
 
     @Autowired
     public DialogServiceImpl(ConversationServiceImpl conversationService,
@@ -681,15 +687,20 @@ public class DialogServiceImpl {
             String requestedPromptVersion, String userMessageMetadata,
             String userMessageContentType) {
         long started = System.currentTimeMillis();
-        Map<String, Object> response = processInternal(
-            channelType, channelUserId, text, title, providedRagContext,
-            providedCitations, modalityContext, mergeGlobalRetrieval, preferredModelId,
-            requestedPromptVersion, userMessageMetadata, userMessageContentType);
-        decisionEngine.enrich(response);
-        conversationStateService.synchronizeResponse(
-            response, redact(text, new LinkedHashSet<>()));
-        collectBadCase(text, response, System.currentTimeMillis() - started);
-        return response;
+        requestRedactionMemoizer.set(new RedactionMemoizer(sensitiveDataService));
+        try {
+            Map<String, Object> response = processInternal(
+                channelType, channelUserId, text, title, providedRagContext,
+                providedCitations, modalityContext, mergeGlobalRetrieval, preferredModelId,
+                requestedPromptVersion, userMessageMetadata, userMessageContentType);
+            decisionEngine.enrich(response);
+            conversationStateService.synchronizeResponse(
+                response, redact(text, new LinkedHashSet<>()));
+            collectBadCase(text, response, System.currentTimeMillis() - started);
+            return response;
+        } finally {
+            requestRedactionMemoizer.remove();
+        }
     }
 
     private Map<String, Object> processInternal(
@@ -718,6 +729,8 @@ public class DialogServiceImpl {
         if (customerMediaMemoryService != null) {
             customerMediaMemoryService.saveFromMessage(channelType, channelUserId, userMessage);
         }
+        enqueueOutbox(com.feisheng.bot.core.service.CustomerMemoryOutboxService.MEDIA_OCR_MEMORY,
+            dedupKey(userMessage, "ocr"), conversation, userMessage, safeText);
         List<BotMessage> recentMessages = messageService.getByConversation(conversation.getId());
         ConversationStateService.Snapshot conversationState =
             conversationStateService.load(conversation, recentMessages);
@@ -763,18 +776,21 @@ public class DialogServiceImpl {
 
         if (customerProfileService != null) {
             CustomerProfileService.ProfileSnapshot profile = customerProfileService
-                .updateAndLoad(channelType, channelUserId, safeText);
+                .updateDeterministicAndLoad(channelType, channelUserId, safeText);
             profileUpdated = profile.updated();
             profileContext = customerProfileService.contextFor(understandingText, profile);
         }
+        enqueueOutbox(com.feisheng.bot.core.service.CustomerMemoryOutboxService.PROFILE_AI_EXTRACTION,
+            dedupKey(userMessage, "profile"), conversation, userMessage, safeText);
         if (customerLongTermMemoryService != null) {
             CustomerLongTermMemoryService.Snapshot customerMemory =
-                customerLongTermMemoryService.updateFromCustomerMessage(
-                    channelType, channelUserId, safeText, userMessage.getId());
+                customerLongTermMemoryService.load(channelType, channelUserId);
             customerLongTermSummary = customerMemory.summary();
             customerMemoryContext = customerLongTermMemoryService
                 .contextFor(understandingText, customerMemory).orElse(null);
         }
+        enqueueOutbox(com.feisheng.bot.core.service.CustomerMemoryOutboxService.CUSTOMER_LONG_TERM_SUMMARY,
+            dedupKey(userMessage, "longterm"), conversation, userMessage, safeText);
         if (customerConversationHistoryService != null) {
             if (customerContextRecallService == null) {
                 customerHistoryContext = customerConversationHistoryService.contextFor(
@@ -1640,6 +1656,8 @@ public class DialogServiceImpl {
             protocolViolationDetails(modelProtocolViolationDetails));
         addModelInvocationDetails(messageMetadata, modelResponses);
         messageMetadata.put("redactionApplied", !redactedTypes.isEmpty());
+        DialogResponseMetadata sharedMetadata = new DialogResponseMetadata(messageMetadata);
+        sharedMetadata.applyTo(response);
         BotConversation latestConversation = conversationService.getById(conversation.getId());
         if (latestConversation != null && isHumanHandling(latestConversation)) {
             return humanHandlingResponse(
@@ -1656,7 +1674,7 @@ public class DialogServiceImpl {
             resolvedRetrievalQuestion, queryResolution.rewritten(),
             queryResolution.contextDependent(), retrievalQueryRewritten,
             hasText(retrievalHistory), hasText(semanticRetrievalHistory),
-            stageLatencies, System.currentTimeMillis() - started);
+            stageLatencies, System.currentTimeMillis() - started, sharedMetadata);
         if (needsTransfer) {
             String reason = transferReason(outputBlocked, answerStatus, lowConfidenceNeedsTransfer,
                 highRiskNoKnowledge, emotion);
@@ -3149,7 +3167,8 @@ public class DialogServiceImpl {
                                boolean retrievalContextUsed,
                                boolean retrievalHistoryUsed,
                                Map<String, Object> stageLatencies,
-                               long latencyMs) {
+                               long latencyMs,
+                               DialogResponseMetadata sharedMetadata) {
         BotAiReplyLog aiLog = new BotAiReplyLog();
         aiLog.setMessageId(aiMessage.getId());
         aiLog.setPrompt(hasText(modelPrompt) ? modelPrompt : question);
@@ -3168,6 +3187,7 @@ public class DialogServiceImpl {
             .filter(value -> !value.isBlank())
             .collect(Collectors.joining(",")));
         Map<String, Object> trace = new LinkedHashMap<>();
+        if (sharedMetadata != null) sharedMetadata.applyTo(trace);
         trace.put("source", source);
         trace.put("answerStatus", answerStatus);
         trace.put("answerDecision", answerDecision.name());
@@ -3225,6 +3245,22 @@ public class DialogServiceImpl {
 
     private BotMessage saveMessage(Long conversationId, String role, String content, String metadata) {
         return saveMessage(conversationId, role, content, metadata, "text");
+    }
+
+    private String dedupKey(BotMessage message, String suffix) {
+        return "message:" + (message == null || message.getId() == null ? "unknown" : message.getId())
+            + ":" + suffix;
+    }
+
+    private void enqueueOutbox(String eventType, String dedupKey, BotConversation conversation,
+                               BotMessage message, String payload) {
+        if (customerMemoryOutboxService == null || conversation == null) return;
+        try {
+            customerMemoryOutboxService.enqueue(eventType, dedupKey, null, conversation.getId(),
+                message == null ? null : message.getId(), payload == null ? "" : payload);
+        } catch (RuntimeException e) {
+            log.warn("Customer memory outbox enqueue failed for {}", eventType);
+        }
     }
 
     private BotMessage saveMessage(Long conversationId, String role, String content,
@@ -3362,6 +3398,13 @@ public class DialogServiceImpl {
         String compactedMessages = formatSummaryMessages(
             messages, summaryBoundary, compactEnd, redactedTypes);
         if (!hasText(compactedMessages)) {
+            return ContextCompressionResult.notAttempted();
+        }
+        if (customerMemoryOutboxService != null) {
+            BotMessage source = messages.get(compactEnd - 1);
+            enqueueOutbox(CustomerMemoryOutboxService.CONTEXT_SUMMARY,
+                dedupKey(source, "context-summary"), conversation, source,
+                buildContextSummaryPrompt(existingSummary, compactedMessages));
             return ContextCompressionResult.notAttempted();
         }
         String summaryPrompt = buildContextSummaryPrompt(existingSummary, compactedMessages);
@@ -4735,8 +4778,10 @@ public class DialogServiceImpl {
     }
 
     private String redact(String value, Set<String> redactedTypes) {
+        RedactionMemoizer memoizer = requestRedactionMemoizer.get();
+        if (memoizer != null) return memoizer.redact(value, redactedTypes);
         SensitiveDataService.RedactionResult result = sensitiveDataService.redact(value);
-        redactedTypes.addAll(result.types());
+        if (redactedTypes != null) redactedTypes.addAll(result.types());
         return result.text();
     }
 

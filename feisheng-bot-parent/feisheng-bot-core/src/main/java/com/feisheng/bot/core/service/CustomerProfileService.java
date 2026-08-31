@@ -117,6 +117,17 @@ public class CustomerProfileService {
     }
 
     public ProfileSnapshot updateAndLoad(String channelType, String channelUserId, String text) {
+        return updateAndLoad(channelType, channelUserId, text, true);
+    }
+
+    /** Applies only deterministic explicit corrections; model extraction is left to Outbox. */
+    public ProfileSnapshot updateDeterministicAndLoad(String channelType, String channelUserId,
+                                                      String text) {
+        return updateAndLoad(channelType, channelUserId, text, false);
+    }
+
+    private ProfileSnapshot updateAndLoad(String channelType, String channelUserId,
+                                          String text, boolean includeAiExtraction) {
         if (!hasText(channelType) || !hasText(channelUserId)) return ProfileSnapshot.empty();
         if (PLAYGROUND_CHANNEL.equalsIgnoreCase(channelType.trim())) {
             return ProfileSnapshot.empty();
@@ -125,7 +136,8 @@ public class CustomerProfileService {
         Map<String, Map<String, Object>> facts = readFacts(customer == null
             ? null : customer.getProfileJson());
         Map<String, String> ruleFacts = extract(text);
-        Map<String, IntelligentFact> aiFacts = extractWithModel(text);
+        Map<String, IntelligentFact> aiFacts = includeAiExtraction
+            ? extractWithModel(text) : Collections.emptyMap();
         Map<String, String> extracted = new LinkedHashMap<>();
         aiFacts.forEach((key, fact) -> extracted.put(key, fact.value()));
         // Deterministic rules win when they can normalize an explicit phrase safely.

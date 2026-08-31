@@ -9,6 +9,7 @@ import com.feisheng.bot.knowledge.mapper.BotKnowledgeDocumentMapper;
 import com.feisheng.bot.knowledge.mapper.BotKnowledgeSemanticUnitMapper;
 import com.feisheng.bot.knowledge.service.StructuredKnowledgeUnitIndexService;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -49,7 +50,8 @@ public class StructuredKnowledgeUnitReviewService {
 
     public ReviewResult approve(Long unitId, Long reviewerId, String reason) {
         ReviewResult result = approveWithoutSync(unitId, reviewerId, reason);
-        return result.changed() ? syncedResult(unitId, "APPROVED") : result;
+        return result.changed() && belongsToPublishedKnowledgeDocument(unitId)
+            ? syncedResult(unitId, "APPROVED") : result;
     }
 
     private ReviewResult approveWithoutSync(Long unitId, Long reviewerId, String reason) {
@@ -75,7 +77,8 @@ public class StructuredKnowledgeUnitReviewService {
 
     public ReviewResult reject(Long unitId, Long reviewerId, String reason) {
         ReviewResult result = rejectWithoutSync(unitId, reviewerId, reason);
-        return result.changed() ? syncedResult(unitId, "REJECTED") : result;
+        return result.changed() && belongsToPublishedKnowledgeDocument(unitId)
+            ? syncedResult(unitId, "REJECTED") : result;
     }
 
     private ReviewResult rejectWithoutSync(Long unitId, Long reviewerId, String reason) {
@@ -102,13 +105,17 @@ public class StructuredKnowledgeUnitReviewService {
         List<BatchItemResult> items = new ArrayList<>(distinctIds.size());
         int succeeded = 0;
         int changed = 0;
+        boolean onlineIndexChanged = false;
         for (Long unitId : distinctIds) {
             try {
                 ReviewResult result = "APPROVE".equals(action)
                     ? approveWithoutSync(unitId, reviewerId, normalizedReason)
                     : rejectWithoutSync(unitId, reviewerId, normalizedReason);
                 succeeded++;
-                if (result.changed()) changed++;
+                if (result.changed()) {
+                    changed++;
+                    onlineIndexChanged |= belongsToPublishedKnowledgeDocument(unitId);
+                }
                 items.add(new BatchItemResult(unitId, true, result.status(),
                     result.changed(), null, null));
             } catch (ReviewException e) {
@@ -119,7 +126,7 @@ public class StructuredKnowledgeUnitReviewService {
 
         boolean indexSyncSuccess = true;
         String indexSyncError = null;
-        if (changed > 0) {
+        if (onlineIndexChanged) {
             StructuredKnowledgeUnitIndexService.SyncReport sync = indexService.sync();
             indexSyncSuccess = sync.success();
             indexSyncError = sync.error();
@@ -166,6 +173,16 @@ public class StructuredKnowledgeUnitReviewService {
         return new ReviewResult(unitId, status, true, sync.success(), sync.error());
     }
 
+    private boolean belongsToPublishedKnowledgeDocument(Long unitId) {
+        BotKnowledgeSemanticUnit unit = unitMapper.selectById(unitId);
+        if (unit == null) return false;
+        BotKnowledgeDocument document = documentMapper.selectById(unit.getDocumentId());
+        return document != null
+            && "PUBLISHED".equals(document.getPublishStatus())
+            && "KNOWLEDGE".equalsIgnoreCase(document.getSourceScope())
+            && !Integer.valueOf(1).equals(document.getDeleted());
+    }
+
     private BotKnowledgeSemanticUnit requireUnit(Long unitId) {
         if (unitId == null) throw new ReviewException(400, "结构化知识 ID 不能为空");
         BotKnowledgeSemanticUnit unit = unitMapper.selectById(unitId);
@@ -201,8 +218,24 @@ public class StructuredKnowledgeUnitReviewService {
         try {
             evidenceIds = objectMapper.readValue(unit.getEvidenceChunkIdsJson(),
                 new TypeReference<List<Long>>() {});
+            JsonNode rawSpans = objectMapper.readTree(unit.getSourceSpansJson());
+            boolean invalidOffset = rawSpans == null || !rawSpans.isArray();
+            if (!invalidOffset) {
+                for (JsonNode span : rawSpans) {
+                    if (!span.isObject() || !validOffset(span.get("start"))
+                            || !validOffset(span.get("end"))) {
+                        invalidOffset = true;
+                        break;
+                    }
+                }
+            }
+            if (invalidOffset) {
+                throw new ReviewException(409, "原文证据位置必须是有限整数");
+            }
             spans = objectMapper.readValue(unit.getSourceSpansJson(),
                 new TypeReference<List<StructuredKnowledgeUnit.SourceSpan>>() {});
+        } catch (ReviewException e) {
+            throw e;
         } catch (Exception e) {
             throw new ReviewException(409, "结构化知识的证据 JSON 无效");
         }
@@ -241,6 +274,13 @@ public class StructuredKnowledgeUnitReviewService {
                 throw new ReviewException(409, "原文证据已变化，请重新抽取");
             }
         }
+    }
+
+    private boolean validOffset(JsonNode value) {
+        if (value == null || !value.isNumber()) return false;
+        double number = value.doubleValue();
+        return Double.isFinite(number) && number >= Integer.MIN_VALUE
+            && number <= Integer.MAX_VALUE && Math.rint(number) == number;
     }
 
     public record ReviewResult(Long unitId, String status, boolean changed,

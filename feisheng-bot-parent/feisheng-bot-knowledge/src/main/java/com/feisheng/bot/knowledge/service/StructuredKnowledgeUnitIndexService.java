@@ -37,7 +37,8 @@ public class StructuredKnowledgeUnitIndexService {
     private static final Set<String> PROHIBITED_RESULT_FIELDS = Set.of(
         "answer", "fullAnswer", "qaAnswer", "directAnswerEnabled", "directAnswerEligible");
     private static final Set<String> TRUSTED_FILTER_FIELDS = Set.of(
-        "semanticUnitId", "documentId", "categoryId", "sourceScope", "expiresAt");
+        "semanticUnitId", "documentId", "categoryId", "sourceScope", "expiresAt",
+        "knowledgeSetKey");
 
     private final BotKnowledgeSemanticUnitMapper unitMapper;
     private final BotKnowledgeChunkMapper chunkMapper;
@@ -207,6 +208,127 @@ public class StructuredKnowledgeUnitIndexService {
         return searchMemory(queryEmbedding, topK, minScore, normalizedFilters);
     }
 
+    /** Builds a target-only index snapshot without changing the live searchable snapshot. */
+    public ShadowIndexHandle buildShadowIndex(Long targetDocumentId) {
+        if (!enabled || targetDocumentId == null) {
+            return new ShadowIndexHandle(targetDocumentId, List.of(), false, "index disabled or target missing");
+        }
+        try {
+            List<BotKnowledgeSemanticUnit> units = unitMapper.selectList(
+                new LambdaQueryWrapper<BotKnowledgeSemanticUnit>()
+                    .eq(BotKnowledgeSemanticUnit::getDocumentId, targetDocumentId)
+                    .eq(BotKnowledgeSemanticUnit::getStatus, "APPROVED")
+                    .isNotNull(BotKnowledgeSemanticUnit::getEmbedding));
+            List<ShadowUnit> shadow = new ArrayList<>();
+            for (BotKnowledgeSemanticUnit unit : units == null ? List.<BotKnowledgeSemanticUnit>of() : units) {
+                List<Double> vector = parseVector(unit.getEmbedding());
+                List<Long> evidence = parseLongList(unit.getEvidenceChunkIdsJson());
+                if (unit.getId() == null || vector.isEmpty() || evidence.isEmpty()) {
+                    return new ShadowIndexHandle(targetDocumentId, List.copyOf(shadow), false,
+                        "approved unit has missing vector or evidence");
+                }
+                shadow.add(new ShadowUnit(unit.getId(), vector, nullToEmpty(unit.getEmbeddingModel()),
+                    nullToEmpty(unit.getEmbeddingContentHash()), evidence));
+            }
+            return new ShadowIndexHandle(targetDocumentId, List.copyOf(shadow), true, null);
+        } catch (Exception e) {
+            return new ShadowIndexHandle(targetDocumentId, List.of(), false, rootMessage(e));
+        }
+    }
+
+    public ShadowValidation validateShadowIndex(ShadowIndexHandle handle) {
+        if (handle == null || !handle.success() || handle.units().isEmpty()) {
+            return new ShadowValidation(false, handle == null ? 0 : handle.units().size(), 0,
+                handle == null ? List.of("missing handle") : List.of(handle.units().isEmpty()
+                    ? "shadow index is empty" : handle.error()));
+        }
+        List<String> failures = new ArrayList<>();
+        int expected = handle.units().size();
+        Set<Integer> dimensions = new HashSet<>();
+        Set<String> models = new HashSet<>();
+        Set<Long> targetChunks = new HashSet<>();
+        List<BotKnowledgeChunk> chunks = chunkMapper.selectList(new LambdaQueryWrapper<BotKnowledgeChunk>()
+            .eq(BotKnowledgeChunk::getDocumentId, handle.targetDocumentId())
+            .eq(BotKnowledgeChunk::getStatus, "APPROVED"));
+        if (chunks != null) chunks.stream().map(BotKnowledgeChunk::getId).filter(Objects::nonNull)
+            .forEach(targetChunks::add);
+        for (ShadowUnit unit : handle.units()) {
+            if (unit.vector() == null || unit.vector().isEmpty()
+                    || unit.vector().stream().anyMatch(v -> v == null || !Double.isFinite(v))) {
+                failures.add("unit " + unit.id() + " has invalid vector");
+            } else dimensions.add(unit.vector().size());
+            if (unit.evidenceChunkIds().isEmpty()) failures.add("unit " + unit.id() + " has no evidence");
+            else if (!targetChunks.containsAll(unit.evidenceChunkIds()))
+                failures.add("unit " + unit.id() + " references missing evidence");
+            if (!unit.embeddingModel().isBlank()) models.add(unit.embeddingModel());
+            if (!unit.contentHash().isBlank() && unit.contentHash().length() < 8)
+                failures.add("unit " + unit.id() + " has invalid content hash");
+        }
+        if (dimensions.size() > 1) failures.add("embedding dimensions are inconsistent");
+        if (models.size() > 1) failures.add("embedding models are inconsistent");
+        return new ShadowValidation(failures.isEmpty(), expected,
+            failures.isEmpty() ? expected : 0, List.copyOf(failures));
+    }
+
+    /**
+     * Candidate-only recall used by migration conflict detection. The authoritative
+     * in-memory snapshot is always rechecked after a remote hit, so stale Qdrant
+     * payloads cannot escape publication or knowledge-set filters.
+     */
+    public List<ConflictCandidate> searchConflictCandidates(ConflictQuery query) {
+        if (!enabled || query == null || query.queryVector() == null
+                || query.queryVector().isEmpty() || query.topK() <= 0
+                || query.knowledgeSetKey() == null || query.knowledgeSetKey().isBlank()
+                || !Double.isFinite(query.minScore())) {
+            return Collections.emptyList();
+        }
+        String key = query.knowledgeSetKey().trim();
+        int requested = Math.min(Math.max(query.topK(), 1), 100);
+        Map<String, Object> filters = Map.of("knowledgeSetKey", key);
+        // Source-document and scope checks happen after vector retrieval. Retrieve the
+        // complete authoritative snapshot first so an excluded high-scoring hit cannot
+        // consume the caller's requested top-K slots.
+        int recallLimit = Math.max(requested, snapshot.units().size());
+        List<Map<String, Object>> hits = search(query.queryVector(), recallLimit,
+            query.minScore(), filters);
+        List<ConflictCandidate> candidates = new ArrayList<>(hits.size());
+        Set<Long> seen = new HashSet<>();
+        for (Map<String, Object> hit : hits) {
+            Long unitId = semanticUnitId(hit);
+            Long documentId = positiveLong(hit.get("documentId"));
+            if (unitId == null || documentId == null
+                    || Objects.equals(documentId, query.excludedTargetDocumentId())
+                    || !seen.add(unitId)) {
+                continue;
+            }
+            UnitEntry entry = snapshot.units().get(unitId);
+            if (entry == null || !key.equals(entry.knowledgeSetKey())
+                    || (query.sourceDocumentId() != null
+                        && !Objects.equals(entry.documentId(), query.sourceDocumentId()))
+                    || !scopeMatches(entry.scopeFields(), query.scopeFields())
+                    || Objects.equals(entry.documentId(), query.excludedTargetDocumentId())) {
+                continue;
+            }
+            double similarity = number(hit.get("similarity"));
+            if (!Double.isFinite(similarity) || similarity < query.minScore()) continue;
+            candidates.add(new ConflictCandidate(entry.semanticUnit(), similarity,
+                entry.documentId(), entry.knowledgeSetKey()));
+            if (candidates.size() >= requested) break;
+        }
+        return List.copyOf(candidates);
+    }
+
+    private boolean scopeMatches(Map<String, String> candidate, Map<String, String> requested) {
+        if (requested == null || requested.isEmpty()) return true;
+        for (Map.Entry<String, String> entry : requested.entrySet()) {
+            String key = entry.getKey() == null ? "" : entry.getKey().trim().toLowerCase();
+            if (!Set.of("product", "channel", "audience").contains(key)) continue;
+            String actual = candidate == null ? null : candidate.get(key);
+            if (actual == null || !actual.equalsIgnoreCase(String.valueOf(entry.getValue()))) return false;
+        }
+        return true;
+    }
+
     private List<Map<String, Object>> searchMemory(List<Double> queryEmbedding, int topK,
                                                     double minScore,
                                                     Map<String, Object> filters) {
@@ -235,7 +357,15 @@ public class StructuredKnowledgeUnitIndexService {
                 .eq(BotKnowledgeChunk::getStatus, "APPROVED"));
         List<BotKnowledgeDocument> documents = documentMapper.selectList(
             new LambdaQueryWrapper<BotKnowledgeDocument>()
-                .eq(BotKnowledgeDocument::getStatus, 2));
+                .eq(BotKnowledgeDocument::getStatus, 2)
+                .eq(BotKnowledgeDocument::getPublishStatus, "PUBLISHED")
+                .eq(BotKnowledgeDocument::getSourceScope, "KNOWLEDGE")
+                .and(wrapper -> wrapper.isNull(BotKnowledgeDocument::getEffectiveFrom)
+                    .or().le(BotKnowledgeDocument::getEffectiveFrom,
+                        java.util.Date.from(Instant.now())))
+                .and(wrapper -> wrapper.isNull(BotKnowledgeDocument::getEffectiveTo)
+                    .or().gt(BotKnowledgeDocument::getEffectiveTo,
+                        java.util.Date.from(Instant.now()))));
 
         Map<Long, Long> approvedChunkDocuments = new HashMap<>();
         for (BotKnowledgeChunk chunk : chunks) {
@@ -247,13 +377,17 @@ public class StructuredKnowledgeUnitIndexService {
         Map<Long, DocumentMeta> documentMetadata = new HashMap<>();
         for (BotKnowledgeDocument document : documents) {
             if (document.getId() == null || Integer.valueOf(1).equals(document.getDeleted())
-                    || !Integer.valueOf(2).equals(document.getStatus())) continue;
+                    || !Integer.valueOf(2).equals(document.getStatus())
+                    || !"PUBLISHED".equals(document.getPublishStatus())
+                    || !"KNOWLEDGE".equals(document.getSourceScope())
+                    || !isEffective(document)) continue;
             documentMetadata.put(document.getId(), new DocumentMeta(
                 firstNonBlank(document.getTitle(), document.getFileName(),
                     "\u6587\u6863 " + document.getId()),
                 document.getCategoryId(), nullToEmpty(document.getSourceScope()),
                 document.getExpiresAt() == null
-                    ? "" : document.getExpiresAt().toInstant().toString()));
+                    ? "" : document.getExpiresAt().toInstant().toString(),
+                nullToEmpty(document.getKnowledgeSetKey())));
         }
 
         Map<Long, UnitEntry> entries = new HashMap<>();
@@ -293,11 +427,38 @@ public class StructuredKnowledgeUnitIndexService {
                 unit.getExtractionConfidence(), nullToEmpty(unit.getExtractorModel()),
                 nullToEmpty(unit.getPromptVersion()), nullToEmpty(unit.getSchemaVersion()),
                 nullToEmpty(unit.getSourceHash()), document.title(), document.sourceScope(),
-                document.expiresAt(), vector, nullToEmpty(unit.getEmbeddingModel()),
+                document.expiresAt(), document.knowledgeSetKey(), scopeFields(unit), vector,
+                unit, nullToEmpty(unit.getEmbeddingModel()),
                 nullToEmpty(unit.getEmbeddingVersion()), unit.getEmbeddingDimensions(),
                 nullToEmpty(unit.getEmbeddingContentHash())));
         }
         return new Snapshot(version, Map.copyOf(entries));
+    }
+
+    private Map<String, String> scopeFields(BotKnowledgeSemanticUnit unit) {
+        Map<String, String> fields = new LinkedHashMap<>();
+        collectScopeFields(unit.getMetadataJson(), fields);
+        collectScopeFields(unit.getConditionsJson(), fields);
+        return Map.copyOf(fields);
+    }
+
+    private void collectScopeFields(String json, Map<String, String> fields) {
+        if (json == null || json.isBlank()) return;
+        try { collectScopeFields(objectMapper.readTree(json), fields); }
+        catch (Exception ignored) { }
+    }
+
+    private void collectScopeFields(com.fasterxml.jackson.databind.JsonNode node,
+                                    Map<String, String> fields) {
+        if (node == null || !node.isObject()) return;
+        node.fields().forEachRemaining(entry -> {
+            String key = entry.getKey().toLowerCase();
+            com.fasterxml.jackson.databind.JsonNode value = entry.getValue();
+            if (Set.of("product", "channel", "audience").contains(key) && value.isValueNode()) {
+                String text = value.asText();
+                if (!text.isBlank()) fields.putIfAbsent(key, text.trim());
+            } else if (value.isObject()) collectScopeFields(value, fields);
+        });
     }
 
     private QdrantSyncResult syncQdrant(Snapshot next, Diff diff, boolean wasReady) {
@@ -353,6 +514,8 @@ public class StructuredKnowledgeUnitIndexService {
         payload.put("documentTitle", entry.documentTitle());
         payload.put("categoryId", entry.categoryId());
         payload.put("sourceScope", entry.sourceScope());
+        payload.put("knowledgeSetKey", entry.knowledgeSetKey());
+        entry.scopeFields().forEach((key, value) -> payload.put(key, value));
         payload.put("expiresAt", entry.expiresAt());
         payload.put("unitKey", entry.unitKey());
         payload.put("unitType", entry.unitType());
@@ -527,6 +690,16 @@ public class StructuredKnowledgeUnitIndexService {
         return "";
     }
 
+    private boolean isEffective(BotKnowledgeDocument document) {
+        Instant now = Instant.now();
+        return (document.getEffectiveFrom() == null
+                || !document.getEffectiveFrom().toInstant().isAfter(now))
+            && (document.getEffectiveTo() == null
+                || document.getEffectiveTo().toInstant().isAfter(now))
+            && (document.getExpiresAt() == null
+                || document.getExpiresAt().toInstant().isAfter(now));
+    }
+
     private static String rootMessage(Throwable error) {
         Throwable current = error;
         while (current.getCause() != null) current = current.getCause();
@@ -557,12 +730,14 @@ public class StructuredKnowledgeUnitIndexService {
                              String metadataJson, Double extractionConfidence,
                              String extractorModel, String promptVersion, String schemaVersion,
                              String sourceHash, String documentTitle, String sourceScope,
-                             String expiresAt, List<Double> vector, String embeddingModel,
+                             String expiresAt, String knowledgeSetKey, Map<String, String> scopeFields,
+                             List<Double> vector,
+                             BotKnowledgeSemanticUnit semanticUnit, String embeddingModel,
                              String embeddingVersion, Integer embeddingDimensions,
                              String embeddingContentHash) {}
 
     private record DocumentMeta(String title, Long categoryId, String sourceScope,
-                                String expiresAt) {}
+                                String expiresAt, String knowledgeSetKey) {}
 
     private record Diff(int added, int updated, int removed,
                         List<Long> changedIds, List<Long> removedIds) {
@@ -596,4 +771,43 @@ public class StructuredKnowledgeUnitIndexService {
     public record IndexStatus(long version, int units, String searchBackend,
                               boolean qdrantReady, QdrantVectorStore.QdrantStatus qdrant,
                               SyncReport lastSync) {}
+
+    public record ConflictQuery(List<Double> queryVector, String knowledgeSetKey,
+                                Long excludedTargetDocumentId, int topK, double minScore,
+                                Long sourceDocumentId, Map<String, String> scopeFields) {
+        public ConflictQuery(List<Double> queryVector, String knowledgeSetKey,
+                             Long excludedTargetDocumentId, int topK, double minScore) {
+            this(queryVector, knowledgeSetKey, excludedTargetDocumentId, topK, minScore,
+                null, Map.of());
+        }
+        public ConflictQuery {
+            scopeFields = scopeFields == null ? Map.of() : Map.copyOf(scopeFields);
+        }
+    }
+
+    public record ConflictCandidate(BotKnowledgeSemanticUnit semanticUnit,
+                                    double similarity, Long documentId,
+                                    String knowledgeSetKey) {}
+
+    public record ShadowIndexHandle(Long targetDocumentId, List<ShadowUnit> units,
+                                    boolean success, String error) {
+        public ShadowIndexHandle {
+            units = units == null ? List.of() : List.copyOf(units);
+        }
+    }
+
+    public record ShadowUnit(Long id, List<Double> vector, String embeddingModel,
+                             String contentHash, List<Long> evidenceChunkIds) {
+        public ShadowUnit {
+            vector = vector == null ? List.of() : List.copyOf(vector);
+            evidenceChunkIds = evidenceChunkIds == null ? List.of() : List.copyOf(evidenceChunkIds);
+        }
+    }
+
+    public record ShadowValidation(boolean success, int expectedUnits, int indexedUnits,
+                                   List<String> smokeFailures) {
+        public ShadowValidation {
+            smokeFailures = smokeFailures == null ? List.of() : List.copyOf(smokeFailures);
+        }
+    }
 }

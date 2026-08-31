@@ -13,6 +13,7 @@ import com.feisheng.bot.admin.service.ImageOcrService;
 import com.feisheng.bot.admin.service.ImportQualityService;
 import com.feisheng.bot.admin.service.KnowledgeChunkPersistenceService;
 import com.feisheng.bot.admin.service.KnowledgeDocumentReleaseService;
+import com.feisheng.bot.admin.service.KnowledgeMigrationSnapshotService;
 import com.feisheng.bot.admin.service.StructuredQaReviewService;
 import com.feisheng.bot.admin.service.TesseractOcrEngine;
 import com.feisheng.bot.admin.service.VectorSearchService;
@@ -56,6 +57,7 @@ public class AdminDocController {
     private final KnowledgeChunkPersistenceService chunkPersistenceService;
     private final StructuredQaReviewService structuredQaReviewService;
     private final KnowledgeDocumentReleaseService releaseService;
+    private final KnowledgeMigrationSnapshotService migrationSnapshotService;
 
     // P1-3: Thread pool for async document ingestion
     private ExecutorService ingestExecutor;
@@ -100,7 +102,8 @@ public class AdminDocController {
                                ImportQualityService importQualityService,
                                KnowledgeChunkPersistenceService chunkPersistenceService,
                                StructuredQaReviewService structuredQaReviewService,
-                               KnowledgeDocumentReleaseService releaseService) {
+                               KnowledgeDocumentReleaseService releaseService,
+                               KnowledgeMigrationSnapshotService migrationSnapshotService) {
         mapper = m; chunkMapper = cm; parseService = ps; chunkingService = cs;
         embeddingService = es; vectorSearch = vs;
         this.storageService = storageService;
@@ -110,6 +113,23 @@ public class AdminDocController {
         this.chunkPersistenceService = chunkPersistenceService;
         this.structuredQaReviewService = structuredQaReviewService;
         this.releaseService = releaseService;
+        this.migrationSnapshotService = migrationSnapshotService;
+    }
+
+    /** Compatibility overload for direct construction by existing integrations/tests. */
+    public AdminDocController(BotKnowledgeDocumentMapper m, BotKnowledgeChunkMapper cm,
+                               DocumentParseService ps, ChunkingService cs,
+                               EmbeddingService es, VectorSearchService vs,
+                               MinioStorageService storageService,
+                               KnowledgeIndexService indexService,
+                               ImageOcrService imageOcrService,
+                               ImportQualityService importQualityService,
+                               KnowledgeChunkPersistenceService chunkPersistenceService,
+                               StructuredQaReviewService structuredQaReviewService,
+                               KnowledgeDocumentReleaseService releaseService) {
+        this(m, cm, ps, cs, es, vs, storageService, indexService, imageOcrService,
+            importQualityService, chunkPersistenceService, structuredQaReviewService,
+            releaseService, null);
     }
 
     @PostMapping("/upload")
@@ -559,6 +579,17 @@ public class AdminDocController {
         }
     }
 
+    @PostMapping("/{id}/migrate")
+    public R<KnowledgeMigrationSnapshotService.SnapshotResult> migrate(@PathVariable Long id,
+                                                                         @RequestParam(required = false) Long operatorId) {
+        try {
+            if (migrationSnapshotService == null) return R.fail(503, "迁移服务不可用");
+            return R.ok(migrationSnapshotService.create(id, operatorId));
+        } catch (KnowledgeMigrationSnapshotService.SnapshotException e) {
+            return R.fail(e.status(), e.getMessage());
+        }
+    }
+
     @PostMapping("/{id}/archive")
     public R<KnowledgeDocumentReleaseService.ReleaseResult> archive(@PathVariable Long id) {
         try {
@@ -617,7 +648,8 @@ public class AdminDocController {
         BotKnowledgeDocument doc = mapper.selectById(id);
         if (doc == null) return R.fail(404, "文档不存在");
 
-        if (doc.getObjectKey() != null && !doc.getObjectKey().isBlank()) {
+        if (doc.getObjectKey() != null && !doc.getObjectKey().isBlank()
+                && mapper.countActiveObjectReferences(doc.getBucketName(), doc.getObjectKey()) <= 1) {
             try {
                 storageService.delete(doc.getObjectKey());
             } catch (Exception e) {

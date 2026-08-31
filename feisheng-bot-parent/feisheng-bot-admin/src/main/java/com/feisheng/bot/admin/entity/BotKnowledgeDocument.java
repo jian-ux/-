@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.TableLogic;
 import lombok.Data;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import java.util.Date;
@@ -44,6 +45,8 @@ public class BotKnowledgeDocument {
     private Integer detectedQaCount;
     private Integer invalidRowCount;
     private Date createTime;
+    @TableLogic
+    private Integer deleted;
 
     @TableField(exist = false)
     private Integer chunkCount;

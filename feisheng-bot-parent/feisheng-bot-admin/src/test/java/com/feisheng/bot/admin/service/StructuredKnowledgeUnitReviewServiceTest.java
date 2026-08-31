@@ -121,6 +121,35 @@ class StructuredKnowledgeUnitReviewServiceTest {
     }
 
     @Test
+    void rejectsApprovalWhenEvidenceSpanOffsetIsFractional() {
+        BotKnowledgeChunk approved = chunk("APPROVED", 0);
+        Fixture fixture = fixture(approved);
+        fixture.unit.setSourceSpansJson(
+            "[{\"chunkId\":11,\"start\":0.5,\"end\":4,\"quote\":\"证据内容\"}]");
+
+        StructuredKnowledgeUnitReviewService.ReviewException error = assertThrows(
+            StructuredKnowledgeUnitReviewService.ReviewException.class,
+            () -> fixture.service.approve(20L));
+
+        assertEquals(409, error.status());
+        verify(fixture.unitMapper, never()).transitionReview(
+            any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void approvingAUnitInDraftTargetDocumentNeverSynchronizesOnlineIndex() {
+        Fixture fixture = fixture(chunk("APPROVED", 0));
+        fixture.document.setPublishStatus("DRAFT");
+
+        StructuredKnowledgeUnitReviewService.ReviewResult result =
+            fixture.service.approve(20L);
+
+        assertTrue(result.changed());
+        assertTrue(result.indexSyncSuccess());
+        verify(fixture.indexService, never()).sync();
+    }
+
+    @Test
     void concurrentStateChangeFailsWithoutSyncingIndex() {
         Fixture fixture = fixture(chunk("APPROVED", 0));
         when(fixture.unitMapper.transitionReview(
@@ -213,6 +242,7 @@ class StructuredKnowledgeUnitReviewServiceTest {
         document.setId(5L);
         document.setStatus(2);
         document.setSourceScope("KNOWLEDGE");
+        document.setPublishStatus("PUBLISHED");
         document.setDeleted(0);
         return document;
     }

@@ -32,7 +32,7 @@ class KnowledgeDocumentReleaseServiceTest {
         chunk.setEmbedding("[1,0]");
         when(documentMapper.selectById(2L)).thenReturn(draft);
         when(chunkMapper.selectList(any())).thenReturn(List.of(chunk));
-        when(documentMapper.selectList(any())).thenReturn(List.of(old));
+        when(documentMapper.selectForUpdateByKnowledgeSetKey("product-manual")).thenReturn(List.of(old, draft));
 
         KnowledgeDocumentReleaseService service = new KnowledgeDocumentReleaseService(
             documentMapper, chunkMapper, indexService);

@@ -20,3 +20,7 @@ Implemented and committed as `eeaa15d` (`perf: move customer memory updates to o
 
 - Event handlers currently use the worker's idempotent processing hook; wiring provider-specific background handlers should be validated in deployment.
 - Scheduler defaults are conservative (2 core / 4 max threads, queue 64) and should be tuned against production throughput.
+
+## Follow-up Fix
+
+Worker status/retry updates now use `UpdateWrapper` column names instead of lambda metadata, preserving production SQL while allowing pure Mockito tests to execute. Fix commit: `3f4062e` (`fix: avoid lambda metadata cache in outbox worker`). Maven remains unavailable in this environment, so tests could not be executed here.

@@ -2536,6 +2536,7 @@ class DialogServiceImplTest {
         assertEquals("error", result.get("answerStatus"));
         assertEquals(false, result.get("ragSource"));
         assertEquals(Collections.emptyList(), result.get("citations"));
+        assertEquals("INTERNAL_ERROR", result.get("errorCode"));
         assertEquals(true, result.get("needsTransfer"));
     }
 

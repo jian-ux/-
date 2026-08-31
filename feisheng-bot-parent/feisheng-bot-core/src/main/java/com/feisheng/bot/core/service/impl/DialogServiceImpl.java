@@ -17,6 +17,7 @@ import com.feisheng.bot.core.service.CustomerProfileService;
 import com.feisheng.bot.core.service.CustomerLongTermMemoryService;
 import com.feisheng.bot.core.service.CustomerMediaMemoryService;
 import com.feisheng.bot.core.service.CustomerConversationHistoryService;
+import com.feisheng.bot.core.service.DialogFailure;
 import com.feisheng.bot.core.service.EmotionService;
 import com.feisheng.bot.core.service.HandoffCoordinator;
 import com.feisheng.bot.core.service.IntentService;
@@ -1483,6 +1484,12 @@ public class DialogServiceImpl {
         response.put("answerStatus", answerStatus);
         response.put("answerMode", answerMode);
         response.put("answerDecision", answerDecision.name());
+        if ("error".equals(answerStatus)) {
+            DialogFailure failure = DialogFailure.from(aiResponse);
+            response.put("errorCode", failure == null
+                ? com.feisheng.bot.core.service.DialogErrorCode.INTERNAL_ERROR.name()
+                : failure.code().name());
+        }
         if (answerabilityGate != null) {
             response.put("answerabilityGate", Map.of(
                 "modelAllowed", answerabilityGate.modelAllowed(),

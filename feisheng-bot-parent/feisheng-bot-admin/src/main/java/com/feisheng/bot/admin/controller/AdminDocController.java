@@ -31,6 +31,7 @@ import jakarta.servlet.http.HttpServletResponse;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import org.springframework.beans.factory.annotation.Autowired;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -93,6 +94,7 @@ public class AdminDocController {
         }
     }
 
+    @Autowired
     public AdminDocController(BotKnowledgeDocumentMapper m, BotKnowledgeChunkMapper cm,
                                DocumentParseService ps, ChunkingService cs,
                                EmbeddingService es, VectorSearchService vs,

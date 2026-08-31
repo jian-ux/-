@@ -21,6 +21,21 @@ spring:
       password: ${SPRING_REDIS_PASSWORD:}
       database: 0
 
+dialog:
+  performance:
+    context-core-threads: ${DIALOG_CONTEXT_CORE_THREADS:3}
+    context-max-threads: ${DIALOG_CONTEXT_MAX_THREADS:6}
+    context-queue-capacity: ${DIALOG_CONTEXT_QUEUE_CAPACITY:32}
+    recall-deadline-ms: ${DIALOG_RECALL_DEADLINE_MS:250}
+    outbox-batch-size: ${DIALOG_OUTBOX_BATCH_SIZE:20}
+    retrieval-cache-ttl-seconds: ${DIALOG_RETRIEVAL_CACHE_TTL_SECONDS:15}
+    model-connect-timeout-ms: ${DIALOG_MODEL_CONNECT_TIMEOUT_MS:10000}
+    model-read-timeout-ms: ${DIALOG_MODEL_READ_TIMEOUT_MS:60000}
+    circuit-breaker-sliding-window-size: ${DIALOG_CIRCUIT_BREAKER_SLIDING_WINDOW_SIZE:10}
+    circuit-breaker-minimum-number-of-calls: ${DIALOG_CIRCUIT_BREAKER_MINIMUM_NUMBER_OF_CALLS:5}
+    circuit-breaker-failure-rate-threshold: ${DIALOG_CIRCUIT_BREAKER_FAILURE_RATE_THRESHOLD:50}
+    circuit-breaker-wait-duration-seconds: ${DIALOG_CIRCUIT_BREAKER_WAIT_DURATION_SECONDS:30}
+
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
@@ -62,7 +77,7 @@ rag:
     max-retrieval-history-messages: ${RAG_CONTEXT_MAX_RETRIEVAL_HISTORY_MESSAGES:4}
     max-retrieval-history-chars: ${RAG_CONTEXT_MAX_RETRIEVAL_HISTORY_CHARS:1200}
     max-prompt-tokens: ${RAG_CONTEXT_MAX_PROMPT_TOKENS:4000}
-    recall-deadline-ms: ${RAG_CONTEXT_RECALL_DEADLINE_MS:250}
+    recall-deadline-ms: ${RAG_CONTEXT_RECALL_DEADLINE_MS:${DIALOG_RECALL_DEADLINE_MS:250}}
     executor:
       core-threads: ${RAG_CONTEXT_EXECUTOR_CORE_THREADS:3}
       max-threads: ${RAG_CONTEXT_EXECUTOR_MAX_THREADS:6}
@@ -79,7 +94,7 @@ rag:
     model-id: ${RAG_PROFILE_EXTRACTION_MODEL_ID:0}
   retrieval:
     pipeline-version: ${RAG_PIPELINE_VERSION:rag-corrective-evidence-v2}
-    cache-ttl-seconds: ${RAG_RETRIEVAL_CACHE_TTL_SECONDS:15}
+    cache-ttl-seconds: ${RAG_RETRIEVAL_CACHE_TTL_SECONDS:${DIALOG_RETRIEVAL_CACHE_TTL_SECONDS:15}}
     top-k: ${RAG_TOP_K:3}
     candidate-k: ${RAG_CANDIDATE_K:6}
     direct-threshold: ${RAG_DIRECT_THRESHOLD:0.82}
@@ -183,8 +198,8 @@ ai:
     connect-timeout-ms: ${AI_EMBEDDING_CONNECT_TIMEOUT_MS:3000}
     read-timeout-ms: ${AI_EMBEDDING_READ_TIMEOUT_MS:5000}
   llm:
-    connect-timeout: ${AI_LLM_CONNECT_TIMEOUT_MS:10000}
-    read-timeout: ${AI_LLM_READ_TIMEOUT_MS:60000}
+    connect-timeout: ${AI_LLM_CONNECT_TIMEOUT_MS:${DIALOG_MODEL_CONNECT_TIMEOUT_MS:10000}}
+    read-timeout: ${AI_LLM_READ_TIMEOUT_MS:${DIALOG_MODEL_READ_TIMEOUT_MS:60000}}
     max-retries: ${AI_LLM_MAX_RETRIES:1}
     temperature: ${AI_LLM_TEMPERATURE:0.0}
     max-output-tokens: ${AI_LLM_MAX_OUTPUT_TOKENS:1024}
@@ -210,10 +225,10 @@ resilience4j:
   circuitbreaker:
     configs:
       default:
-        sliding-window-size: 10
-        minimum-number-of-calls: 5
-        failure-rate-threshold: 50
-        wait-duration-in-open-state: 30s
+        sliding-window-size: ${DIALOG_CIRCUIT_BREAKER_SLIDING_WINDOW_SIZE:10}
+        minimum-number-of-calls: ${DIALOG_CIRCUIT_BREAKER_MINIMUM_NUMBER_OF_CALLS:5}
+        failure-rate-threshold: ${DIALOG_CIRCUIT_BREAKER_FAILURE_RATE_THRESHOLD:50}
+        wait-duration-in-open-state: ${DIALOG_CIRCUIT_BREAKER_WAIT_DURATION_SECONDS:30}s
         permitted-number-of-calls-in-half-open-state: 3
     instances:
       aiModel:

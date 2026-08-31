@@ -23,6 +23,21 @@ spring:
       port: ${SPRING_REDIS_PORT:6379}
       password: ${SPRING_REDIS_PASSWORD:}
       database: 0
+
+dialog:
+  performance:
+    context-core-threads: ${DIALOG_CONTEXT_CORE_THREADS:3}
+    context-max-threads: ${DIALOG_CONTEXT_MAX_THREADS:6}
+    context-queue-capacity: ${DIALOG_CONTEXT_QUEUE_CAPACITY:32}
+    recall-deadline-ms: ${DIALOG_RECALL_DEADLINE_MS:250}
+    outbox-batch-size: ${DIALOG_OUTBOX_BATCH_SIZE:20}
+    retrieval-cache-ttl-seconds: ${DIALOG_RETRIEVAL_CACHE_TTL_SECONDS:15}
+    model-connect-timeout-ms: ${DIALOG_MODEL_CONNECT_TIMEOUT_MS:10000}
+    model-read-timeout-ms: ${DIALOG_MODEL_READ_TIMEOUT_MS:60000}
+    circuit-breaker-sliding-window-size: ${DIALOG_CIRCUIT_BREAKER_SLIDING_WINDOW_SIZE:10}
+    circuit-breaker-minimum-number-of-calls: ${DIALOG_CIRCUIT_BREAKER_MINIMUM_NUMBER_OF_CALLS:5}
+    circuit-breaker-failure-rate-threshold: ${DIALOG_CIRCUIT_BREAKER_FAILURE_RATE_THRESHOLD:50}
+    circuit-breaker-wait-duration-seconds: ${DIALOG_CIRCUIT_BREAKER_WAIT_DURATION_SECONDS:30}
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
@@ -238,8 +253,8 @@ ai:
     max-attempts: ${AI_EMBEDDING_MAX_ATTEMPTS:3}
     retry-delay-ms: ${AI_EMBEDDING_RETRY_DELAY_MS:1000}
   llm:
-    connect-timeout: ${AI_LLM_CONNECT_TIMEOUT_MS:10000}
-    read-timeout: ${AI_LLM_READ_TIMEOUT_MS:60000}
+    connect-timeout: ${AI_LLM_CONNECT_TIMEOUT_MS:${DIALOG_MODEL_CONNECT_TIMEOUT_MS:10000}}
+    read-timeout: ${AI_LLM_READ_TIMEOUT_MS:${DIALOG_MODEL_READ_TIMEOUT_MS:60000}}
     max-retries: ${AI_LLM_MAX_RETRIES:1}
     temperature: ${AI_LLM_TEMPERATURE:0.0}
 qdrant:

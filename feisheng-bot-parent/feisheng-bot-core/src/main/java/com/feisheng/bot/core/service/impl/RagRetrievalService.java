@@ -30,6 +30,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import java.util.concurrent.TimeUnit;
 
@@ -37,6 +39,7 @@ import java.util.concurrent.TimeUnit;
 public class RagRetrievalService {
     private static final Logger log = LoggerFactory.getLogger(RagRetrievalService.class);
     private static final String CACHE_PREFIX_EMBEDDING = "rag:emb:";
+    private static final String CACHE_PREFIX_RETRIEVAL = "rag:retrieval:v1:";
     private static final List<String> IMAGE_INTENT_TERMS = List.of(
         "图片", "产品图", "流程图", "截图", "照片", "海报", "二维码",
         "发张图", "发一张图", "发图", "看图"
@@ -104,12 +107,20 @@ public class RagRetrievalService {
                 return size() > Math.max(1, embeddingLocalCacheMaxEntries);
             }
         });
+    private final Map<String, LocalRetrievalCacheEntry> localRetrievalCache =
+        new ConcurrentHashMap<>();
 
     @Value("${rag.embedding.cache-ttl-seconds:86400}")
     private long embeddingCacheTtlSeconds = 86400;
 
     @Value("${rag.embedding.local-cache-max-entries:512}")
     private int embeddingLocalCacheMaxEntries = 512;
+
+    @Value("${rag.retrieval.cache-ttl-seconds:15}")
+    private long retrievalCacheTtlSeconds = 15;
+
+    @Value("${rag.retrieval.pipeline-version:rag-corrective-evidence-v2}")
+    private String retrievalPipelineVersion = "rag-corrective-evidence-v2";
 
     @Value("${rag.retrieval.top-k:3}")
     private int topK;
@@ -267,6 +278,28 @@ public class RagRetrievalService {
      * as the only source for exact matching, topic alignment, and final reranking.
      */
     public RetrievalResult retrieve(String query, String conversationContext,
+                                    String modalityContext, Map<String, Object> filters,
+                                    List<QueryVariant> supplementalVariants,
+                                    boolean trackHit) {
+        boolean cacheable = !trackHit && isBlank(conversationContext)
+            && isBlank(modalityContext)
+            && (supplementalVariants == null || supplementalVariants.isEmpty());
+        String cacheKey = cacheable ? retrievalCacheKey(query, filters) : null;
+        if (cacheable) {
+            RetrievalResult cached = readRetrievalCache(cacheKey);
+            if (cached != null) return cached.withStageLatencies(
+                withCacheDiagnostic(cached.stageLatencies(), true));
+        }
+        RetrievalResult result = retrieveUncached(query, conversationContext, modalityContext,
+            filters, supplementalVariants, trackHit);
+        if (cacheable && result != null && result.answerable()) {
+            result = result.withStageLatencies(withCacheDiagnostic(result.stageLatencies(), false));
+            writeRetrievalCache(cacheKey, result);
+        }
+        return result;
+    }
+
+    private RetrievalResult retrieveUncached(String query, String conversationContext,
                                     String modalityContext, Map<String, Object> filters,
                                     List<QueryVariant> supplementalVariants,
                                     boolean trackHit) {
@@ -2249,6 +2282,70 @@ public class RagRetrievalService {
         }
     }
 
+    private String retrievalCacheKey(String query, Map<String, Object> filters) {
+        Map<String, Object> normalizedFilters = filters == null
+            ? Collections.emptyMap() : new TreeMap<>(filters);
+        String payload;
+        try {
+            payload = objectMapper.writeValueAsString(normalizedFilters);
+        } catch (Exception ignored) {
+            payload = normalizedFilters.toString();
+        }
+        String fingerprint = String.join("|",
+            retrievalPipelineVersion == null ? "" : retrievalPipelineVersion,
+            normalizeCacheQuery(query), payload,
+            String.valueOf(topK), String.valueOf(candidateK),
+            String.valueOf(structuredQaEnabled), String.valueOf(bm25Enabled),
+            String.valueOf(rerankService == null ? "none" : rerankService.getClass().getName()));
+        return CACHE_PREFIX_RETRIEVAL + hash(fingerprint);
+    }
+
+    private RetrievalResult readRetrievalCache(String key) {
+        LocalRetrievalCacheEntry local = localRetrievalCache.get(key);
+        long now = System.currentTimeMillis();
+        if (local != null) {
+            if (local.expiresAtMillis() > now) return local.result();
+            localRetrievalCache.remove(key, local);
+        }
+        if (redisUtil == null) return null;
+        try {
+            String json = redisUtil.get(key);
+            if (json == null || json.isBlank()) return null;
+            RetrievalResult result = objectMapper.readValue(json, RetrievalResult.class);
+            if (result != null) {
+                localRetrievalCache.put(key, new LocalRetrievalCacheEntry(result,
+                    now + Math.max(1L, retrievalCacheTtlSeconds) * 1000L));
+            }
+            return result;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private void writeRetrievalCache(String key, RetrievalResult result) {
+        long ttl = Math.max(1L, retrievalCacheTtlSeconds);
+        localRetrievalCache.put(key, new LocalRetrievalCacheEntry(result,
+            System.currentTimeMillis() + ttl * 1000L));
+        if (redisUtil == null) return;
+        try {
+            redisUtil.setex(key, objectMapper.writeValueAsString(result), ttl, TimeUnit.SECONDS);
+        } catch (Exception ignored) {
+            // Redis is an optimization; the normal retrieval result remains authoritative.
+        }
+    }
+
+    private Map<String, Object> withCacheDiagnostic(Map<String, Object> timings,
+                                                     boolean cacheHit) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        if (timings != null) result.putAll(timings);
+        result.put("retrievalCacheHit", cacheHit);
+        return result;
+    }
+
+    private String normalizeCacheQuery(String query) {
+        return query == null ? "" : query.trim().replaceAll("\\s+", " ");
+    }
+
     private static double number(Object value) {
         return value instanceof Number number ? number.doubleValue() : 0;
     }
@@ -2300,6 +2397,8 @@ public class RagRetrievalService {
     private record EmbeddingLookup(List<Double> vector, boolean cacheHit) {}
 
     private record LocalEmbeddingCacheEntry(List<Double> vector, long expiresAtMillis) {}
+
+    private record LocalRetrievalCacheEntry(RetrievalResult result, long expiresAtMillis) {}
 
     private static final class RetrievalTimingCollector {
         private final long startedNanos = System.nanoTime();

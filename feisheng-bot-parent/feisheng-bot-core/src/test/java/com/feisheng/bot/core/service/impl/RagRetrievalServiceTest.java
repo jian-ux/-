@@ -130,6 +130,24 @@ class RagRetrievalServiceTest {
     }
 
     @Test
+    void cachesSuccessfulRetrievalOnlyForNonTrackingReads() {
+        String query = "年假有几天";
+        when(faqMatchService.match(query, false)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(chunk(9L, 4L, "员工手册", 0.74)));
+
+        RagRetrievalService.RetrievalResult first = service.retrieve(query, false);
+        RagRetrievalService.RetrievalResult second = service.retrieve(query, false);
+
+        assertTrue(first.answerable());
+        assertEquals(Boolean.FALSE, first.stageLatencies().get("retrievalCacheHit"));
+        assertEquals(Boolean.TRUE, second.stageLatencies().get("retrievalCacheHit"));
+        verify(embeddingService).embed(query);
+    }
+
+    @Test
     void promotesConcretePriceEvidenceWhenRerankerIsUnavailable() {
         String query = "点签企业版多少钱？";
         ReflectionTestUtils.setField(service, "contextThreshold", 0.50);

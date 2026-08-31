@@ -17,6 +17,8 @@ import com.feisheng.bot.core.service.CustomerProfileService;
 import com.feisheng.bot.core.service.CustomerLongTermMemoryService;
 import com.feisheng.bot.core.service.CustomerMediaMemoryService;
 import com.feisheng.bot.core.service.CustomerConversationHistoryService;
+import com.feisheng.bot.core.service.CustomerContextRecallService;
+import com.feisheng.bot.core.service.CustomerContextSnapshot;
 import com.feisheng.bot.core.service.DialogFailure;
 import com.feisheng.bot.core.service.EmotionService;
 import com.feisheng.bot.core.service.HandoffCoordinator;
@@ -515,6 +517,8 @@ public class DialogServiceImpl {
     private CustomerMediaMemoryService customerMediaMemoryService;
     @Autowired(required = false)
     private CustomerConversationHistoryService customerConversationHistoryService;
+    @Autowired(required = false)
+    private CustomerContextRecallService customerContextRecallService;
 
     @Autowired
     public DialogServiceImpl(ConversationServiceImpl conversationService,
@@ -727,6 +731,7 @@ public class DialogServiceImpl {
         String customerLongTermSummary = null;
         String customerMemoryContext = null;
         String customerHistoryContext = null;
+        Map<String, Object> customerContextDiagnostics = Map.of();
         EmotionService.EmotionResult emotion = emotionService.analyze(
             safeText, recentMessages, userMessage.getId());
         messageService.updateMetadata(userMessage, mergeMetadata(userMessage.getMetadata(),
@@ -771,8 +776,26 @@ public class DialogServiceImpl {
                 .contextFor(understandingText, customerMemory).orElse(null);
         }
         if (customerConversationHistoryService != null) {
-            customerHistoryContext = customerConversationHistoryService.contextFor(
-                channelType, channelUserId, conversation.getId());
+            if (customerContextRecallService == null) {
+                customerHistoryContext = customerConversationHistoryService.contextFor(
+                    channelType, channelUserId, conversation.getId());
+            }
+        }
+        if (customerContextRecallService != null) {
+            CustomerContextSnapshot customerContext = customerContextRecallService.recall(
+                channelType, channelUserId, conversation.getId(), understandingText,
+                conversationState, recentMessages);
+            customerContextDiagnostics = customerContext.diagnostics();
+            if (customerProfileService != null) {
+                profileContext = customerContext.profileContext(
+                    understandingText, customerProfileService);
+            }
+            if (customerLongTermMemoryService != null) {
+                customerLongTermSummary = customerContext.longTermMemory().summary();
+                customerMemoryContext = customerContext.longTermContext(
+                    understandingText, customerLongTermMemoryService);
+            }
+            customerHistoryContext = customerContext.historyContext();
         }
         if (isPreviousQuestionRequest(understandingText)) {
             return previousQuestionResponse(
@@ -1519,6 +1542,7 @@ public class DialogServiceImpl {
         response.put("contextSummaryUpdatedAt", conversation.getSummaryUpdatedAt());
         response.put("profileUpdated", profileUpdated);
         response.put("profileContextApplied", hasText(profileContext));
+        response.put("customerContextDiagnostics", customerContextDiagnostics);
         response.put("contextResolvedQuery", resolvedRetrievalQuestion);
         response.put("queryCorrectionApplied", !Objects.equals(safeText, understandingText));
         response.put("correctedQuery", understandingText);

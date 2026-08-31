@@ -156,6 +156,19 @@ public class CustomerProfileService {
         return new ProfileSnapshot(facts, changed);
     }
 
+    /**
+     * Read-only profile lookup used by the parallel context recall stage.
+     * Profile extraction and persistence stay in the existing update path.
+     */
+    public ProfileSnapshot load(String channelType, String channelUserId) {
+        if (!hasText(channelType) || !hasText(channelUserId)
+                || PLAYGROUND_CHANNEL.equalsIgnoreCase(channelType.trim())) {
+            return ProfileSnapshot.empty();
+        }
+        BotCustomer customer = find(channelType, channelUserId);
+        return new ProfileSnapshot(readFacts(customer == null ? null : customer.getProfileJson()), false);
+    }
+
     public String contextFor(String question, ProfileSnapshot snapshot) {
         if (snapshot == null || snapshot.facts().isEmpty() || !isRelevant(question)) return null;
         StringBuilder context = new StringBuilder("【用户画像参考】\n")
@@ -400,7 +413,7 @@ public class CustomerProfileService {
             facts = facts == null ? Map.of() : Collections.unmodifiableMap(facts);
         }
 
-        private static ProfileSnapshot empty() {
+        public static ProfileSnapshot empty() {
             return new ProfileSnapshot(Map.of(), false);
         }
     }

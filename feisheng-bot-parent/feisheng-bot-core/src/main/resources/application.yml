@@ -52,6 +52,11 @@ rag:
     max-retrieval-history-messages: ${RAG_CONTEXT_MAX_RETRIEVAL_HISTORY_MESSAGES:4}
     max-retrieval-history-chars: ${RAG_CONTEXT_MAX_RETRIEVAL_HISTORY_CHARS:1200}
     max-prompt-tokens: ${RAG_CONTEXT_MAX_PROMPT_TOKENS:4000}
+    recall-deadline-ms: ${RAG_CONTEXT_RECALL_DEADLINE_MS:250}
+    executor:
+      core-threads: ${RAG_CONTEXT_EXECUTOR_CORE_THREADS:3}
+      max-threads: ${RAG_CONTEXT_EXECUTOR_MAX_THREADS:6}
+      queue-capacity: ${RAG_CONTEXT_EXECUTOR_QUEUE_CAPACITY:32}
     summary:
       enabled: ${RAG_CONTEXT_SUMMARY_ENABLED:true}
       trigger-ratio: ${RAG_CONTEXT_SUMMARY_TRIGGER_RATIO:0.80}
@@ -64,6 +69,7 @@ rag:
     model-id: ${RAG_PROFILE_EXTRACTION_MODEL_ID:0}
   retrieval:
     pipeline-version: ${RAG_PIPELINE_VERSION:rag-corrective-evidence-v2}
+    cache-ttl-seconds: ${RAG_RETRIEVAL_CACHE_TTL_SECONDS:15}
     top-k: ${RAG_TOP_K:3}
     candidate-k: ${RAG_CANDIDATE_K:6}
     direct-threshold: ${RAG_DIRECT_THRESHOLD:0.82}

@@ -21,6 +21,7 @@ import com.feisheng.bot.core.service.CustomerConversationHistoryService;
 import com.feisheng.bot.core.service.CustomerContextRecallService;
 import com.feisheng.bot.core.service.CustomerContextSnapshot;
 import com.feisheng.bot.core.service.DialogResponseMetadata;
+import com.feisheng.bot.core.service.DialogRetrievalCoordinator;
 import com.feisheng.bot.core.service.DialogFailure;
 import com.feisheng.bot.core.service.EmotionService;
 import com.feisheng.bot.core.service.HandoffCoordinator;
@@ -514,6 +515,7 @@ public class DialogServiceImpl {
     private final CustomerProfileService customerProfileService;
     private final ConversationContextAssembler conversationContextAssembler;
     private final ConversationSummaryFormat conversationSummaryFormat;
+    private final DialogRetrievalCoordinator retrievalCoordinator;
     private final ThreadLocal<RedactionMemoizer> requestRedactionMemoizer = new ThreadLocal<>();
     @Autowired(required = false)
     private CustomerLongTermMemoryService customerLongTermMemoryService;
@@ -575,6 +577,7 @@ public class DialogServiceImpl {
         this.customerProfileService = customerProfileService;
         this.conversationContextAssembler = conversationContextAssembler;
         this.conversationSummaryFormat = conversationSummaryFormat;
+        this.retrievalCoordinator = new DialogRetrievalCoordinator(retrievalService);
     }
 
     public DialogServiceImpl(ConversationServiceImpl conversationService,
@@ -2702,19 +2705,8 @@ public class DialogServiceImpl {
     private RagRetrievalService.RetrievalResult retrieveKnowledge(
             String primaryQuery, List<QueryVariant> supplementalVariants,
             String conversationContext, String modalityContext) {
-        String primary = hasText(primaryQuery) ? primaryQuery.trim() : "";
-        List<QueryVariant> variants = supplementalVariants == null
-            ? Collections.emptyList() : supplementalVariants;
-        if (variants.isEmpty()) {
-            if (!hasText(conversationContext) && !hasText(modalityContext)) {
-                return retrievalService.retrieve(
-                    primary, KNOWLEDGE_RETRIEVAL_FILTERS, true);
-            }
-            return retrievalService.retrieve(primary, conversationContext, modalityContext,
-                KNOWLEDGE_RETRIEVAL_FILTERS, true);
-        }
-        return retrievalService.retrieve(primary, conversationContext, modalityContext,
-            KNOWLEDGE_RETRIEVAL_FILTERS, variants, true);
+        return retrievalCoordinator.retrieve(primaryQuery, supplementalVariants,
+            conversationContext, modalityContext, KNOWLEDGE_RETRIEVAL_FILTERS, true);
     }
 
     private List<QueryVariant> supplementalRetrievalVariants(

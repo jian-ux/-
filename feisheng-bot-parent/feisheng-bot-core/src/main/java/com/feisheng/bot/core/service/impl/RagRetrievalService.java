@@ -461,7 +461,7 @@ public class RagRetrievalService {
 
         candidates.sort(this::compareCandidates);
         RerankService.RerankDiagnostics rerankDiagnostics =
-            applyReranking(query, candidates);
+            applyReranking(query, candidates, structuredUnitRecall.diagnostics());
         candidates.sort(this::compareCandidates);
         RerankConfidenceDecision rerankConfidence = assessRerankConfidence(candidates);
         List<Map<String, Object>> selected = rerankConfidence.tier() == RerankConfidenceTier.LOW
@@ -1936,18 +1936,24 @@ public class RagRetrievalService {
     }
 
     private RerankService.RerankDiagnostics applyReranking(
-            String query, List<Map<String, Object>> candidates) {
+            String query, List<Map<String, Object>> candidates,
+            List<Map<String, Object>> structuredUnitDiagnostics) {
         if (rerankService == null) {
             return new RerankService.RerankDiagnostics(false, false, false,
                 "service_unavailable", 0, "none", null);
         }
+        if (candidates == null || candidates.isEmpty()) {
+            return firstNonNullRerankDiagnostics(rerankService.diagnostics(),
+                "no_candidates");
+        }
+        if (candidates.size() == 1 && isSafeSingleCandidateSkip(
+                candidates.get(0), structuredUnitDiagnostics)) {
+            return new RerankService.RerankDiagnostics(false, false, false,
+                "skipped_single_candidate", 0, "fused", null);
+        }
         if (!rerankService.isAvailable()) {
             return firstNonNullRerankDiagnostics(rerankService.diagnostics(),
                 "not_configured");
-        }
-        if (candidates.isEmpty()) {
-            return firstNonNullRerankDiagnostics(rerankService.diagnostics(),
-                "no_candidates");
         }
         int limit = Math.min(Math.max(candidateK, topK), candidates.size());
         List<Map<String, Object>> selected = new ArrayList<>(candidates.subList(0, limit));
@@ -1976,6 +1982,19 @@ public class RagRetrievalService {
             candidate.put("reranked", true);
         }
         return diagnostics;
+    }
+
+    private boolean isSafeSingleCandidateSkip(Map<String, Object> candidate,
+                                               List<Map<String, Object>> structuredUnitDiagnostics) {
+        if (candidate == null || (structuredUnitDiagnostics != null
+                && !structuredUnitDiagnostics.isEmpty())) {
+            return false;
+        }
+        return !isStructuredQaCandidate(candidate)
+            && number(candidate.get("structuredUnitScore")) <= 0
+            && number(candidate.get("lexicalScore")) <= 0
+            && !Boolean.TRUE.equals(candidate.get("keywordOnly"))
+            && !Boolean.TRUE.equals(candidate.get("exactMatch"));
     }
 
     private RerankService.RerankDiagnostics firstNonNullRerankDiagnostics(

@@ -1,7 +1,10 @@
 import asyncio
+from collections import OrderedDict, namedtuple
+from dataclasses import dataclass
 import hmac
 import logging
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 from functools import lru_cache
@@ -32,10 +35,174 @@ BATCH_SIZE = int(os.getenv("RERANK_BATCH_SIZE", "8"))
 CACHE_MAX_ENTRIES = max(0, int(os.getenv("RERANK_CACHE_MAX_ENTRIES", "1024")))
 SCORE_TEMPERATURE = max(0.1, float(os.getenv("RERANK_SCORE_TEMPERATURE", "1.0")))
 API_KEY = os.getenv("RERANK_API_KEY", "").strip()
+MICROBATCH_MAX_PAIRS = max(1, int(os.getenv("RERANK_MICROBATCH_MAX_PAIRS", "32")))
+MICROBATCH_MAX_WAIT_MS = max(0, int(os.getenv("RERANK_MICROBATCH_MAX_WAIT_MS", "8")))
+QUEUE_CAPACITY = max(1, int(os.getenv("RERANK_QUEUE_CAPACITY", "128")))
+WARMUP_QUERY = os.getenv("RERANK_WARMUP_QUERY", "点签电子合同是什么")
+WARMUP_DOCUMENT = os.getenv(
+    "RERANK_WARMUP_DOCUMENT", "点签是电子合同签署和管理平台。")
 
 _model: Any = None
 _torch: Any = None
-_inference_lock = asyncio.Lock()
+_warmup_complete = False
+_cache_info_type = namedtuple("CacheInfo", "hits misses maxsize currsize")
+
+
+class PredictionCache:
+    def __init__(self, max_entries: int):
+        self.max_entries = max_entries
+        self._values: OrderedDict[tuple[str, tuple[str, ...]], tuple[float, ...]] = OrderedDict()
+        self.hits = 0
+        self.misses = 0
+
+    def get(self, key: tuple[str, tuple[str, ...]]) -> tuple[tuple[float, ...] | None, bool]:
+        if self.max_entries <= 0 or key not in self._values:
+            self.misses += 1
+            return None, False
+        self.hits += 1
+        self._values.move_to_end(key)
+        return self._values[key], True
+
+    def put(self, key: tuple[str, tuple[str, ...]], value: tuple[float, ...]) -> None:
+        if self.max_entries <= 0:
+            return
+        self._values[key] = value
+        self._values.move_to_end(key)
+        while len(self._values) > self.max_entries:
+            self._values.popitem(last=False)
+
+    def clear(self) -> None:
+        self._values.clear()
+        self.hits = 0
+        self.misses = 0
+
+    def info(self):
+        return _cache_info_type(
+            self.hits, self.misses, self.max_entries, len(self._values))
+
+
+def _normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value.strip())
+
+
+def _normalized_key(query: str, documents: list[str] | tuple[str, ...]):
+    return _normalize_text(query), tuple(_normalize_text(value) for value in documents)
+
+
+_prediction_cache = PredictionCache(CACHE_MAX_ENTRIES)
+
+
+@dataclass(frozen=True)
+class BatchResult:
+    scores: list[float]
+    queue_wait_ms: float
+    inference_ms: float
+    batch_pairs: int
+
+
+@dataclass
+class _BatchJob:
+    query: str
+    documents: tuple[str, ...]
+    submitted_at: float
+    future: asyncio.Future
+
+
+class InferenceBatcher:
+    def __init__(self, predict_fn, max_pairs: int, max_wait_ms: int, queue_capacity: int):
+        self.predict_fn = predict_fn
+        self.max_pairs = max(1, max_pairs)
+        self.max_wait_ms = max(0, max_wait_ms)
+        self.queue: asyncio.Queue[_BatchJob | None] = asyncio.Queue(maxsize=max(1, queue_capacity))
+        self._task: asyncio.Task | None = None
+        self._pending: _BatchJob | None = None
+        self.batches = 0
+        self.processed_pairs = 0
+        self.rejected = 0
+
+    async def start(self) -> None:
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._run())
+
+    async def stop(self) -> None:
+        if self._task is None:
+            return
+        await self.queue.put(None)
+        await self._task
+        self._task = None
+
+    async def submit(self, query: str, documents: list[str] | tuple[str, ...]) -> BatchResult:
+        if self._task is None or self._task.done():
+            raise RuntimeError("inference batcher is not running")
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        job = _BatchJob(query, tuple(documents), time.perf_counter(), future)
+        try:
+            self.queue.put_nowait(job)
+        except asyncio.QueueFull:
+            self.rejected += 1
+            raise
+        return await future
+
+    async def _run(self) -> None:
+        stopping = False
+        while True:
+            job = self._pending
+            self._pending = None
+            if job is None:
+                job = await self.queue.get()
+            if job is None:
+                return
+
+            jobs = [job]
+            pair_count = len(job.documents)
+            deadline = time.perf_counter() + self.max_wait_ms / 1000
+            while pair_count < self.max_pairs and self.max_wait_ms > 0:
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0:
+                    break
+                try:
+                    next_job = await asyncio.wait_for(self.queue.get(), remaining)
+                except asyncio.TimeoutError:
+                    break
+                if next_job is None:
+                    stopping = True
+                    break
+                if pair_count + len(next_job.documents) > self.max_pairs and jobs:
+                    self._pending = next_job
+                    break
+                jobs.append(next_job)
+                pair_count += len(next_job.documents)
+
+            pairs = [
+                (current.query, document)
+                for current in jobs for document in current.documents]
+            started = time.perf_counter()
+            try:
+                scores = [float(value) for value in await self.predict_fn(pairs)]
+                inference_ms = (time.perf_counter() - started) * 1000
+                offset = 0
+                for current in jobs:
+                    size = len(current.documents)
+                    current_scores = scores[offset:offset + size]
+                    offset += size
+                    _prediction_cache.put(
+                        _normalized_key(current.query, current.documents),
+                        tuple(current_scores))
+                    if not current.future.done():
+                        current.future.set_result(BatchResult(
+                            current_scores,
+                            (started - current.submitted_at) * 1000,
+                            inference_ms,
+                            len(pairs)))
+                self.batches += 1
+                self.processed_pairs += len(pairs)
+            except Exception as error:
+                for current in jobs:
+                    if not current.future.done():
+                        current.future.set_exception(error)
+            if stopping:
+                return
 
 
 class RerankRequest(BaseModel):
@@ -62,7 +229,7 @@ class RerankRequest(BaseModel):
 
 
 def _load_model() -> None:
-    global _model, _torch
+    global _model, _torch, _warmup_complete
     import torch
     from sentence_transformers import CrossEncoder
 
@@ -90,14 +257,20 @@ def _load_model() -> None:
         },
     )
     _torch = torch
-    _predict_cached.cache_clear()
+    _prediction_cache.clear()
+    _warm_model()
+    _warmup_complete = True
     log.info("Reranker ready")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await asyncio.to_thread(_load_model)
-    yield
+    await _batcher.start()
+    try:
+        yield
+    finally:
+        await _batcher.stop()
 
 
 app = FastAPI(title="Qwen3 Reranker", version="1.0.0", lifespan=lifespan)
@@ -108,9 +281,23 @@ def _authorize(authorization: str | None) -> None:
         raise HTTPException(status_code=401, detail="Invalid bearer token")
 
 
-@lru_cache(maxsize=CACHE_MAX_ENTRIES)
 def _predict_cached(query: str, documents: tuple[str, ...]) -> tuple[float, ...]:
-    pairs = [(query, document) for document in documents]
+    normalized_query, normalized_documents = _normalized_key(query, documents)
+    key = normalized_query, normalized_documents
+    cached, cache_hit = _prediction_cache.get(key)
+    if cache_hit:
+        return cached
+    scores = _predict_pairs([
+        (normalized_query, document) for document in normalized_documents])
+    _prediction_cache.put(key, scores)
+    return scores
+
+
+_predict_cached.cache_clear = _prediction_cache.clear
+_predict_cached.cache_info = _prediction_cache.info
+
+
+def _predict_pairs(pairs: list[tuple[str, str]]) -> tuple[float, ...]:
     scores = _model.predict(
         pairs,
         prompt=INSTRUCTION,
@@ -123,11 +310,53 @@ def _predict_cached(query: str, documents: tuple[str, ...]) -> tuple[float, ...]
     return tuple(float(score) for score in scores)
 
 
+def _warm_model() -> None:
+    if _model is not None:
+        _predict_pairs([(WARMUP_QUERY, WARMUP_DOCUMENT)])
+
+
 def _predict(query: str, documents: list[str]) -> tuple[list[float], bool]:
-    hits_before = _predict_cached.cache_info().hits
-    scores = _predict_cached(query, tuple(documents))
-    cache_hit = _predict_cached.cache_info().hits > hits_before
-    return list(scores), cache_hit
+    normalized_query, normalized_documents = _normalized_key(query, documents)
+    key = normalized_query, normalized_documents
+    cached, cache_hit = _prediction_cache.get(key)
+    if cache_hit:
+        return list(cached), True
+    scores = _predict_pairs([
+        (normalized_query, document) for document in normalized_documents])
+    _prediction_cache.put(key, scores)
+    return list(scores), False
+
+
+async def _predict_batch(pairs: list[tuple[str, str]]) -> tuple[float, ...]:
+    return await asyncio.to_thread(_predict_pairs, pairs)
+
+
+_batcher = InferenceBatcher(
+    _predict_batch,
+    max_pairs=MICROBATCH_MAX_PAIRS,
+    max_wait_ms=MICROBATCH_MAX_WAIT_MS,
+    queue_capacity=QUEUE_CAPACITY,
+)
+
+
+def _format_response(model: str, scores: list[float], cache_hit: bool,
+                     queue_wait_ms: float = 0, inference_ms: float = 0,
+                     cache_lookup_ms: float = 0, total_ms: float = 0,
+                     batch_pairs: int = 0) -> dict[str, Any]:
+    ranked = sorted(enumerate(scores), key=lambda item: item[1], reverse=True)
+    return {
+        "model": model,
+        "cache_hit": cache_hit,
+        "cache_lookup_ms": round(cache_lookup_ms, 2),
+        "queue_wait_ms": round(queue_wait_ms, 2),
+        "inference_ms": round(inference_ms, 2),
+        "latency_ms": round(total_ms, 2),
+        "batch_pairs": batch_pairs,
+        "results": [
+            {"index": index, "relevance_score": score}
+            for index, score in ranked
+        ],
+    }
 
 
 @app.get("/health")
@@ -135,7 +364,7 @@ def health() -> dict[str, Any]:
     gpu = None
     if _torch is not None and _torch.cuda.is_available():
         gpu = _torch.cuda.get_device_name(0)
-    cache_info = _predict_cached.cache_info()
+    cache_info = _prediction_cache.info()
     return {
         "status": "ok" if _model is not None else "loading",
         "model": MODEL_ID,
@@ -144,6 +373,18 @@ def health() -> dict[str, Any]:
         "score_temperature": SCORE_TEMPERATURE,
         "max_length": MAX_LENGTH,
         "batch_size": BATCH_SIZE,
+        "warmup_complete": _warmup_complete,
+        "queue": {
+            "capacity": _batcher.queue.maxsize,
+            "depth": _batcher.queue.qsize(),
+            "max_pairs": _batcher.max_pairs,
+            "max_wait_ms": _batcher.max_wait_ms,
+        },
+        "metrics": {
+            "batches": _batcher.batches,
+            "processed_pairs": _batcher.processed_pairs,
+            "rejected": _batcher.rejected,
+        },
         "cache": {
             "max_entries": CACHE_MAX_ENTRIES,
             "entries": cache_info.currsize,
@@ -168,18 +409,32 @@ async def rerank(
         )
 
     started = time.perf_counter()
-    async with _inference_lock:
-        scores, cache_hit = await asyncio.to_thread(
-            _predict, request.query, request.documents)
-
-    top_n = min(request.top_n or len(scores), len(scores))
-    ranked = sorted(enumerate(scores), key=lambda item: item[1], reverse=True)[:top_n]
-    return {
-        "model": MODEL_ID,
-        "cache_hit": cache_hit,
-        "latency_ms": round((time.perf_counter() - started) * 1000, 2),
-        "results": [
-            {"index": index, "relevance_score": score}
-            for index, score in ranked
-        ],
-    }
+    lookup_started = time.perf_counter()
+    normalized_query, normalized_documents = _normalized_key(
+        request.query, request.documents)
+    cache_key = normalized_query, normalized_documents
+    cached, cache_hit = _prediction_cache.get(cache_key)
+    cache_lookup_ms = (time.perf_counter() - lookup_started) * 1000
+    if cache_hit:
+        scores = list(cached)
+        result = _format_response(
+            MODEL_ID, scores, True, cache_lookup_ms=cache_lookup_ms,
+            total_ms=(time.perf_counter() - started) * 1000)
+    else:
+        if _batcher._task is None or _batcher._task.done():
+            raise HTTPException(status_code=503, detail="Inference worker is not ready")
+        try:
+            batch_result = await _batcher.submit(
+                normalized_query, normalized_documents)
+        except asyncio.QueueFull:
+            raise HTTPException(status_code=503, detail="Inference queue is full")
+        result = _format_response(
+            MODEL_ID, batch_result.scores, False,
+            queue_wait_ms=batch_result.queue_wait_ms,
+            inference_ms=batch_result.inference_ms,
+            cache_lookup_ms=cache_lookup_ms,
+            total_ms=(time.perf_counter() - started) * 1000,
+            batch_pairs=batch_result.batch_pairs)
+    if request.top_n is not None:
+        result["results"] = result["results"][:min(request.top_n, len(result["results"]))]
+    return result

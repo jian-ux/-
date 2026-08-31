@@ -134,7 +134,7 @@ rag:
   retrieval:
     pipeline-version: ${RAG_PIPELINE_VERSION:rag-corrective-evidence-v2}
     top-k: ${RAG_TOP_K:3}
-    candidate-k: ${RAG_CANDIDATE_K:10}
+    candidate-k: ${RAG_CANDIDATE_K:6}
     direct-threshold: ${RAG_DIRECT_THRESHOLD:0.82}
     context-threshold: ${RAG_CONTEXT_THRESHOLD:0.50}
     lexical-threshold: ${RAG_LEXICAL_THRESHOLD:0.72}
@@ -164,8 +164,8 @@ rag:
     model: ${RAG_RERANK_MODEL:Qwen/Qwen3-Reranker-0.6B}
     connect-timeout-ms: ${RAG_RERANK_CONNECT_TIMEOUT_MS:1000}
     read-timeout-ms: ${RAG_RERANK_READ_TIMEOUT_MS:15000}
-    max-candidates: ${RAG_RERANK_MAX_CANDIDATES:10}
-    max-document-chars: ${RAG_RERANK_MAX_DOCUMENT_CHARS:2000}
+    max-candidates: ${RAG_RERANK_MAX_CANDIDATES:6}
+    max-document-chars: ${RAG_RERANK_MAX_DOCUMENT_CHARS:1200}
     confidence:
       high-min-score: ${RAG_RERANK_HIGH_MIN_SCORE:0.65}
       high-min-gap: ${RAG_RERANK_HIGH_MIN_GAP:0.08}

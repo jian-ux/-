@@ -112,6 +112,24 @@ class RagRetrievalServiceTest {
     }
 
     @Test
+    void skipsRerankWhenOnlyOneCandidateRemains() {
+        String query = "年假有几天";
+        when(faqMatchService.match(query, true)).thenReturn(Collections.emptyMap());
+        when(embeddingService.isAvailable()).thenReturn(true);
+        when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
+        when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
+            .thenReturn(List.of(chunk(9L, 4L, "员工手册", 0.74)));
+
+        RagRetrievalService.RetrievalResult result = service.retrieve(query);
+
+        assertTrue(result.answerable());
+        assertEquals("skipped_single_candidate",
+            result.rerankDiagnostics().get("failureReason"));
+        verify(rerankService, never()).isAvailable();
+        verify(rerankService, never()).rerank(anyString(), anyList());
+    }
+
+    @Test
     void promotesConcretePriceEvidenceWhenRerankerIsUnavailable() {
         String query = "点签企业版多少钱？";
         ReflectionTestUtils.setField(service, "contextThreshold", 0.50);
@@ -820,7 +838,9 @@ class RagRetrievalServiceTest {
         when(embeddingService.isAvailable()).thenReturn(true);
         when(embeddingService.embed(query)).thenReturn(List.of(1.0, 0.0));
         when(knowledgeClient.semanticMatch(query, List.of(1.0, 0.0), 10))
-            .thenReturn(List.of(chunk(3L, 10L, "合同归档流程", 0.79)));
+            .thenReturn(List.of(
+                chunk(3L, 10L, "合同归档流程", 0.79),
+                chunk(4L, 10L, "合同管理", 0.77)));
         when(rerankService.isAvailable()).thenReturn(true);
         when(rerankService.rerank(eq(query), anyList())).thenReturn(Collections.emptyMap());
 

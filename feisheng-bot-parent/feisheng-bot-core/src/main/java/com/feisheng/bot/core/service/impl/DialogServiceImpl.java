@@ -840,12 +840,20 @@ public class DialogServiceImpl {
             && !isClearlyUnrelatedQuestion(understandingText)
             && !isExplicitlyUnrelatedNativeRequest(understandingText)
             && shouldUnderstandIntentBeforeRetrieval(
-                understandingText, recentMessages, directIntent);
+                understandingText, recentMessages, directIntent,
+                hasText(customerHistoryContext));
         if (canUseSemanticUnderstanding) {
             semanticUnderstanding = understandIntent(
-                understandingText, recentMessages, preferredModelId,
+                understandingText, semanticHistoryMessages(
+                    recentMessages, customerHistoryContext), preferredModelId,
                 conversationStateService.modelContext(conversationState));
             modelLatencyMs += semanticUnderstanding.latencyMs();
+        }
+        if (isHistoryRecall(semanticUnderstanding)) {
+            return historyRecallResponse(
+                conversation, preCheck, recentMessages, safeText,
+                customerHistoryContext, emotion, started, redactedTypes,
+                promptVersion, semanticUnderstanding, modelLatencyMs);
         }
         ConversationStateService.MergeResult stateMerge = conversationStateService.merge(
             conversationState, understandingText, semanticUnderstanding, directIntent);
@@ -1088,7 +1096,8 @@ public class DialogServiceImpl {
                 && nlpIntent.intentCode() == NlpIntentClassifier.IntentCode.UNKNOWN
                 && !semanticUnderstanding.attempted()) {
             semanticUnderstanding = understandIntent(
-                understandingText, recentMessages, preferredModelId);
+                understandingText, semanticHistoryMessages(
+                    recentMessages, customerHistoryContext), preferredModelId);
             modelLatencyMs += semanticUnderstanding.latencyMs();
             if (semanticUnderstanding.outOfScope()) {
                 outOfScopeQuestion = true;
@@ -2210,6 +2219,94 @@ public class DialogServiceImpl {
         return response;
     }
 
+    private boolean isHistoryRecall(IntentUnderstandingService.Understanding understanding) {
+        return understanding != null && understanding.actionable()
+            && "HISTORY_RECALL".equals(understanding.intentCode());
+    }
+
+    private Map<String, Object> historyRecallResponse(
+            BotConversation conversation, SafetyResult preCheck,
+            List<BotMessage> recentMessages, String currentText,
+            String customerHistoryContext, EmotionService.EmotionResult emotion,
+            long started, Set<String> redactedTypes, String promptVersion,
+            IntentUnderstandingService.Understanding understanding,
+            long modelLatencyMs) {
+        String previousQuestion = previousUserQuestion(recentMessages, currentText);
+        String latestAnswer = latestAiReply(recentMessages);
+        String focus = hasText(understanding.standaloneQuery())
+            ? understanding.standaloneQuery() : "相关问题";
+        String reply;
+        if (hasText(previousQuestion) && hasText(latestAnswer)) {
+            reply = "根据历史记录，您之前咨询的是：“" + previousQuestion + "”。"
+                + "当时客服给出的答复是：“" + latestAnswer + "”。"
+                + "但当前历史记录没有记录您最终选择的具体方案或结果。";
+        } else if (hasText(previousQuestion)) {
+            reply = "根据历史记录，您之前咨询的是：“" + previousQuestion + "”。"
+                + "当前历史记录没有记录您最终选择的具体方案或结果。";
+        } else if (hasText(customerHistoryContext)) {
+            reply = "根据客户历史记录，您之前咨询过“" + focus + "”。"
+                + "当前历史记录没有记录您最终选择的具体方案或结果。";
+        } else {
+            reply = "当前会话历史里可以确认您咨询过“" + focus + "”，"
+                + "但没有记录您最终选择的具体方案或结果。";
+        }
+        reply = PlainTextReplyFormatter.format(reply);
+        SafetyResult postCheck = safetyService.checkAiOutput(reply);
+        String source = "conversation_context";
+        String answerStatus = "answered";
+        AnswerDecision decision = AnswerDecision.ANSWER;
+        if (postCheck.isBlocked()) {
+            source = "safety";
+            answerStatus = "blocked";
+            decision = AnswerDecision.HANDOFF;
+            reply = "抱歉，历史回顾需要人工客服进一步确认。";
+        }
+
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("answerStatus", answerStatus);
+        metadata.put("answerDecision", decision.name());
+        metadata.put("source", source);
+        metadata.put("answerMode", "conversation_context");
+        metadata.put("fallbackDecision", "history_recall");
+        metadata.put("emotion", emotionDetails(emotion));
+        metadata.put("promptVersion", promptVersion);
+        metadata.put("intentUnderstanding", intentUnderstandingDetails(understanding));
+        metadata.put("modelLatencyMs", modelLatencyMs);
+        metadata.put("redactionApplied", !redactedTypes.isEmpty());
+        saveMessage(conversation.getId(), "ai", reply, toJson(metadata));
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("reply", reply);
+        response.put("conversationId", conversation.getId());
+        response.put("source", source);
+        response.put("answerStatus", answerStatus);
+        response.put("answerMode", "conversation_context");
+        response.put("answerDecision", decision.name());
+        response.put("fallbackDecision", "history_recall");
+        response.put("safetyPreCheck", safetyDetails(preCheck));
+        response.put("confidence", understanding.confidence());
+        response.put("citations", Collections.emptyList());
+        response.put("attachments", Collections.emptyList());
+        response.put("ragSource", false);
+        response.put("ragContextChars", 0);
+        response.put("retrieval", Map.of(
+            "decision", "conversation_context", "semanticAvailable", false,
+            "candidates", Collections.emptyList()));
+        response.put("retrievalContextUsed", false);
+        response.put("retrievalHistoryUsed", false);
+        response.put("needsTransfer", decision == AnswerDecision.HANDOFF);
+        response.put("lowConfidence", false);
+        response.put("emotion", emotionDetails(emotion));
+        response.put("promptVersion", promptVersion);
+        response.put("intentUnderstanding", intentUnderstandingDetails(understanding));
+        response.put("stageLatencies", Map.of(
+            "retrievalMs", 0L, "modelMs", modelLatencyMs,
+            "dialogTotalMs", Math.max(0L, System.currentTimeMillis() - started)));
+        addRedactionDetails(response, redactedTypes);
+        response.put("latencyMs", System.currentTimeMillis() - started);
+        return response;
+    }
+
     private Map<String, Object> toolResponse(
             BotConversation conversation, SafetyResult preCheck,
             BusinessToolOrchestrator.ToolRoutingResult toolRouting,
@@ -2839,7 +2936,8 @@ public class DialogServiceImpl {
 
     private boolean shouldUnderstandIntentBeforeRetrieval(
             String question, List<BotMessage> recentMessages,
-            NlpIntentClassifier.IntentAnalysis directIntent) {
+            NlpIntentClassifier.IntentAnalysis directIntent,
+            boolean customerHistoryAvailable) {
         if (eagerIntentUnderstandingEnabled) return true;
         if (!hasText(question)) return false;
         ContextualQueryResolver.Resolution deterministic =
@@ -2849,7 +2947,38 @@ public class DialogServiceImpl {
         if (directIntent != null
                 && directIntent.intentCode() != NlpIntentClassifier.IntentCode.UNKNOWN
                 && !directIntent.needsClarification()) return false;
+        // An unresolved question inside an existing conversation needs one
+        // semantic pass so the model can distinguish a historical recall from
+        // a new knowledge request. This is intentionally state-based rather
+        // than another list of lexical intent rules.
+        if (directIntent != null
+                && directIntent.intentCode() == NlpIntentClassifier.IntentCode.UNKNOWN
+                && (hasPriorConversationTurn(recentMessages) || customerHistoryAvailable)) return true;
         return false;
+    }
+
+    private List<BotMessage> semanticHistoryMessages(
+            List<BotMessage> recentMessages, String customerHistoryContext) {
+        if (!hasText(customerHistoryContext)) return recentMessages;
+        List<BotMessage> combined = new ArrayList<>();
+        if (recentMessages != null) combined.addAll(recentMessages);
+        BotMessage historicalContext = new BotMessage();
+        historicalContext.setRole("ai");
+        historicalContext.setContent("【客户历史上下文】\n" + customerHistoryContext);
+        combined.add(historicalContext);
+        return combined;
+    }
+
+    private boolean hasPriorConversationTurn(List<BotMessage> messages) {
+        if (messages == null || messages.size() < 2) return false;
+        boolean user = false;
+        boolean ai = false;
+        for (BotMessage message : messages) {
+            if (message == null || !hasText(message.getContent())) continue;
+            if ("user".equalsIgnoreCase(message.getRole())) user = true;
+            if ("ai".equalsIgnoreCase(message.getRole())) ai = true;
+        }
+        return user && ai;
     }
 
     private IntentUnderstandingService.Understanding understandIntent(

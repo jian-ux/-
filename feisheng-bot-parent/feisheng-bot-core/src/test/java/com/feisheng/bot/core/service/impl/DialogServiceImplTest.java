@@ -1235,6 +1235,31 @@ class DialogServiceImplTest {
     }
 
     @Test
+    void routesSemanticHistoryRecallWithoutKnowledgeRetrievalOrEvidenceRetry() {
+        String question = "我忘记我之前是哪个认证了？";
+        when(messageService.getByConversation(10L)).thenReturn(List.of(
+            message("user", "您好，我是海南飞晟科技有限公司的，怎么完成企业认证？"),
+            message("ai", "企业认证有法人认证、授权书认证和对公打款认证三种方式。"),
+            message("user", question)));
+        when(intentUnderstandingService.understand(eq(question), anyList(), isNull()))
+            .thenReturn(new IntentUnderstandingService.Understanding(
+                true, true, IntentUnderstandingService.Route.KNOWLEDGE,
+                "HISTORY_RECALL", "企业认证", Map.of(), List.of(), true,
+                0.96, "semantic_understanding", "intent-model", "test", 20, 8, 12L));
+
+        Map<String, Object> result = dialogService.send(
+            "dingtalk", "history-recall", question, "咨询");
+
+        verify(intentUnderstandingService).understand(eq(question), anyList(), isNull());
+        assertEquals("conversation_context", result.get("source"));
+        assertEquals("history_recall", result.get("fallbackDecision"));
+        assertTrue(((String) result.get("reply")).contains("企业认证"));
+        assertTrue(((String) result.get("reply")).contains("没有记录"));
+        verify(retrievalService, never()).retrieve(anyString());
+        verify(aiModelService, never()).chatWithModel(anyString(), anyString(), any());
+    }
+
+    @Test
     void retriesIndependentUnknownQuestionWithSemanticStandaloneQuery() {
         String question = "适合哪些团队使用";
         String rewritten = "点签电子合同适合哪些团队使用？";

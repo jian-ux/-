@@ -171,6 +171,11 @@ public class ConversationStateService {
         Map<?, ?> pendingMap = map(response.get("pendingClarification"));
         String semanticIntent = text(semantic, "intentCode");
         String deterministicIntent = text(deterministic, "intentCode");
+        if ("HISTORY_RECALL".equals(semanticIntent)) {
+            // Recalling history is informational and must not replace the
+            // active business topic for the next customer turn.
+            return existing;
+        }
         String activeIntent = usefulIntent(semanticIntent)
             ? semanticIntent : usefulIntent(deterministicIntent)
             ? deterministicIntent : existing.activeIntent();
@@ -376,7 +381,7 @@ public class ConversationStateService {
 
     private boolean usefulIntent(String value) {
         return hasText(value) && !"UNKNOWN".equals(value) && !"OUT_OF_SCOPE".equals(value)
-            && !"OTHER_KNOWLEDGE".equals(value);
+            && !"OTHER_KNOWLEDGE".equals(value) && !"HISTORY_RECALL".equals(value);
     }
 
     private String normalize(String value) {

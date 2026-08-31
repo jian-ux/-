@@ -45,7 +45,7 @@ public class IntentUnderstandingService {
         "SYSTEM_INTEGRATION",
         "PRODUCT_FEATURES", "PRODUCT_OVERVIEW", "PRODUCT_VERSION_FEATURES",
         "PRODUCT_USAGE", "ACCOUNT_OPERATION", "OTHER_KNOWLEDGE",
-        "OUT_OF_SCOPE", "UNKNOWN");
+        "HISTORY_RECALL", "OUT_OF_SCOPE", "UNKNOWN");
     private static final Set<String> INTENT_CODES = Set.copyOf(INTENT_CODE_VALUES);
     private static final List<String> MISSING_SLOT_VALUES = List.of(
         "contract_type", "operation", "account_action", "user_type",
@@ -82,8 +82,11 @@ public class IntentUnderstandingService {
         9. PRODUCT_OVERVIEW：点签是什么、做什么、介绍、优势或场景。
         10. PRODUCT_USAGE：查看、下载等其他产品功能怎么使用；不含签署动作和账号操作。
         11. OTHER_KNOWLEDGE：业务相关但无对应细分类，例如提醒、保存期限。
-        12. OUT_OF_SCOPE：明确无关。
-        13. UNKNOWN：history 和 conversation_state 都无法帮助判断所指对象或操作。
+        12. HISTORY_RECALL：本轮明确是在回顾客户曾经咨询、收到过什么答复、做过什么选择或尚未确认的历史；
+            standalone_query 只写要回顾的主题，不要改写成知识库检索问题。历史回顾必须只依据 history、
+            conversation_state 或客户历史上下文，不得把客服建议当成客户已做出的选择。
+        13. OUT_OF_SCOPE：明确无关。
+        14. UNKNOWN：history 和 conversation_state 都无法帮助判断所指对象或操作。
 
         关键对照：
         - “如何把合同发给对方签字”是 CONTRACT_SIGNING_OPERATION；“从哪里下载已完成文件”是 PRODUCT_USAGE。
@@ -133,6 +136,8 @@ public class IntentUnderstandingService {
         输出 {"route":"KNOWLEDGE","intent_code":"SYSTEM_INTEGRATION","standalone_query":"点签电子签章是否支持通过 API 集成到 ERP 系统？","entities":{"business_system":"ERP"},"missing_slots":[],"context_dependent":true,"confidence":0.95}
         输入 {"current_question":"那旗舰版呢？","history":[{"role":"user","content":"专业版到期后还能继续用吗？"},{"role":"ai","content":"需要查看版本期限规则。"}]}
         输出 {"route":"KNOWLEDGE","intent_code":"PRODUCT_VERSION_FEATURES","standalone_query":"旗舰版到期后还能继续用吗？","entities":{"product_version":"旗舰版"},"missing_slots":[],"context_dependent":true,"confidence":0.95}
+        输入 {"current_question":"我忘记我之前是哪个认证了？","history":[{"role":"user","content":"怎么完成企业认证？"},{"role":"ai","content":"企业认证有三种方式。"}]}
+        输出 {"route":"KNOWLEDGE","intent_code":"HISTORY_RECALL","standalone_query":"企业认证","entities":{},"missing_slots":[],"context_dependent":true,"confidence":0.95}
         输入 {"current_question":"推荐一部电影。","history":[]}
         输出 {"route":"OUT_OF_SCOPE","intent_code":"OUT_OF_SCOPE","standalone_query":"","entities":{},"missing_slots":[],"context_dependent":false,"confidence":0.99}
         """;

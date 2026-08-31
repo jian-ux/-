@@ -134,6 +134,30 @@ class ConversationStateServiceTest {
         assertEquals("这个怎么操作", state.path("pending").path("sourceQuestion").asText());
     }
 
+    @Test
+    void keepsActiveTopicWhenSynchronizingHistoryRecall() throws Exception {
+        BotConversation conversation = conversation(10L, 3L, """
+            {"schemaVersion":1,"status":"ACTIVE",\
+             "activeIntent":"SYSTEM_INTEGRATION","entities":{"business_system":"CRM"},\
+             "missingSlots":[],"standaloneQuery":"点签可以集成CRM吗？",\
+             "pending":null,"clarificationAttempts":0,"remainingTurns":3}
+        """);
+        when(conversationService.getById(10L)).thenReturn(conversation);
+
+        service.synchronizeResponse(Map.of(
+            "conversationId", 10L,
+            "answerDecision", "ANSWER",
+            "intentUnderstanding", Map.of(
+                "intentCode", "HISTORY_RECALL", "standaloneQuery", "企业认证")),
+            "我之前咨询过哪个认证？");
+
+        verify(conversationService, org.mockito.Mockito.never()).updateDialogState(
+            eq(conversation), org.mockito.ArgumentMatchers.anyString(), eq(3L));
+        JsonNode state = objectMapper.readTree(conversation.getDialogState());
+        assertEquals("SYSTEM_INTEGRATION", state.path("activeIntent").asText());
+        assertEquals("CRM", state.path("entities").path("business_system").asText());
+    }
+
     private BotConversation conversation(Long id, Long version, String state) {
         BotConversation conversation = new BotConversation();
         conversation.setId(id);

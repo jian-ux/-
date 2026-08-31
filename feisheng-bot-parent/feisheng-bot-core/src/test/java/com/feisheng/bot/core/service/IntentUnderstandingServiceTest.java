@@ -65,6 +65,27 @@ class IntentUnderstandingServiceTest {
     }
 
     @Test
+    void acceptsHistoryRecallAsSemanticKnowledgeRoute() {
+        IntentUnderstandingService service = service(true, 0.75, 4, 7L);
+        when(aiModelService.chatWithExactModelJson(
+                anyString(), anyString(), eq(7L), anyMap()))
+            .thenReturn(response("""
+                {"route":"KNOWLEDGE","intent_code":"HISTORY_RECALL",
+                "standalone_query":"企业认证","entities":{},"missing_slots":[],
+                "context_dependent":true,"confidence":0.95}
+                """));
+
+        IntentUnderstandingService.Understanding result = service.understand(
+            "我忘记我之前是哪个认证了？", List.of(
+                message("user", "怎么完成企业认证？"),
+                message("ai", "企业认证有三种方式。")), null);
+
+        assertTrue(result.knowledge());
+        assertEquals("HISTORY_RECALL", result.intentCode());
+        assertEquals("企业认证", result.standaloneQuery());
+    }
+
+    @Test
     void rejectsLowConfidenceResultWithoutLosingDiagnostics() {
         IntentUnderstandingService service = service(true, 0.75, 4, 7L);
         when(aiModelService.chatWithExactModelJson(

@@ -174,8 +174,15 @@ const profileText = computed(() => {
   if (!customer.value?.profileJson) return '暂无已确认画像'
   try {
     const parsed = JSON.parse(customer.value.profileJson)
+    const profileFieldLabels = {
+      company: '公司',
+      role: '角色',
+      product: '产品',
+      plan: '方案',
+      channel: '渠道'
+    }
     return Object.entries(parsed)
-      .map(([key, value]) => `${key}: ${value?.value || value}`)
+      .map(([key, value]) => `${profileFieldLabels[key] || key}: ${value?.value || value}`)
       .join('\n') || '暂无已确认画像'
   } catch (_) {
     return customer.value.profileJson

@@ -1,6 +1,6 @@
 package com.feisheng.bot.core.service;
 
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.feisheng.bot.core.entity.BotMemoryOutboxEvent;
 import com.feisheng.bot.core.mapper.BotMemoryOutboxEventMapper;
 import org.springframework.stereotype.Service;
@@ -63,11 +63,11 @@ public class CustomerMemoryOutboxWorker {
                     || mapper.claim(event.getId(), leaseSeconds) != 1) continue;
             try {
                 processEvent(event);
-                mapper.update(null, new LambdaUpdateWrapper<BotMemoryOutboxEvent>()
-                    .eq(BotMemoryOutboxEvent::getId, event.getId())
-                    .set(BotMemoryOutboxEvent::getStatus, "DONE")
-                    .set(BotMemoryOutboxEvent::getProcessedAt, new Date())
-                    .set(BotMemoryOutboxEvent::getLockedUntil, null));
+                mapper.update(null, new UpdateWrapper<BotMemoryOutboxEvent>()
+                    .eq("id", event.getId())
+                    .set("status", "DONE")
+                    .set("processed_at", new Date())
+                    .set("locked_until", null));
                 processed++;
                 processedCount.incrementAndGet();
             } catch (RuntimeException failure) {
@@ -101,26 +101,26 @@ public class CustomerMemoryOutboxWorker {
         int nextAttempts = attempts + 1;
         if (nextAttempts >= maxAttempts) {
             failedCount.incrementAndGet();
-            mapper.update(null, new LambdaUpdateWrapper<BotMemoryOutboxEvent>()
-                .eq(BotMemoryOutboxEvent::getId, event.getId())
-                .set(BotMemoryOutboxEvent::getStatus, "FAILED")
-                .set(BotMemoryOutboxEvent::getAttempts, nextAttempts)
-                .set(BotMemoryOutboxEvent::getLastErrorCode, failure.getClass().getSimpleName())
-                .set(BotMemoryOutboxEvent::getLastErrorMessage, safeMessage(failure))
-                .set(BotMemoryOutboxEvent::getLockedUntil, null));
+            mapper.update(null, new UpdateWrapper<BotMemoryOutboxEvent>()
+                .eq("id", event.getId())
+                .set("status", "FAILED")
+                .set("attempts", nextAttempts)
+                .set("last_error_code", failure.getClass().getSimpleName())
+                .set("last_error_message", safeMessage(failure))
+                .set("locked_until", null));
             return;
         }
         retryCount.incrementAndGet();
         long delaySeconds = Math.min(300L, 1L << Math.min(8, nextAttempts));
-        mapper.update(null, new LambdaUpdateWrapper<BotMemoryOutboxEvent>()
-            .eq(BotMemoryOutboxEvent::getId, event.getId())
-            .set(BotMemoryOutboxEvent::getStatus, "PENDING")
-            .set(BotMemoryOutboxEvent::getAttempts, nextAttempts)
-            .set(BotMemoryOutboxEvent::getAvailableAt,
+        mapper.update(null, new UpdateWrapper<BotMemoryOutboxEvent>()
+            .eq("id", event.getId())
+            .set("status", "PENDING")
+            .set("attempts", nextAttempts)
+            .set("available_at",
                 Date.from(Instant.now().plus(Duration.ofSeconds(delaySeconds))))
-            .set(BotMemoryOutboxEvent::getLastErrorCode, failure.getClass().getSimpleName())
-            .set(BotMemoryOutboxEvent::getLastErrorMessage, safeMessage(failure))
-            .set(BotMemoryOutboxEvent::getLockedUntil, null));
+            .set("last_error_code", failure.getClass().getSimpleName())
+            .set("last_error_message", safeMessage(failure))
+            .set("locked_until", null));
     }
 
     private String safeMessage(RuntimeException failure) {

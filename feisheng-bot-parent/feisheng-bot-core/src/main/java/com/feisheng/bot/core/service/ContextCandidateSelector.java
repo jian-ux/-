@@ -41,8 +41,8 @@ public class ContextCandidateSelector {
                 .sorted(Comparator.comparing(BotMessage::getCreateTime, Comparator.nullsLast(Comparator.reverseOrder()))
                         .thenComparing(BotMessage::getId, Comparator.reverseOrder()))
                 .forEach(message -> {
-                    Long sessionId = message.getConversationId() == null ? conversationId : message.getConversationId();
-                    if (conversationId != null && sessionId != null && !conversationId.equals(sessionId)) return;
+                    Long sessionId = message.getConversationId();
+                    if (conversationId == null || sessionId == null || !conversationId.equals(sessionId)) return;
                     String id = "message:" + message.getId();
                     candidates.putIfAbsent(id, new ContextCandidate(id, "recent_message", message.getContent().trim(),
                             sessionId, message.getId(), channelType, channelUserId, 1D,

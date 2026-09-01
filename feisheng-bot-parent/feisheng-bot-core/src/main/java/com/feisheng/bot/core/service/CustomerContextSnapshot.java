@@ -50,5 +50,15 @@ public record CustomerContextSnapshot(
             createdAt = createdAt == null ? null : new Date(createdAt.getTime());
             expiresAt = expiresAt == null ? null : new Date(expiresAt.getTime());
         }
+
+        @Override
+        public Date createdAt() {
+            return createdAt == null ? null : new Date(createdAt.getTime());
+        }
+
+        @Override
+        public Date expiresAt() {
+            return expiresAt == null ? null : new Date(expiresAt.getTime());
+        }
     }
 }

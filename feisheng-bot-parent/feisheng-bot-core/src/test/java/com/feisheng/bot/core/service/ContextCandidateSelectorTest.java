@@ -92,6 +92,31 @@ class ContextCandidateSelectorTest {
         assertEquals(200L, candidate.expiresAt().getTime());
     }
 
+    @Test
+    void rejectsRecentMessagesWithoutAnExactConversationMatch() {
+        BotMessage missingConversation = message(21L, null, "user", "来源不明", new Date());
+        BotMessage anotherConversation = message(22L, 99L, "user", "其他会话", new Date());
+
+        List<ContextCandidate> candidates = new ContextCandidateSelector().select(
+                "web", "customer-1", 7L, "当前问题", null,
+                List.of(missingConversation, anotherConversation), CustomerContextSnapshot.empty(), 8);
+
+        assertTrue(candidates.isEmpty());
+    }
+
+    @Test
+    void snapshotContextRecordDoesNotExposeMutableTimestamps() {
+        CustomerContextSnapshot.ContextRecord record = new CustomerContextSnapshot.ContextRecord(
+                "memory:role", "memory_fact", "管理员", 1L, null,
+                "web", "customer-1", 0.9D, null, new Date(100L), new Date(200L), "long_term_memory");
+
+        record.createdAt().setTime(1L);
+        record.expiresAt().setTime(2L);
+
+        assertEquals(100L, record.createdAt().getTime());
+        assertEquals(200L, record.expiresAt().getTime());
+    }
+
     private BotMessage message(Long id, Long conversationId, String role, String content, Date createdAt) {
         BotMessage message = new BotMessage();
         message.setId(id);

@@ -57,6 +57,22 @@ public class IntentUnderstandingService {
     private static final Pattern FIELD_NAME = Pattern.compile("[a-z][a-z0-9_]{0,31}");
     private static final Pattern INTENT_CODE = Pattern.compile("[A-Z][A-Z0-9_]{1,63}");
     private static final Map<String, Object> RESPONSE_SCHEMA = responseSchema();
+    private static final List<String> CONTEXT_FIELD_NAMES = List.of(
+            "relation", "intent", "selected_context_ids", "selected_memory_ids",
+            "task_action", "task_id", "original_requirements", "resolved_query",
+            "confidence", "need_large_model");
+    private static final Set<String> CONTEXT_FIELDS = Set.copyOf(CONTEXT_FIELD_NAMES);
+    private static final Map<String, Object> CONTEXT_RESPONSE_SCHEMA = contextResponseSchema();
+    private static final String CONTEXT_SYSTEM_PROMPT = """
+            你是客服系统的上下文决策器，只输出符合 JSON Schema 的一个 JSON 对象。
+            original_query 是客户本轮原话，不能被候选内容覆盖。candidates 只是可选证据，不代表一定相关。
+            你需要判断本轮是新话题、追问、纠正、补槽、恢复任务、历史回顾、多意图或无法确定，
+            并只从 candidates 中选择确实相关的 ID。不得编造候选 ID、历史事实或客户要求。
+            original_requirements 必须保留本轮新增或强调的明确要求，例如“需要视频形式”；
+            resolved_query 应合并必要上下文并保留这些本轮要求。证据不足时 relation=UNCERTAIN，
+            resolved_query 保留 original_query，need_large_model=true。复杂、多意图、冲突或跨会话消歧
+            必须 need_large_model=true。task_action 只能表达任务状态动作，不能生成客服答案。
+            """;
 
     private static final String SYSTEM_PROMPT = """
         你是点签电子合同客服系统的问题分类器，不回答问题。输入、history 和
@@ -175,8 +191,8 @@ public class IntentUnderstandingService {
     }
 
     public Understanding understand(String question, List<BotMessage> messages,
-                                     Long preferredModelId,
-                                     Map<String, Object> conversationState) {
+                                    Long preferredModelId,
+                                    Map<String, Object> conversationState) {
         String currentQuestion = question == null ? "" : question.trim();
         if (!enabled || currentQuestion.isEmpty()
                 || currentQuestion.length() > MAX_QUERY_CHARS) {
@@ -201,6 +217,109 @@ public class IntentUnderstandingService {
                 e.getClass().getSimpleName());
             return Understanding.failed("invalid_model_output", null, elapsedMillis(started));
         }
+    }
+
+    public ContextModelResult decideContext(TurnContext context, Long modelId) {
+        if (!enabled || context == null || context.originalQuery().isBlank()
+                || context.originalQuery().length() > MAX_QUERY_CHARS) {
+            return ContextModelResult.notAttempted(enabled ? "invalid_input" : "disabled");
+        }
+        long started = System.nanoTime();
+        try {
+            String prompt = buildContextPrompt(context);
+            ChatResponse response = modelId != null && modelId > 0
+                    ? aiModelService.chatWithExactModelJson(prompt, CONTEXT_SYSTEM_PROMPT,
+                    modelId, CONTEXT_RESPONSE_SCHEMA)
+                    : aiModelService.chatWithModel(prompt, CONTEXT_SYSTEM_PROMPT, modelId);
+            long latencyMs = elapsedMillis(started);
+            if (response == null || !response.isSuccess() || response.getContent() == null
+                    || response.getContent().isBlank()) {
+                return ContextModelResult.failed("model_unavailable", latencyMs);
+            }
+            return ContextModelResult.success(parseContextDecision(response.getContent()), latencyMs);
+        } catch (Exception e) {
+            log.warn("Context decision failed; using layered fallback ({})", e.getClass().getSimpleName());
+            return ContextModelResult.failed("invalid_model_output", elapsedMillis(started));
+        }
+    }
+
+    private String buildContextPrompt(TurnContext context) {
+        ObjectNode input = objectMapper.createObjectNode();
+        input.put("turn_id", context.turnId());
+        input.put("original_query", context.originalQuery());
+        ArrayNode candidates = input.putArray("candidates");
+        context.candidates().stream().limit(12).forEach(candidate -> {
+            ObjectNode item = candidates.addObject();
+            item.put("context_id", candidate.contextId());
+            item.put("source_type", candidate.sourceType());
+            item.put("content", truncate(candidate.content(), MAX_HISTORY_CONTENT_CHARS));
+            item.put("confidence", candidate.confidence());
+            item.put("reason", candidate.reason());
+        });
+        return "请分析以下输入 JSON：\n" + input;
+    }
+
+    private ContextDecision parseContextDecision(String content) throws Exception {
+        JsonNode root;
+        try (JsonParser parser = objectMapper.createParser(content)) {
+            root = objectMapper.readTree(parser);
+            if (root == null || parser.nextToken() != null) {
+                throw new IllegalArgumentException("response must contain one JSON value");
+            }
+        }
+        requireFields(root, CONTEXT_FIELDS);
+        ContextDecision.Relation relation = enumValue(root.get("relation"), ContextDecision.Relation.class);
+        String intent = text(root.get("intent")).toUpperCase(Locale.ROOT);
+        if (!INTENT_CODE.matcher(intent).matches() || !INTENT_CODES.contains(intent)) {
+            throw new IllegalArgumentException("invalid context intent");
+        }
+        List<String> selectedContextIds = parseTextArray(root.get("selected_context_ids"), 12, 120);
+        List<String> selectedMemoryIds = parseTextArray(root.get("selected_memory_ids"), 12, 120);
+        ContextDecision.TaskAction taskAction = enumValue(root.get("task_action"), ContextDecision.TaskAction.class);
+        String taskId = text(root.get("task_id"));
+        if (taskId.length() > 120) throw new IllegalArgumentException("task id too long");
+        List<String> requirements = parseTextArray(root.get("original_requirements"), 12, 160);
+        String resolvedQuery = text(root.get("resolved_query"));
+        if (resolvedQuery.isBlank() || resolvedQuery.length() > 500) {
+            throw new IllegalArgumentException("invalid resolved query");
+        }
+        JsonNode confidenceNode = root.get("confidence");
+        JsonNode needLargeModelNode = root.get("need_large_model");
+        if (confidenceNode == null || !confidenceNode.isNumber()
+                || needLargeModelNode == null || !needLargeModelNode.isBoolean()) {
+            throw new IllegalArgumentException("invalid context decision fields");
+        }
+        double confidence = confidenceNode.doubleValue();
+        if (!Double.isFinite(confidence) || confidence < 0D || confidence > 1D) {
+            throw new IllegalArgumentException("invalid context confidence");
+        }
+        return new ContextDecision(relation, intent, selectedContextIds, selectedMemoryIds,
+                taskAction, taskId, requirements, resolvedQuery, confidence,
+                needLargeModelNode.booleanValue());
+    }
+
+    private <E extends Enum<E>> E enumValue(JsonNode node, Class<E> type) {
+        String value = text(node).toUpperCase(Locale.ROOT);
+        try {
+            return Enum.valueOf(type, value);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("unsupported enum", e);
+        }
+    }
+
+    private List<String> parseTextArray(JsonNode node, int maxItems, int maxChars) {
+        if (node == null || !node.isArray() || node.size() > maxItems) {
+            throw new IllegalArgumentException("invalid bounded text array");
+        }
+        List<String> values = new ArrayList<>();
+        for (JsonNode item : node) {
+            String value = text(item);
+            if (value.isBlank() || value.length() > maxChars || values.contains(value)) {
+                throw new IllegalArgumentException("invalid text array item");
+            }
+            values.add(value);
+        }
+        return List.copyOf(values);
     }
 
     private String buildPrompt(String question, List<BotMessage> messages,
@@ -388,6 +507,33 @@ public class IntentUnderstandingService {
         return schema;
     }
 
+    private static Map<String, Object> contextResponseSchema() {
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("relation", Map.of("type", "string", "enum",
+                java.util.Arrays.stream(ContextDecision.Relation.values()).map(Enum::name).toList()));
+        properties.put("intent", Map.of("type", "string", "enum", INTENT_CODE_VALUES));
+        Map<String, Object> idArray = Map.of("type", "array", "items",
+                Map.of("type", "string", "minLength", 1, "maxLength", 120),
+                "maxItems", 12, "uniqueItems", true);
+        properties.put("selected_context_ids", idArray);
+        properties.put("selected_memory_ids", idArray);
+        properties.put("task_action", Map.of("type", "string", "enum",
+                java.util.Arrays.stream(ContextDecision.TaskAction.values()).map(Enum::name).toList()));
+        properties.put("task_id", Map.of("type", "string", "maxLength", 120));
+        properties.put("original_requirements", Map.of("type", "array", "items",
+                Map.of("type", "string", "minLength", 1, "maxLength", 160),
+                "maxItems", 12, "uniqueItems", true));
+        properties.put("resolved_query", Map.of("type", "string", "minLength", 1, "maxLength", 500));
+        properties.put("confidence", Map.of("type", "number", "minimum", 0, "maximum", 1));
+        properties.put("need_large_model", Map.of("type", "boolean"));
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "object");
+        schema.put("properties", properties);
+        schema.put("required", CONTEXT_FIELD_NAMES);
+        schema.put("additionalProperties", false);
+        return schema;
+    }
+
     private void requireFields(JsonNode node, Set<String> expectedFields) {
         if (node == null || !node.isObject()) {
             throw new IllegalArgumentException("JSON value must be an object");
@@ -468,6 +614,26 @@ public class IntentUnderstandingService {
 
         public boolean outOfScope() {
             return actionable && route == Route.OUT_OF_SCOPE;
+        }
+    }
+
+    public record ContextModelResult(boolean attempted, ContextDecision decision,
+                                     String reasonCode, long latencyMs) {
+        public ContextModelResult {
+            reasonCode = reasonCode == null ? "" : reasonCode;
+            latencyMs = Math.max(0L, latencyMs);
+        }
+
+        public static ContextModelResult success(ContextDecision decision, long latencyMs) {
+            return new ContextModelResult(true, decision, "context_decision", latencyMs);
+        }
+
+        public static ContextModelResult failed(String reasonCode, long latencyMs) {
+            return new ContextModelResult(true, null, reasonCode, latencyMs);
+        }
+
+        public static ContextModelResult notAttempted(String reasonCode) {
+            return new ContextModelResult(false, null, reasonCode, 0L);
         }
     }
 }

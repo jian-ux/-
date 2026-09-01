@@ -82,10 +82,16 @@ class LayeredContextDecisionServiceTest {
 
         ContextCandidate otherCustomer = new ContextCandidate("memory:other", "memory_fact", "其他客户信息",
                 null, null, "web", "other-customer", 0.9D, null, null, "long_term_memory");
-        TurnContext contaminated = context(List.of(otherCustomer));
-        ContextDecision selected = decision(ContextDecision.Relation.HISTORY_RECALL, List.of("memory:other"),
-                List.of("memory:other"), List.of(), "客户历史信息", 0.90, false);
-        assertThrows(IllegalArgumentException.class, () -> validator.validate(contaminated, selected));
+        assertThrows(IllegalArgumentException.class, () -> context(List.of(otherCustomer)));
+    }
+
+    @Test
+    void turnContextRejectsCandidatesBeyondTheModelPromptBudget() {
+        List<ContextCandidate> candidates = java.util.stream.IntStream.range(0, 13)
+                .mapToObj(index -> candidate("message:" + index, "recent_message", "历史问题" + index))
+                .toList();
+
+        assertThrows(IllegalArgumentException.class, () -> context(candidates));
     }
 
     @Test

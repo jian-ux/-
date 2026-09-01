@@ -80,7 +80,31 @@ public class CustomerContextRecallService {
         }
         diagnostics.put("totalMs", Math.max(0L,
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)));
-        return new CustomerContextSnapshot(profile, longTerm, history, diagnostics);
+        return new CustomerContextSnapshot(profile, longTerm, history, diagnostics,
+                contextRecords(channelType, channelUserId, profile, longTerm, history));
+    }
+
+    private List<CustomerContextSnapshot.ContextRecord> contextRecords(
+            String channelType, String channelUserId, CustomerProfileService.ProfileSnapshot profile,
+            CustomerLongTermMemoryService.Snapshot longTerm, String history) {
+        if (channelType == null || channelUserId == null || channelType.isBlank() || channelUserId.isBlank()
+                || "playground".equalsIgnoreCase(channelType.trim())) return List.of();
+        List<CustomerContextSnapshot.ContextRecord> records = new java.util.ArrayList<>();
+        profile.facts().forEach((category, values) -> values.forEach((key, value) -> {
+            if (value != null && !value.toString().isBlank()) records.add(new CustomerContextSnapshot.ContextRecord(
+                    "profile:" + category + ":" + key, "customer_profile", value.toString(), null, null,
+                    channelType.trim(), channelUserId.trim(), 1D, null, null, null, "customer_profile"));
+        }));
+        longTerm.memories().forEach((key, fact) -> {
+            if (fact != null && fact.value() != null && !fact.value().isBlank()) records.add(
+                    new CustomerContextSnapshot.ContextRecord("memory:" + key, "memory_fact", fact.value(),
+                            null, null, channelType.trim(), channelUserId.trim(), fact.confidence(), null,
+                            null, null, fact.source() == null ? "long_term_memory" : fact.source()));
+        });
+        if (history != null && !history.isBlank()) records.add(new CustomerContextSnapshot.ContextRecord(
+                "history:cross_session", "conversation_history", history, null, null,
+                channelType.trim(), channelUserId.trim(), 0.5D, null, null, null, "cross_session_history"));
+        return List.copyOf(records);
     }
 
     private SourceResult<?> submit(String source, java.util.function.Supplier<?> loader) {

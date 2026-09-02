@@ -8,6 +8,7 @@ import com.feisheng.bot.core.entity.BotMessage;
 import com.feisheng.bot.core.mapper.BotAiReplyLogMapper;
 import com.feisheng.bot.core.service.BusinessSafetyBoundaryService;
 import com.feisheng.bot.core.service.ConversationServiceImpl;
+import com.feisheng.bot.core.service.ContextDecision;
 import com.feisheng.bot.core.service.CustomerServicePromptProvider;
 import com.feisheng.bot.core.service.EmotionService;
 import com.feisheng.bot.core.service.HandoffCoordinator;
@@ -397,6 +398,7 @@ class DialogServiceImplTest {
     @Test
     void answersBroadProductUsageWithVerifiedEntriesInsteadOfInventedSteps() {
         String question = "怎么使用？";
+        String primaryQuery = "点签可以在哪里使用 当前问题：" + question;
         String verifiedAnswer = "点签支持通过钉钉、微信公众号、微信小程序、PC 网页版、"
             + "企业微信和短信签署链接使用。目前不提供独立手机 APP；手机用户可以通过"
             + "微信公众号、微信小程序或短信签署链接办理相关操作。";
@@ -416,9 +418,9 @@ class DialogServiceImplTest {
         Map<String, Object> result = dialogService.send(
             "web", "operational-user", question, "咨询");
 
+        assertEquals(primaryQuery, result.get("retrievalPrimaryQuery"));
         assertEquals("rag_guardrail", result.get("source"));
         assertEquals("evidence_consistency_guardrail", result.get("fallbackDecision"));
-        assertEquals("点签可以在哪里使用？", result.get("retrievalPrimaryQuery"));
         assertTrue(((String) result.get("reply")).contains("不提供独立手机 APP"));
         assertTrue(((String) result.get("reply")).contains("微信小程序"));
         assertTrue(((String) result.get("reply")).contains("具体想进行发起合同"));
@@ -1178,14 +1180,16 @@ class DialogServiceImplTest {
     @Test
     void usesSemanticUnderstandingBeforeClarifyingUnresolvedContext() {
         String rewritten = "点签企业账号如何登录？";
+        String question = "这个怎么操作";
+        String primaryQuery = "点签企业账号如何登录 当前问题：" + question;
         when(messageService.getByConversation(10L)).thenReturn(List.of(
             message("user", "成员入口在哪里"),
             message("ai", "请说明您使用的产品和页面"),
-            message("user", "这个怎么操作")));
+            message("user", question)));
         when(intentUnderstandingService.understand(
-                eq("这个怎么操作"), anyList(), isNull()))
+                eq(question), anyList(), isNull()))
             .thenReturn(knowledgeUnderstanding("ACCOUNT_OPERATION", rewritten, true));
-        when(retrievalService.retrieve(rewritten)).thenReturn(
+        when(retrievalService.retrieve(primaryQuery)).thenReturn(
             retrieval("企业账号可从点签登录页进入。", 0.90));
         when(aiModelService.chatWithModel(anyString(), anyString(), isNull()))
             .thenReturn(new ChatResponse(
@@ -1193,10 +1197,10 @@ class DialogServiceImplTest {
                 "answer-model", "test", 30, 12));
 
         Map<String, Object> result = dialogService.send(
-            "web", "semantic-context", "这个怎么操作", "咨询");
+            "web", "semantic-context", question, "咨询");
 
         assertEquals("rag_ai", result.get("source"));
-        assertEquals(rewritten, result.get("retrievalPrimaryQuery"));
+        assertEquals(primaryQuery, result.get("retrievalPrimaryQuery"));
         assertEquals("semantic_context_resolution",
             result.get("clarificationResolutionSource"));
         Map<?, ?> understanding = (Map<?, ?>) result.get("intentUnderstanding");
@@ -1204,10 +1208,97 @@ class DialogServiceImplTest {
         assertEquals("ACCOUNT_OPERATION", understanding.get("intentCode"));
         assertEquals(0.91, understanding.get("confidence"));
         verify(retrievalService).retrieve(
-            eq(rewritten), isNull(), isNull(), eq(KNOWLEDGE_RETRIEVAL_FILTERS),
+            eq(primaryQuery), isNull(), isNull(), eq(KNOWLEDGE_RETRIEVAL_FILTERS),
             argThat(variants -> variants.stream().anyMatch(variant ->
                 "semantic_intent_entities".equals(variant.purpose())
-                    && variant.query().contains("账号注册"))), eq(true));
+                && variant.query().contains("账号注册"))), eq(true));
+        Map<?, ?> currentTurnRequest = (Map<?, ?>) result.get("currentTurnRequest");
+        assertEquals(question, currentTurnRequest.get("originalQuestion"));
+        assertEquals(rewritten, currentTurnRequest.get("contextualIntent"));
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(aiModelService).chatWithModel(promptCaptor.capture(), anyString(), isNull());
+        assertTrue(promptCaptor.getValue().contains("原始问题：" + question));
+        assertTrue(promptCaptor.getValue().contains("上下文补全的业务意图：" + rewritten));
+        assertFalse(promptCaptor.getValue().contains("归一化或补全后的本轮意图"));
+    }
+
+    @Test
+    void preservesExplicitVideoRequestWhenSemanticUnderstandingAddsTutorialContext() {
+        String question = "视频教程有没有？";
+        String contextualIntent = "点签的使用教程";
+        String primaryQuery = contextualIntent + " 当前问题：" + question;
+        when(messageService.getByConversation(10L)).thenReturn(List.of(
+            message("user", "点签怎么使用？"),
+            message("ai", "请说明您想了解的使用方式。"),
+            message("user", question)));
+        when(intentUnderstandingService.understand(eq(question), anyList(), isNull()))
+            .thenReturn(knowledgeUnderstanding("PRODUCT_USAGE", contextualIntent, true));
+        when(retrievalService.retrieve(primaryQuery)).thenReturn(
+            retrieval("目前知识库未提供视频教程，可先参考点签的使用说明。", 0.90));
+        when(aiModelService.chatWithModel(anyString(), anyString(), isNull()))
+            .thenReturn(new ChatResponse(
+                "目前知识库未提供视频教程，可先参考点签的使用说明。", true,
+                "answer-model", "test", 30, 12));
+
+        Map<String, Object> result = dialogService.send(
+            "web", "video-tutorial-context", question, "咨询");
+
+        assertEquals("rag_ai", result.get("source"));
+        assertEquals(primaryQuery, result.get("retrievalPrimaryQuery"));
+        Map<?, ?> currentTurnRequest = (Map<?, ?>) result.get("currentTurnRequest");
+        assertEquals(question, currentTurnRequest.get("originalQuestion"));
+        assertEquals(contextualIntent, currentTurnRequest.get("contextualIntent"));
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(aiModelService).chatWithModel(promptCaptor.capture(), anyString(), isNull());
+        assertTrue(promptCaptor.getValue().contains("原始问题：视频教程有没有？"));
+        assertTrue(promptCaptor.getValue().contains("上下文补全的业务意图：点签的使用教程"));
+        assertFalse(promptCaptor.getValue().contains("归一化或补全后的本轮意图"));
+    }
+
+    @Test
+    void usesLayeredModelDecisionForTutorialVideoFollowUp() {
+        String question = "视频教程有没有？";
+        String resolvedQuery = "点签的使用教程，有没有视频教程？";
+        BotMessage previous = messageWithId(91L, "user", "点签的使用教程");
+        previous.setConversationId(10L);
+        BotMessage answer = messageWithId(92L, "ai", "可以查看点签使用说明。");
+        answer.setConversationId(10L);
+        BotMessage current = messageWithId(93L, "user", question);
+        current.setConversationId(10L);
+        when(messageService.getByConversation(10L)).thenReturn(List.of(previous, answer, current));
+        ContextDecision decision = new ContextDecision(
+                ContextDecision.Relation.FOLLOW_UP,
+                "PRODUCT_USAGE",
+                List.of("message:91"),
+                List.of(),
+                ContextDecision.TaskAction.CONTINUE,
+                "task:usage",
+                List.of("视频形式"),
+                resolvedQuery,
+                0.94,
+                false);
+        when(intentUnderstandingService.decideContext(any(), isNull()))
+                .thenReturn(IntentUnderstandingService.ContextModelResult.success(decision, 8L));
+        lenient().when(intentUnderstandingService.understand(eq(resolvedQuery), anyList(), isNull(), any()))
+                .thenReturn(knowledgeUnderstanding("PRODUCT_USAGE", resolvedQuery, true));
+        lenient().when(retrievalService.retrieve(resolvedQuery)).thenReturn(
+                retrieval("目前知识库未提供视频教程，可先参考点签的使用说明。", 0.90));
+        lenient().when(aiModelService.chatWithModel(anyString(), anyString(), isNull()))
+                .thenReturn(new ChatResponse(
+                        "目前知识库未提供视频教程，可先参考点签的使用说明。",
+                        true, "answer-model", "test", 30, 12));
+
+        Map<String, Object> result = dialogService.send(
+                "web", "video-layered-context", question, "咨询");
+
+        assertEquals(resolvedQuery, result.get("contextResolvedQuery"));
+        assertEquals(resolvedQuery, result.get("retrievalQuery"));
+        assertEquals("FAST_MODEL", result.get("contextDecisionRoute"));
+        assertEquals(List.of("视频形式"), result.get("originalRequirements"));
+        verify(retrievalService).retrieve(
+            argThat(query -> query.startsWith(resolvedQuery.replaceAll("[。！？?!]+$", ""))
+                && query.contains("当前问题：视频教程有没有")),
+            isNull(), isNull(), eq(KNOWLEDGE_RETRIEVAL_FILTERS), anyList(), eq(true));
     }
 
     @Test
@@ -2806,11 +2897,12 @@ class DialogServiceImplTest {
 
     @Test
     void rewritesEnterpriseFollowUpBeforeRetrievalAndKeepsContractTopic() {
+        String primaryQuery = "企业怎么签合同 当前问题：企业的呢？";
         when(messageService.getByConversation(10L)).thenReturn(List.of(
             message("user", "我要怎么签合同"),
             message("ai", "可以手写签名或使用电子签名。"),
             message("user", "企业的呢？")));
-        when(retrievalService.retrieve("企业怎么签合同"))
+        when(retrievalService.retrieve(primaryQuery))
             .thenReturn(new RagRetrievalService.RetrievalResult(
                 true, false, null, "企业完成认证后可以发起和签署电子合同。",
                 0.91, "rag", true, Collections.emptyList(), Collections.emptyList()));
@@ -2823,12 +2915,15 @@ class DialogServiceImplTest {
         Map<String, Object> result = dialogService.send(
             "web", "enterprise-follow-up", "企业的呢？", "咨询");
 
-        verify(retrievalService).retrieve("企业怎么签合同");
+        verify(retrievalService).retrieve(primaryQuery);
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
         verify(aiModelService).chatWithModel(
             promptCaptor.capture(), argThat(prompt -> prompt.startsWith("rag-system-prompt")),
             eq(null));
-        assertTrue(promptCaptor.getValue().contains("补全后的本轮意图：企业怎么签合同"));
+        assertTrue(promptCaptor.getValue().contains("原始问题：企业的呢？"));
+        assertTrue(promptCaptor.getValue().contains("上下文补全的业务意图：企业怎么签合同"));
+        assertFalse(promptCaptor.getValue().contains("归一化或补全后的本轮意图"));
+        assertEquals(primaryQuery, result.get("retrievalPrimaryQuery"));
         assertEquals("企业怎么签合同", result.get("retrievalQuery"));
         assertEquals(true, result.get("queryRewritten"));
         assertEquals(false, result.get("retrievalHistoryUsed"));
@@ -3364,11 +3459,12 @@ class DialogServiceImplTest {
             """);
         String question = "那我们的ERP系统呢？";
         String resolvedQuery = "点签电子签章是否支持通过API集成到ERP系统？";
+        String primaryQuery = "点签电子签章是否支持通过API集成到ERP系统 当前问题：" + question;
         when(messageService.getByConversation(10L)).thenReturn(List.of(
             message("user", "CRM客户管理系统可以用吗？"),
             message("ai", "点签支持通过API接入业务系统。"),
             message("user", question)));
-        when(retrievalService.retrieve(resolvedQuery)).thenReturn(
+        when(retrievalService.retrieve(primaryQuery)).thenReturn(
             retrieval("点签提供API，可对接ERP等业务系统。", 0.90));
         when(aiModelService.chatWithModel(anyString(), anyString(), isNull()))
             .thenReturn(new ChatResponse(
@@ -3379,7 +3475,7 @@ class DialogServiceImplTest {
             "web", "state-erp-follow-up", question, "咨询");
 
         assertEquals("rag_ai", result.get("source"));
-        assertEquals(resolvedQuery, result.get("retrievalPrimaryQuery"));
+        assertEquals(primaryQuery, result.get("retrievalPrimaryQuery"));
         assertEquals("SYSTEM_INTEGRATION",
             ((Map<?, ?>) result.get("nlpIntent")).get("intentCode"));
         assertEquals("semantic_context_resolution",
@@ -3400,7 +3496,8 @@ class DialogServiceImplTest {
                 eq(conversation), anyString(), eq(5L))).thenReturn(true);
         String question = "点签可以嵌入ERP系统吗？";
         String resolvedQuery = "点签电子签章是否支持通过API集成到ERP系统？";
-        when(retrievalService.retrieve(resolvedQuery)).thenReturn(
+        String primaryQuery = "点签电子签章是否支持通过API集成到ERP系统 当前问题：" + question;
+        when(retrievalService.retrieve(primaryQuery)).thenReturn(
             retrieval("点签提供API，可嵌入ERP系统。", 0.91));
         when(aiModelService.chatWithModel(anyString(), anyString(), isNull()))
             .thenReturn(new ChatResponse(
@@ -3412,7 +3509,7 @@ class DialogServiceImplTest {
 
         assertEquals("ANSWER",
             ((Map<?, ?>) result.get("serviceDecision")).get("decision"));
-        assertEquals(resolvedQuery, result.get("retrievalPrimaryQuery"));
+        assertEquals(primaryQuery, result.get("retrievalPrimaryQuery"));
         verify(handoffCoordinator, never()).handoff(any(), anyString(), anyString());
         ArgumentCaptor<String> stateJson = ArgumentCaptor.forClass(String.class);
         verify(conversationService).updateDialogState(

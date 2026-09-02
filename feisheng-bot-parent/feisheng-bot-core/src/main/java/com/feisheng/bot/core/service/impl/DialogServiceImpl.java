@@ -11,6 +11,10 @@ import com.feisheng.bot.core.service.ConversationContextAssembler;
 import com.feisheng.bot.core.service.ConversationServiceImpl;
 import com.feisheng.bot.core.service.ConversationStateService;
 import com.feisheng.bot.core.service.ConversationSummaryFormat;
+import com.feisheng.bot.core.service.ConversationTaskManager;
+import com.feisheng.bot.core.service.ContextCandidate;
+import com.feisheng.bot.core.service.ContextCandidateSelector;
+import com.feisheng.bot.core.service.ContextDecision;
 import com.feisheng.bot.core.service.CustomerServiceDecisionEngine;
 import com.feisheng.bot.core.service.CustomerServicePromptProvider;
 import com.feisheng.bot.core.service.CustomerProfileService;
@@ -23,10 +27,12 @@ import com.feisheng.bot.core.service.CustomerContextSnapshot;
 import com.feisheng.bot.core.service.DialogResponseMetadata;
 import com.feisheng.bot.core.service.DialogRetrievalCoordinator;
 import com.feisheng.bot.core.service.DialogFailure;
+import com.feisheng.bot.core.service.DecisionValidator;
 import com.feisheng.bot.core.service.EmotionService;
 import com.feisheng.bot.core.service.HandoffCoordinator;
 import com.feisheng.bot.core.service.IntentService;
 import com.feisheng.bot.core.service.IntentUnderstandingService;
+import com.feisheng.bot.core.service.LayeredContextDecisionService;
 import com.feisheng.bot.core.service.ModelAnswerSignalParser;
 import com.feisheng.bot.core.service.NlpIntentClassifier;
 import com.feisheng.bot.core.service.PlainTextReplyFormatter;
@@ -35,6 +41,7 @@ import com.feisheng.bot.core.service.RedactionMemoizer;
 import com.feisheng.bot.core.service.RichReplyFormatter;
 import com.feisheng.bot.core.service.SensitiveDataService;
 import com.feisheng.bot.core.service.TextCorrectionService;
+import com.feisheng.bot.core.service.TurnContext;
 import com.feisheng.bot.knowledge.service.KnowledgeImageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -490,6 +497,14 @@ public class DialogServiceImpl {
 
     @Value("${customer-service.flash-max-question-chars:80}")
     private int flashMaxQuestionChars;
+    @Value("${customer-service.layered-context.enabled:true}")
+    private boolean layeredContextEnabled = true;
+    @Value("${customer-service.layered-context.max-candidates:12}")
+    private int layeredContextMaxCandidates = 12;
+    @Value("${customer-service.layered-context.fast-model-id:0}")
+    private long layeredContextFastModelId;
+    @Value("${customer-service.layered-context.deep-model-id:0}")
+    private long layeredContextDeepModelId;
 
     private final ConversationServiceImpl conversationService;
     private final MessageServiceImpl messageService;
@@ -516,6 +531,9 @@ public class DialogServiceImpl {
     private final ConversationContextAssembler conversationContextAssembler;
     private final ConversationSummaryFormat conversationSummaryFormat;
     private final DialogRetrievalCoordinator retrievalCoordinator;
+    private final ContextCandidateSelector contextCandidateSelector;
+    private final LayeredContextDecisionService layeredContextDecisionService;
+    private final ConversationTaskManager conversationTaskManager;
     private final ThreadLocal<RedactionMemoizer> requestRedactionMemoizer = new ThreadLocal<>();
     @Autowired(required = false)
     private CustomerLongTermMemoryService customerLongTermMemoryService;
@@ -550,9 +568,12 @@ public class DialogServiceImpl {
                              ConversationStateService conversationStateService,
                              CustomerServiceDecisionEngine decisionEngine,
                              ObjectMapper objectMapper,
-                             CustomerProfileService customerProfileService,
-                             ConversationContextAssembler conversationContextAssembler,
-                             ConversationSummaryFormat conversationSummaryFormat) {
+            CustomerProfileService customerProfileService,
+            ConversationContextAssembler conversationContextAssembler,
+            ConversationSummaryFormat conversationSummaryFormat,
+            ContextCandidateSelector contextCandidateSelector,
+            LayeredContextDecisionService layeredContextDecisionService,
+            ConversationTaskManager conversationTaskManager) {
         this.conversationService = conversationService;
         this.messageService = messageService;
         this.aiModelService = aiModelService;
@@ -578,6 +599,9 @@ public class DialogServiceImpl {
         this.conversationContextAssembler = conversationContextAssembler;
         this.conversationSummaryFormat = conversationSummaryFormat;
         this.retrievalCoordinator = new DialogRetrievalCoordinator(retrievalService);
+        this.contextCandidateSelector = contextCandidateSelector;
+        this.layeredContextDecisionService = layeredContextDecisionService;
+        this.conversationTaskManager = conversationTaskManager;
     }
 
     public DialogServiceImpl(ConversationServiceImpl conversationService,
@@ -608,7 +632,9 @@ public class DialogServiceImpl {
             new ConversationStateService(conversationService, objectMapper),
             new CustomerServiceDecisionEngine(objectMapper), objectMapper, null,
             new ConversationContextAssembler(objectMapper, new ConversationSummaryFormat()),
-            new ConversationSummaryFormat());
+            new ConversationSummaryFormat(), new ContextCandidateSelector(),
+            new LayeredContextDecisionService(intentUnderstandingService, new DecisionValidator(), 0.80D),
+            new ConversationTaskManager());
     }
 
     public Map<String, Object> send(String channelType, String channelUserId, String text, String title) {
@@ -699,6 +725,7 @@ public class DialogServiceImpl {
             decisionEngine.enrich(response);
             conversationStateService.synchronizeResponse(
                 response, redact(text, new LinkedHashSet<>()));
+            synchronizeLayeredTaskState(response);
             collectBadCase(text, response, System.currentTimeMillis() - started);
             return response;
         } finally {
@@ -748,6 +775,7 @@ public class DialogServiceImpl {
         String customerMemoryContext = null;
         String customerHistoryContext = null;
         Map<String, Object> customerContextDiagnostics = Map.of();
+        CustomerContextSnapshot customerContext = null;
         EmotionService.EmotionResult emotion = emotionService.analyze(
             safeText, recentMessages, userMessage.getId());
         messageService.updateMetadata(userMessage, mergeMetadata(userMessage.getMetadata(),
@@ -801,7 +829,7 @@ public class DialogServiceImpl {
             }
         }
         if (customerContextRecallService != null) {
-            CustomerContextSnapshot customerContext = customerContextRecallService.recall(
+            customerContext = customerContextRecallService.recall(
                 channelType, channelUserId, conversation.getId(), understandingText,
                 conversationState, recentMessages);
             customerContextDiagnostics = customerContext.diagnostics();
@@ -816,6 +844,30 @@ public class DialogServiceImpl {
             }
             customerHistoryContext = customerContext.historyContext();
         }
+        List<ContextCandidate> contextCandidates = List.of();
+        LayeredContextDecisionService.DecisionResult contextDecisionResult = null;
+        ContextDecision contextDecision = null;
+        String contextDecisionFallbackReason = "disabled";
+        if (layeredContextEnabled && contextCandidateSelector != null
+                && layeredContextDecisionService != null) {
+            contextCandidates = contextCandidateSelector.select(
+                channelType, channelUserId, conversation.getId(), safeText,
+                conversationState, recentMessages, customerContext,
+                Math.min(12, Math.max(1, layeredContextMaxCandidates)));
+            TurnContext turnContext = TurnContext.start(
+                conversation.getId() + ":" + userMessage.getId(), channelType, channelUserId,
+                conversation.getId(), userMessage.getId(), safeText, contextCandidates);
+            contextDecisionResult = layeredContextDecisionService.decide(turnContext,
+                layeredContextFastModelId > 0 ? layeredContextFastModelId : null,
+                layeredContextDeepModelId > 0 ? layeredContextDeepModelId : null);
+            contextDecision = contextDecisionResult.decision();
+            contextDecisionFallbackReason = contextDecisionResult.fallbackReason();
+        }
+        boolean layeredContextApplied = contextDecisionResult != null
+            && contextDecisionResult.route() != LayeredContextDecisionService.Route.FALLBACK
+            && contextDecision != null && hasText(contextDecision.resolvedQuery());
+        String contextResolvedQuestion = layeredContextApplied
+            ? contextDecision.resolvedQuery() : understandingText;
         if (isPreviousQuestionRequest(understandingText)) {
             return previousQuestionResponse(
                 conversation, preCheck, recentMessages, safeText, emotion, started,
@@ -874,7 +926,7 @@ public class DialogServiceImpl {
         }
 
         NlpIntentClassifier.IntentAnalysis directIntent = nlpIntentClassifier.classify(
-            stripLeadingCourtesyPrefix(understandingText));
+            stripLeadingCourtesyPrefix(contextResolvedQuestion));
         IntentUnderstandingService.Understanding semanticUnderstanding =
             IntentUnderstandingService.Understanding.notAttempted("not_needed");
         boolean canUseSemanticUnderstanding = !hasText(safeProvidedContext)
@@ -883,11 +935,11 @@ public class DialogServiceImpl {
             && !isClearlyUnrelatedQuestion(understandingText)
             && !isExplicitlyUnrelatedNativeRequest(understandingText)
             && shouldUnderstandIntentBeforeRetrieval(
-                understandingText, recentMessages, directIntent,
+                contextResolvedQuestion, recentMessages, directIntent,
                 hasText(customerHistoryContext));
         if (canUseSemanticUnderstanding) {
             semanticUnderstanding = understandIntent(
-                understandingText, semanticHistoryMessages(
+                contextResolvedQuestion, semanticHistoryMessages(
                     recentMessages, customerHistoryContext), preferredModelId,
                 conversationStateService.modelContext(conversationState));
             modelLatencyMs += semanticUnderstanding.latencyMs();
@@ -899,7 +951,7 @@ public class DialogServiceImpl {
                 promptVersion, semanticUnderstanding, modelLatencyMs);
         }
         ConversationStateService.MergeResult stateMerge = conversationStateService.merge(
-            conversationState, understandingText, semanticUnderstanding, directIntent);
+            conversationState, contextResolvedQuestion, semanticUnderstanding, directIntent);
         semanticUnderstanding = stateMerge.understanding();
         ConversationContextAssembler.AssembledContext assembledContext =
             conversationContextAssembler.assemble(
@@ -961,8 +1013,16 @@ public class DialogServiceImpl {
                     pendingResult.previousQuestion(), null, null, false,
                     hasText(conversation.getDialogState())
                         ? "java_dialog_state" : "decision_metadata")
-                : contextualQueryResolver.resolve(recentMessages, understandingText);
-        if (semanticUnderstanding.knowledge()
+            : layeredContextApplied
+            ? new ContextualQueryResolver.Resolution(
+                contextResolvedQuestion,
+                contextDecision.relation() == ContextDecision.Relation.FOLLOW_UP
+                    || contextDecision.relation() == ContextDecision.Relation.CORRECTION
+                    || contextDecision.relation() == ContextDecision.Relation.SLOT_FILL
+                    || contextDecision.relation() == ContextDecision.Relation.RESUME_TASK,
+                null, null, null, false, "layered_context_model")
+            : contextualQueryResolver.resolve(recentMessages, understandingText);
+        if (!layeredContextApplied && semanticUnderstanding.knowledge()
                 && (queryResolution.unresolved()
                     || semanticUnderstanding.contextDependent()
                     || !sameQuestion(queryResolution.query(),
@@ -972,6 +1032,8 @@ public class DialogServiceImpl {
                 queryResolution.unresolved()
                     ? "semantic_context_resolution" : "semantic_intent_resolution");
         }
+        CurrentTurnRequest currentTurnRequest = CurrentTurnRequest.of(
+            safeText, queryResolution.query());
         boolean semanticOutOfScope = semanticUnderstanding.outOfScope();
         if (queryResolution.unresolved() && !semanticOutOfScope
                 && canUseSemanticUnderstanding) {
@@ -1065,6 +1127,7 @@ public class DialogServiceImpl {
             ? retrievalQuery : queryResolution.previousQuestionMerged()
             ? resolvedRetrievalQuestion
             : queryResolution.rewritten() ? retrievalQuery : resolvedRetrievalQuestion;
+        primaryRetrievalQuery = currentTurnRequest.primaryRetrievalQuery(primaryRetrievalQuery);
         List<QueryVariant> supplementalRetrievalVariants = supplementalRetrievalVariants(
             primaryRetrievalQuery, retrievalQuery, resolvedRetrievalQuestion,
             understandingText, queryResolution.rewritten(), productOverviewQuestion,
@@ -1332,7 +1395,7 @@ public class DialogServiceImpl {
                 && shouldClarifyPartialEvidence(nlpIntent);
             String prompt = buildPrompt(
                 assembledContext, safeRetrievalContext,
-                retrievalQuery, partialEvidenceNeedsClarification, nlpIntent);
+                currentTurnRequest, partialEvidenceNeedsClarification, nlpIntent);
             modelPrompt = prompt;
             SystemPromptResolution systemPrompt = customerServiceSystemPrompt(
                 emotion, safeText, nlpIntent, promptVersion);
@@ -1554,6 +1617,7 @@ public class DialogServiceImpl {
         response.put("retrievalPrimaryQuery", primaryRetrievalQuery);
         response.put("retrievalVariants", retrievalVariants);
         response.put("retrievalQuery", retrievalQuery);
+        response.put("currentTurnRequest", currentTurnRequest.diagnostics());
         response.put("queryRewritten", retrievalQueryRewritten);
         response.put("queryContextDependent", queryResolution.contextDependent());
         response.put("contextResolutionApplied", queryResolution.rewritten());
@@ -1563,6 +1627,22 @@ public class DialogServiceImpl {
         response.put("profileContextApplied", hasText(profileContext));
         response.put("customerContextDiagnostics", customerContextDiagnostics);
         response.put("contextResolvedQuery", resolvedRetrievalQuestion);
+        response.put("originalQuery", safeText);
+        response.put("resolvedQuery", contextResolvedQuestion);
+        response.put("contextDecisionRoute", contextDecisionResult == null
+            ? "DISABLED" : contextDecisionResult.route().name());
+        response.put("contextDecisionFallbackReason", contextDecisionFallbackReason);
+        response.put("contextCandidateIds", contextCandidates.stream()
+            .map(ContextCandidate::contextId).toList());
+        response.put("selectedContextIds", contextDecision == null
+            ? List.of() : contextDecision.selectedContextIds());
+        response.put("selectedMemoryIds", contextDecision == null
+            ? List.of() : contextDecision.selectedMemoryIds());
+        response.put("originalRequirements", contextDecision == null
+            ? List.of() : contextDecision.originalRequirements());
+        if (layeredContextApplied) {
+            response.put("_layeredContextDecision", contextDecision);
+        }
         response.put("queryCorrectionApplied", !Objects.equals(safeText, understandingText));
         response.put("correctedQuery", understandingText);
         response.put("clarificationStateConsumed", queryResolution.clarificationResolved());
@@ -1628,6 +1708,7 @@ public class DialogServiceImpl {
         messageMetadata.put("rerankDiagnostics", retrieval.rerankDiagnostics());
         messageMetadata.put("stageLatencies", stageLatencies);
         messageMetadata.put("retrievalVariants", retrievalVariants);
+        messageMetadata.put("currentTurnRequest", currentTurnRequest.diagnostics());
         messageMetadata.put("queryContextDependent", queryResolution.contextDependent());
         messageMetadata.put("contextResolutionApplied", queryResolution.rewritten());
         messageMetadata.put("contextSummaryApplied", contextSummaryApplied);
@@ -1696,6 +1777,24 @@ public class DialogServiceImpl {
             retrieval, retrievalLatencyMs, modelLatencyMs, totalLatencyMs));
         response.put("latencyMs", totalLatencyMs);
         return response;
+    }
+
+    private void synchronizeLayeredTaskState(Map<String, Object> response) {
+        if (response == null || conversationTaskManager == null) return;
+        Object decisionValue = response.remove("_layeredContextDecision");
+        if (!(decisionValue instanceof ContextDecision decision)
+                || !(response.get("conversationId") instanceof Number conversationId)) {
+            return;
+        }
+        ConversationTaskManager.TaskSnapshot taskSnapshot =
+            conversationStateService.applyTaskDecision(
+                conversationId.longValue(), decision, conversationTaskManager);
+        if (taskSnapshot == null) return;
+        response.put("contextTaskId", taskSnapshot.selectedTaskId());
+        response.put("contextTask", taskSnapshot.activeTask() == null
+            ? Map.of() : taskSnapshot.activeTask().toMap());
+        response.put("contextTaskCollection", taskSnapshot.tasks().values().stream()
+            .map(ConversationTaskManager.TaskState::toMap).toList());
     }
 
     private void collectBadCase(String question, Map<String, Object> response, long latencyMs) {
@@ -3272,14 +3371,12 @@ public class DialogServiceImpl {
     }
 
     private String buildPrompt(ConversationContextAssembler.AssembledContext assembledContext,
-                               String ragContext, String retrievalQuery, boolean partialEvidence,
+                               String ragContext, CurrentTurnRequest currentTurnRequest,
+                               boolean partialEvidence,
                                NlpIntentClassifier.IntentAnalysis nlpIntent) {
-        String userQuestion = assembledContext.currentQuestion();
         StringBuilder prompt = new StringBuilder()
-            .append(!Objects.equals(userQuestion, retrievalQuery)
-                ? "归一化或补全后的本轮意图：" + retrievalQuery + "\n" : "")
+            .append(currentTurnRequest.promptContext()).append("\n")
             .append("回答目标：以用户问题中明确点名的产品、业务或对象为唯一主体，首句直接回答该主体是什么、做什么或如何处理。")
-            .append("补全后的本轮意图只用于消除省略和指代，回答仍需自然承接用户原话。")
             .append("如果内部事实同时介绍公司或多个产品，只抽取能回答当前主体和意图的事实，不复述无关内容。")
             .append("不得把会员类型、账号类型、企业认证、电子合同使用资格等不同概念相互推导。")
             .append("对于登录、注册、认证、签署等流程问题，可以组合内部事实中明确存在的前置步骤和后续步骤。")

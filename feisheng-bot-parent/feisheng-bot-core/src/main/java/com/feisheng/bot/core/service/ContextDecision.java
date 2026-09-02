@@ -46,6 +46,7 @@ public record ContextDecision(
         CONTINUE,
         PAUSE,
         RESUME,
+        WAIT_FOR_USER,
         COMPLETE,
         CANCEL
     }

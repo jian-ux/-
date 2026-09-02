@@ -28,7 +28,21 @@ public class DecisionValidator {
         }
         validateIds(context, candidates, decision.selectedContextIds(), false);
         validateIds(context, candidates, decision.selectedMemoryIds(), true);
+        if (requiresContextCandidate(decision.relation())
+                && decision.selectedContextIds().isEmpty()
+                && decision.selectedMemoryIds().isEmpty()) {
+            throw invalid("missing_selected_context");
+        }
         return decision;
+    }
+
+    private boolean requiresContextCandidate(ContextDecision.Relation relation) {
+        return relation == ContextDecision.Relation.FOLLOW_UP
+                || relation == ContextDecision.Relation.CORRECTION
+                || relation == ContextDecision.Relation.SLOT_FILL
+                || relation == ContextDecision.Relation.RESUME_TASK
+                || relation == ContextDecision.Relation.HISTORY_RECALL
+                || relation == ContextDecision.Relation.MULTI_INTENT;
     }
 
     private void validateIds(TurnContext context, Map<String, ContextCandidate> candidates,

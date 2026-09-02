@@ -20,7 +20,8 @@ import java.util.Map;
 @Service
 public class ConversationStateService {
     private static final Logger log = LoggerFactory.getLogger(ConversationStateService.class);
-    private static final int SCHEMA_VERSION = 1;
+    private static final int SCHEMA_VERSION = 2;
+    private static final int MAX_TASKS = 8;
     private static final int ACTIVE_STATE_TURNS = 4;
 
     private final ConversationServiceImpl conversationService;
@@ -48,8 +49,10 @@ public class ConversationStateService {
     }
 
     public Map<String, Object> modelContext(Snapshot state) {
-        if (state == null || state.status() == Status.IDLE
-                || (state.status() == Status.ACTIVE && state.remainingTurns() <= 0)) {
+        if (state == null
+                || (state.status() == Status.IDLE && state.tasks().isEmpty())
+                || (state.status() == Status.ACTIVE && state.remainingTurns() <= 0
+                && state.tasks().isEmpty())) {
             return Map.of();
         }
         Map<String, Object> context = new LinkedHashMap<>();
@@ -59,6 +62,12 @@ public class ConversationStateService {
         context.put("entities", state.entities());
         context.put("missing_slots", state.missingSlots());
         context.put("remaining_turns", state.remainingTurns());
+        if (!state.tasks().isEmpty()) {
+            context.put("task_collection", state.tasks().values().stream()
+                    .map(ConversationTaskManager.TaskState::toMap)
+                    .toList());
+            context.put("selected_task_id", state.selectedTaskId());
+        }
         if (state.pending() != null) {
             context.put("pending_clarification", Map.of(
                 "intent_code", state.pending().intentCode(),
@@ -164,6 +173,35 @@ public class ConversationStateService {
         }
     }
 
+    /**
+     * Persists the model-selected task collection after the response state has been synchronized.
+     * The same optimistic version check used for dialog state prevents a competing turn from being
+     * overwritten by this turn's task selection.
+     */
+    public ConversationTaskManager.TaskSnapshot applyTaskDecision(Long conversationId,
+            ContextDecision decision, ConversationTaskManager taskManager) {
+        if (conversationId == null || decision == null || taskManager == null) return null;
+        BotConversation conversation = conversationService.getById(conversationId);
+        if (conversation == null) return null;
+        Snapshot existing = load(conversation, List.of());
+        ConversationTaskManager.TaskSnapshot taskSnapshot = taskManager.apply(
+            conversationId, decision, existing);
+        Snapshot next = taskSnapshot.legacyState();
+        if (next.equalsIgnoringVersion(existing)) return taskSnapshot;
+        try {
+            String dialogState = objectMapper.writeValueAsString(next.toMap());
+            if (!conversationService.updateDialogState(conversation, dialogState,
+                    existing.version())) {
+                log.warn("Dialog state changed while applying task decision for conversation {}",
+                    conversationId);
+            }
+        } catch (Exception e) {
+            log.warn("Could not persist task decision for conversation {}: {}", conversationId,
+                e.getClass().getSimpleName());
+        }
+        return taskSnapshot;
+    }
+
     private Snapshot nextState(Snapshot existing, Map<String, Object> response,
                                String currentQuestion) {
         Map<?, ?> semantic = map(response.get("intentUnderstanding"));
@@ -191,37 +229,50 @@ public class ConversationStateService {
             PendingState pending = PendingState.fromMap(pendingMap, currentQuestion);
             List<String> missingSlots = pending == null
                 ? List.of("context") : List.of(pending.missingSlot());
-            return new Snapshot(Status.WAITING_FOR_SLOT, activeIntent, entities,
+            return withTaskState(existing, Status.WAITING_FOR_SLOT, activeIntent, entities,
                 missingSlots, currentQuestion, pending,
-                pending == null ? 1 : pending.attempt(), 1, existing.version());
+                pending == null ? 1 : pending.attempt(), 1);
         }
 
         String answerDecision = value(response.get("answerDecision"));
         if ("HANDOFF".equals(answerDecision)
                 || "handoff".equals(value(response.get("source")))) {
-            return new Snapshot(Status.HANDOFF_PENDING, activeIntent, entities,
-                List.of(), currentQuestion, null, 0, 0, existing.version());
+            return withTaskState(existing, Status.HANDOFF_PENDING, activeIntent, entities,
+                List.of(), currentQuestion, null, 0, 0);
         }
 
         String route = text(semantic, "route");
         if ("KNOWLEDGE".equals(route) || usefulIntent(deterministicIntent)) {
             String standalone = text(semantic, "standaloneQuery");
             if (!hasText(standalone)) standalone = currentQuestion;
-            return new Snapshot(Status.ACTIVE, activeIntent, entities, List.of(),
-                standalone, null, 0, ACTIVE_STATE_TURNS, existing.version());
+            return withTaskState(existing, Status.ACTIVE, activeIntent, entities, List.of(),
+                standalone, null, 0, ACTIVE_STATE_TURNS);
         }
         if ("OUT_OF_SCOPE".equals(route)
                 || (existing.pending() != null && looksLikeIndependentQuestion(currentQuestion))) {
-            return Snapshot.idle(existing.version());
+            return idleWithTasks(existing);
         }
         if (existing.status() == Status.ACTIVE) {
             int remaining = Math.max(0, existing.remainingTurns() - 1);
-            return remaining == 0 ? Snapshot.idle(existing.version())
-                : new Snapshot(Status.ACTIVE, existing.activeIntent(), existing.entities(),
-                    List.of(), existing.standaloneQuery(), null, 0, remaining,
-                    existing.version());
+            return remaining == 0 ? idleWithTasks(existing)
+                : withTaskState(existing, Status.ACTIVE, existing.activeIntent(), existing.entities(),
+                    List.of(), existing.standaloneQuery(), null, 0, remaining);
         }
         return existing;
+    }
+
+    private Snapshot withTaskState(Snapshot existing, Status status, String activeIntent,
+                                   Map<String, String> entities, List<String> missingSlots,
+                                   String standaloneQuery, PendingState pending,
+                                   int clarificationAttempts, int remainingTurns) {
+        return new Snapshot(status, activeIntent, entities, missingSlots, standaloneQuery,
+            pending, clarificationAttempts, remainingTurns, existing.version(),
+            existing.tasks(), existing.selectedTaskId());
+    }
+
+    private Snapshot idleWithTasks(Snapshot existing) {
+        return new Snapshot(Status.IDLE, "", Map.of(), List.of(), "", null, 0, 0,
+            existing.version(), existing.tasks(), "");
     }
 
     private Understanding syntheticKnowledge(Understanding source, String intentCode,
@@ -259,12 +310,66 @@ public class ConversationStateService {
             if (slot.isTextual() && hasText(slot.asText())) missingSlots.add(slot.asText());
         });
         PendingState pending = PendingState.fromJson(root.path("pending"));
+        Map<String, ConversationTaskManager.TaskState> tasks = parseTasks(
+                root.path("taskCollection"));
+        String selectedTaskId = root.path("selectedTaskId").asText("");
         Snapshot parsed = new Snapshot(status, root.path("activeIntent").asText(""),
-            entities, missingSlots, root.path("standaloneQuery").asText(""),
-            pending, Math.max(0, root.path("clarificationAttempts").asInt(0)),
-            Math.max(0, root.path("remainingTurns").asInt(0)), version);
+                entities, missingSlots, root.path("standaloneQuery").asText(""),
+                pending, Math.max(0, root.path("clarificationAttempts").asInt(0)),
+                Math.max(0, root.path("remainingTurns").asInt(0)), version,
+                tasks, selectedTaskId);
         return parsed.status() == Status.ACTIVE && parsed.remainingTurns() <= 0
-            ? Snapshot.idle(version) : parsed;
+                && parsed.tasks().isEmpty()
+                ? Snapshot.idle(version) : parsed;
+    }
+
+    private Map<String, ConversationTaskManager.TaskState> parseTasks(JsonNode node) {
+        if (node == null || !node.isObject()) return Map.of();
+        LinkedHashMap<String, ConversationTaskManager.TaskState> tasks = new LinkedHashMap<>();
+        node.fields().forEachRemaining(entry -> {
+            if (tasks.size() >= MAX_TASKS || !entry.getValue().isObject()) return;
+            JsonNode value = entry.getValue();
+            String taskId = value.path("taskId").asText(entry.getKey()).trim();
+            if (!hasText(taskId)) return;
+
+            Map<String, String> taskSlots = new LinkedHashMap<>();
+            JsonNode slotNode = value.path("slots");
+            if (slotNode.isObject()) {
+                slotNode.fields().forEachRemaining(slot -> {
+                    if (slot.getValue().isTextual() && hasText(slot.getValue().asText())) {
+                        taskSlots.put(slot.getKey(), slot.getValue().asText().trim());
+                    }
+                });
+            }
+
+            List<String> requirements = new ArrayList<>();
+            JsonNode requirementNode = value.path("originalRequirements");
+            if (requirementNode.isArray()) {
+                requirementNode.forEach(requirement -> {
+                    if (requirement.isTextual() && hasText(requirement.asText())) {
+                        requirements.add(requirement.asText().trim());
+                    }
+                });
+            }
+
+            ConversationTaskManager.Status taskStatus;
+            try {
+                taskStatus = ConversationTaskManager.Status.valueOf(
+                        value.path("status").asText("ACTIVE"));
+            } catch (IllegalArgumentException exception) {
+                taskStatus = ConversationTaskManager.Status.ACTIVE;
+            }
+            tasks.put(taskId, new ConversationTaskManager.TaskState(
+                    taskId,
+                    value.path("intent").asText("UNKNOWN"),
+                    value.path("topic").asText(""),
+                    taskSlots,
+                    requirements,
+                    taskStatus,
+                    Math.max(0L, value.path("updatedVersion").asLong(0L)),
+                    value.path("reason").asText("")));
+        });
+        return tasks;
     }
 
     private Snapshot legacyPending(List<BotMessage> messages, long version) {
@@ -489,7 +594,18 @@ public class ConversationStateService {
     public record Snapshot(
             Status status, String activeIntent, Map<String, String> entities,
             List<String> missingSlots, String standaloneQuery, PendingState pending,
-            int clarificationAttempts, int remainingTurns, long version) {
+            int clarificationAttempts, int remainingTurns, long version,
+            Map<String, ConversationTaskManager.TaskState> tasks,
+            String selectedTaskId) {
+
+        public Snapshot(Status status, String activeIntent, Map<String, String> entities,
+                        List<String> missingSlots, String standaloneQuery,
+                        PendingState pending, int clarificationAttempts,
+                        int remainingTurns, long version) {
+            this(status, activeIntent, entities, missingSlots, standaloneQuery, pending,
+                    clarificationAttempts, remainingTurns, version, Map.of(), "");
+        }
+
         public Snapshot {
             status = status == null ? Status.IDLE : status;
             activeIntent = activeIntent == null ? "" : activeIntent;
@@ -499,11 +615,13 @@ public class ConversationStateService {
             clarificationAttempts = Math.max(0, clarificationAttempts);
             remainingTurns = Math.max(0, remainingTurns);
             version = Math.max(0L, version);
+            tasks = tasks == null ? Map.of() : Map.copyOf(tasks);
+            selectedTaskId = selectedTaskId == null ? "" : selectedTaskId;
         }
 
         public static Snapshot idle(long version) {
             return new Snapshot(Status.IDLE, "", Map.of(), List.of(), "",
-                null, 0, 0, version);
+                    null, 0, 0, version, Map.of(), "");
         }
 
         public Map<String, Object> toMap() {
@@ -517,6 +635,10 @@ public class ConversationStateService {
             values.put("pending", pending == null ? null : pending.toMap());
             values.put("clarificationAttempts", clarificationAttempts);
             values.put("remainingTurns", remainingTurns);
+            LinkedHashMap<String, Object> taskCollection = new LinkedHashMap<>();
+            tasks.forEach((taskId, task) -> taskCollection.put(taskId, task.toMap()));
+            values.put("taskCollection", taskCollection);
+            values.put("selectedTaskId", selectedTaskId);
             return values;
         }
 

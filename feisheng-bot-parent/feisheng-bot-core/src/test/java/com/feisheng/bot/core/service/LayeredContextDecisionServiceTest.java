@@ -86,6 +86,18 @@ class LayeredContextDecisionServiceTest {
     }
 
     @Test
+    void validatorRejectsContextDependentDecisionWithoutSelectedCandidate() {
+        TurnContext context = context(List.of(candidate("message:9", "recent_message", "历史问题")));
+        DecisionValidator validator = new DecisionValidator();
+        ContextDecision followUpWithoutEvidence = decision(
+            ContextDecision.Relation.FOLLOW_UP, List.of(), List.of(), List.of("视频形式"),
+            "凭空补出的历史问题", 0.95, false);
+
+        assertThrows(IllegalArgumentException.class,
+            () -> validator.validate(context, followUpWithoutEvidence));
+    }
+
+    @Test
     void turnContextRejectsCandidatesBeyondTheModelPromptBudget() {
         List<ContextCandidate> candidates = java.util.stream.IntStream.range(0, 13)
                 .mapToObj(index -> candidate("message:" + index, "recent_message", "历史问题" + index))

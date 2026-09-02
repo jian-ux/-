@@ -7,8 +7,10 @@ import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.stereotype.Component;
 
 /** Collects bounded customer context and deliberately makes no semantic decision. */
+@Component
 public class ContextCandidateSelector {
     private static final String PLAYGROUND = "playground";
 
@@ -20,9 +22,25 @@ public class ContextCandidateSelector {
                 || PLAYGROUND.equalsIgnoreCase(channelType.trim())) return List.of();
         Map<String, ContextCandidate> candidates = new LinkedHashMap<>();
         addActiveTask(candidates, channelType.trim(), channelUserId.trim(), conversationId, state);
+        addTaskCollection(candidates, channelType.trim(), channelUserId.trim(), conversationId, state);
         addRecent(candidates, channelType.trim(), channelUserId.trim(), conversationId, recent);
         addCustomerRecords(candidates, channelType.trim(), channelUserId.trim(), customerContext);
         return candidates.values().stream().limit(maxCandidates).toList();
+    }
+
+    private void addTaskCollection(Map<String, ContextCandidate> candidates,
+                                   String channelType,
+                                   String channelUserId,
+                                   Long conversationId,
+                                   ConversationStateService.Snapshot state) {
+        if (state == null || state.tasks().isEmpty()) {
+            return;
+        }
+        state.tasks().values().stream()
+            .filter(task -> task != null && !isBlank(task.taskId()) && !isBlank(task.topic()))
+            .forEach(task -> candidates.putIfAbsent(task.taskId(), new ContextCandidate(
+                task.taskId(), "conversation_task", task.topic(), conversationId, null,
+                channelType, channelUserId, 1D, null, null, "conversation_task_collection")));
     }
 
     private void addActiveTask(Map<String, ContextCandidate> candidates, String channelType, String channelUserId,

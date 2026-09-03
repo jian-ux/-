@@ -6,6 +6,7 @@ public class ChatResponse {
     private String providerCode;
     private int inputTokens;
     private int outputTokens;
+    private LlmFailureType failureType = LlmFailureType.NONE;
 
     public ChatResponse() {}
 
@@ -31,4 +32,8 @@ public class ChatResponse {
     public void setInputTokens(int t) { inputTokens = t; }
     public int getOutputTokens() { return outputTokens; }
     public void setOutputTokens(int t) { outputTokens = t; }
+    public LlmFailureType getFailureType() { return failureType; }
+    public void setFailureType(LlmFailureType type) {
+        failureType = type == null ? LlmFailureType.NONE : type;
+    }
 }

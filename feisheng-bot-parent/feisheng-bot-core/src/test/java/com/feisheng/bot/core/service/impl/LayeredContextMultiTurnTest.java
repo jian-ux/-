@@ -8,6 +8,7 @@ import com.feisheng.bot.core.entity.BotMessage;
 import com.feisheng.bot.core.mapper.BotAiReplyLogMapper;
 import com.feisheng.bot.core.service.BusinessSafetyBoundaryService;
 import com.feisheng.bot.core.service.ContextDecision;
+import com.feisheng.bot.core.service.ContextModelCallPolicy;
 import com.feisheng.bot.core.service.ConversationServiceImpl;
 import com.feisheng.bot.core.service.CustomerServicePromptProvider;
 import com.feisheng.bot.core.service.CustomerContextRecallService;
@@ -41,6 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -117,6 +119,8 @@ class LayeredContextMultiTurnTest {
         ReflectionTestUtils.setField(dialogService, "contextSummaryEnabled", false);
         ReflectionTestUtils.setField(dialogService, "layeredContextEnabled", true);
         ReflectionTestUtils.setField(dialogService, "layeredContextMaxCandidates", 12);
+        ReflectionTestUtils.setField(dialogService, "layeredContextFastModelId", 11L);
+        ReflectionTestUtils.setField(dialogService, "layeredContextDeepModelId", 22L);
         ReflectionTestUtils.setField(dialogService, "noAnswerReply", "暂无可核实资料");
         ReflectionTestUtils.setField(dialogService, "unrelatedReply", "暂无可核实资料");
         ReflectionTestUtils.setField(dialogService, "outOfScopeReply", "暂无可核实资料");
@@ -126,7 +130,8 @@ class LayeredContextMultiTurnTest {
 
     @Test
     void customerFollowUpUsesResolvedQueryAndKeepsOriginalRequirement() {
-        when(intentUnderstandingService.decideContext(any(), isNull()))
+        when(intentUnderstandingService.decideContext(any(), eq(11L),
+                eq(ContextModelCallPolicy.Tier.FAST), anyLong()))
             .thenReturn(modelDecision(new ContextDecision(
                 ContextDecision.Relation.NEW_TOPIC, "PRODUCT_USAGE", List.of(), List.of(),
                 ContextDecision.TaskAction.CREATE, "task:usage", List.of(), "点签的使用教程", 0.96, false)))
@@ -140,13 +145,17 @@ class LayeredContextMultiTurnTest {
 
         assertEquals("点签的使用教程，有没有视频教程？", followUp.get("resolvedQuery"));
         assertEquals("FAST_MODEL", followUp.get("contextDecisionRoute"));
+        assertEquals(11L, followUp.get("contextFastModelId"));
+        assertEquals(null, followUp.get("contextDeepModelId"));
+        assertEquals("ACCEPTED", followUp.get("contextFastOutcome"));
         assertEquals(List.of("视频形式"), followUp.get("originalRequirements"));
         assertTrue(String.valueOf(followUp.get("retrievalPrimaryQuery")).contains("当前问题"));
     }
 
     @Test
     void newTopicDoesNotReusePreviousTopic() {
-        when(intentUnderstandingService.decideContext(any(), isNull()))
+        when(intentUnderstandingService.decideContext(any(), eq(11L),
+                eq(ContextModelCallPolicy.Tier.FAST), anyLong()))
             .thenReturn(modelDecision(decision(ContextDecision.Relation.NEW_TOPIC, "PRODUCT_USAGE", "点签教程")))
             .thenReturn(modelDecision(decision(ContextDecision.Relation.NEW_TOPIC, "ACCOUNT_OPERATION", "如何重置密码")));
 
@@ -160,7 +169,8 @@ class LayeredContextMultiTurnTest {
 
     @Test
     void correctionReplacesPreviousRequirementWithoutDroppingTurnMetadata() {
-        when(intentUnderstandingService.decideContext(any(), isNull()))
+        when(intentUnderstandingService.decideContext(any(), eq(11L),
+                eq(ContextModelCallPolicy.Tier.FAST), anyLong()))
             .thenReturn(modelDecision(decision(ContextDecision.Relation.NEW_TOPIC, "PRODUCT_USAGE", "点签教程")))
             .thenReturn(modelDecision(new ContextDecision(
             ContextDecision.Relation.CORRECTION, "PRODUCT_USAGE", List.of("task:active"), List.of(),
@@ -177,13 +187,14 @@ class LayeredContextMultiTurnTest {
 
     @Test
     void modelFailureFallsBackConservativelyAndDoesNotInventContext() {
-        when(intentUnderstandingService.decideContext(any(), isNull()))
+        when(intentUnderstandingService.decideContext(any(), eq(11L),
+                eq(ContextModelCallPolicy.Tier.FAST), anyLong()))
             .thenReturn(IntentUnderstandingService.ContextModelResult.failed("model_unavailable", 5L));
 
         Map<String, Object> result = dialogService.send("web", "acceptance-user", "视频教程有没有？", "咨询");
 
         assertEquals("FALLBACK", result.get("contextDecisionRoute"));
-        assertEquals("deep_model_unavailable", result.get("contextDecisionFallbackReason"));
+        assertEquals("model_unavailable", result.get("contextDecisionFallbackReason"));
         assertEquals("视频教程有没有？", result.get("originalQuery"));
         assertEquals("视频教程有没有？", result.get("resolvedQuery"));
     }
@@ -197,7 +208,8 @@ class LayeredContextMultiTurnTest {
         when(conversationService.getOrCreate("web", "other-customer", "咨询")).thenReturn(other);
         when(conversationService.getById(25L)).thenReturn(other);
         when(messageService.getByConversation(25L)).thenReturn(List.of());
-        when(intentUnderstandingService.decideContext(any(), isNull()))
+        when(intentUnderstandingService.decideContext(any(), eq(11L),
+                eq(ContextModelCallPolicy.Tier.FAST), anyLong()))
             .thenReturn(modelDecision(decision(ContextDecision.Relation.FOLLOW_UP, "PRODUCT_USAGE", "错误客户上下文")));
 
         Map<String, Object> result = dialogService.send("web", "other-customer", "视频教程有没有？", "咨询");
@@ -217,7 +229,8 @@ class LayeredContextMultiTurnTest {
                     new Date(), null, "cross_session_memory")));
         when(customerContextRecallService.recall(anyString(), anyString(), any(), anyString(), any(), anyList()))
             .thenReturn(snapshot);
-        when(intentUnderstandingService.decideContext(any(), isNull()))
+        when(intentUnderstandingService.decideContext(any(), eq(11L),
+                eq(ContextModelCallPolicy.Tier.FAST), anyLong()))
             .thenReturn(modelDecision(new ContextDecision(
                 ContextDecision.Relation.FOLLOW_UP, "PRODUCT_USAGE",
                 List.of("memory:preferred-format"), List.of("memory:preferred-format"),
@@ -243,7 +256,8 @@ class LayeredContextMultiTurnTest {
                     new Date(), null, "cross_session_memory")));
         when(customerContextRecallService.recall(anyString(), anyString(), any(), anyString(), any(), anyList()))
             .thenReturn(snapshot);
-        when(intentUnderstandingService.decideContext(any(), isNull()))
+        when(intentUnderstandingService.decideContext(any(), eq(11L),
+                eq(ContextModelCallPolicy.Tier.FAST), anyLong()))
             .thenReturn(modelDecision(new ContextDecision(
                 ContextDecision.Relation.NEW_TOPIC, "PRODUCT_USAGE", List.of(), List.of(),
                 ContextDecision.TaskAction.CREATE, "task:usage", List.of(),
@@ -259,7 +273,8 @@ class LayeredContextMultiTurnTest {
 
     @Test
     void customerCanPauseOneTaskAndResumeTheEarlierTask() {
-        when(intentUnderstandingService.decideContext(any(), isNull()))
+        when(intentUnderstandingService.decideContext(any(), eq(11L),
+                eq(ContextModelCallPolicy.Tier.FAST), anyLong()))
             .thenReturn(modelDecision(new ContextDecision(
                 ContextDecision.Relation.NEW_TOPIC, "PRODUCT_USAGE", List.of(), List.of(),
                 ContextDecision.TaskAction.CREATE, "task:usage", List.of(),

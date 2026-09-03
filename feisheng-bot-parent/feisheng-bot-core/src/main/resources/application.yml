@@ -58,9 +58,15 @@ customer-service:
   layered-context:
     enabled: ${CUSTOMER_SERVICE_LAYERED_CONTEXT_ENABLED:true}
     max-candidates: ${CUSTOMER_SERVICE_LAYERED_CONTEXT_MAX_CANDIDATES:12}
-    fast-model-id: ${CUSTOMER_SERVICE_LAYERED_CONTEXT_FAST_MODEL_ID:0}
-    deep-model-id: ${CUSTOMER_SERVICE_LAYERED_CONTEXT_DEEP_MODEL_ID:0}
+    fast-model-id: ${CUSTOMER_SERVICE_LAYERED_CONTEXT_FAST_MODEL_ID:${CUSTOMER_SERVICE_INTENT_MODEL_ID:0}}
+    deep-model-id: ${CUSTOMER_SERVICE_LAYERED_CONTEXT_DEEP_MODEL_ID:${CUSTOMER_SERVICE_FLASH_MODEL_ID:0}}
+    deep-backup-model-id: ${CUSTOMER_SERVICE_LAYERED_CONTEXT_DEEP_BACKUP_MODEL_ID:0}
     fast-confidence: ${CUSTOMER_SERVICE_LAYERED_CONTEXT_FAST_CONFIDENCE:0.80}
+    fast-timeout-ms: ${CUSTOMER_SERVICE_LAYERED_CONTEXT_FAST_TIMEOUT_MS:3000}
+    deep-timeout-ms: ${CUSTOMER_SERVICE_LAYERED_CONTEXT_DEEP_TIMEOUT_MS:8000}
+    backup-timeout-ms: ${CUSTOMER_SERVICE_LAYERED_CONTEXT_BACKUP_TIMEOUT_MS:4000}
+    overall-timeout-ms: ${CUSTOMER_SERVICE_LAYERED_CONTEXT_OVERALL_TIMEOUT_MS:15000}
+    max-retries: ${CUSTOMER_SERVICE_LAYERED_CONTEXT_MAX_RETRIES:0}
   flash-model-id: ${CUSTOMER_SERVICE_FLASH_MODEL_ID:0}
   flash-max-question-chars: ${CUSTOMER_SERVICE_FLASH_MAX_QUESTION_CHARS:80}
 
@@ -236,6 +242,12 @@ resilience4j:
         failure-rate-threshold: ${DIALOG_CIRCUIT_BREAKER_FAILURE_RATE_THRESHOLD:50}
         wait-duration-in-open-state: ${DIALOG_CIRCUIT_BREAKER_WAIT_DURATION_SECONDS:30}s
         permitted-number-of-calls-in-half-open-state: 3
+      contextModel:
+        sliding-window-size: ${CONTEXT_MODEL_CIRCUIT_BREAKER_SLIDING_WINDOW_SIZE:10}
+        minimum-number-of-calls: ${CONTEXT_MODEL_CIRCUIT_BREAKER_MINIMUM_NUMBER_OF_CALLS:5}
+        failure-rate-threshold: ${CONTEXT_MODEL_CIRCUIT_BREAKER_FAILURE_RATE_THRESHOLD:50}
+        wait-duration-in-open-state: ${CONTEXT_MODEL_CIRCUIT_BREAKER_WAIT_DURATION_SECONDS:30}s
+        permitted-number-of-calls-in-half-open-state: 1
     instances:
       aiModel:
         base-config: default

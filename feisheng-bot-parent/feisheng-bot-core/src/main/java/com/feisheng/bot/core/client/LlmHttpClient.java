@@ -1,6 +1,7 @@
 package com.feisheng.bot.core.client;
 
 import com.feisheng.bot.core.dto.ChatResponse;
+import com.feisheng.bot.core.dto.LlmFailureType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -8,6 +9,7 @@ import org.springframework.http.*;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.HttpStatusCodeException;
 
 import jakarta.annotation.PostConstruct;
 import java.time.Duration;
@@ -98,6 +100,20 @@ public class LlmHttpClient {
             systemPrompt, userPrompt, providerCode, Math.max(0, requestMaxRetries));
     }
 
+    /** Uses request-local timeout/retry limits while requiring provider JSON Schema support. */
+    public ChatResponse callJsonSchemaWithPolicy(String apiUrl, String apiKey, String model,
+                                                 String systemPrompt, String userPrompt,
+                                                 String providerCode, Map<String, Object> schema,
+                                                 int requestReadTimeout, int requestMaxRetries) {
+        return call(restTemplate(requestReadTimeout), apiUrl, apiKey, model, systemPrompt,
+            userPrompt, providerCode, Math.max(0, requestMaxRetries), Map.of(
+                "type", "json_schema",
+                "json_schema", Map.of(
+                    "name", "structured_response",
+                    "strict", true,
+                    "schema", schema)));
+    }
+
     private ChatResponse call(RestTemplate client, String apiUrl, String apiKey,
                               String model, String systemPrompt, String userPrompt,
                               String providerCode, int retries) {
@@ -142,34 +158,53 @@ public class LlmHttpClient {
                 ResponseEntity<Map> response = client.exchange(
                     apiUrl, HttpMethod.POST, entity, Map.class);
 
-                Map<String, Object> resp = response.getBody();
-                if (resp != null && resp.containsKey("choices")) {
-                    @SuppressWarnings("unchecked")
-                    List<Map<String, Object>> choices = (List<Map<String, Object>>) resp.get("choices");
-                    if (!choices.isEmpty()) {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
-                        String content = (String) message.get("content");
-
-                        int inTokens = 0, outTokens = 0;
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> usage = (Map<String, Object>) resp.get("usage");
-                        if (usage != null) {
-                            if (usage.get("prompt_tokens") != null)
-                                inTokens = ((Number) usage.get("prompt_tokens")).intValue();
-                            if (usage.get("completion_tokens") != null)
-                                outTokens = ((Number) usage.get("completion_tokens")).intValue();
-                        }
-                        boolean hasContent = content != null && !content.isBlank();
-                        if (!hasContent) {
-                            log.warn("LLM returned empty content: provider={}, model={}, finishReason={}, outputTokens={}",
-                                providerCode, m, choices.get(0).get("finish_reason"), outTokens);
-                        }
-                        return new ChatResponse(content, hasContent, m, providerCode, inTokens, outTokens);
-                    }
+            Map<String, Object> resp = response.getBody();
+            if (resp != null && resp.containsKey("choices")) {
+                Object choicesValue = resp.get("choices");
+                if (!(choicesValue instanceof List<?> choices) || choices.isEmpty()
+                        || !(choices.get(0) instanceof Map<?, ?> choice)
+                        || !(choice.get("message") instanceof Map<?, ?> message)) {
+                    return failureResponse("AI returned unexpected response format.",
+                            LlmFailureType.INVALID_OUTPUT);
                 }
+                Object contentValue = message.get("content");
+                if (contentValue != null && !(contentValue instanceof String)) {
+                    return failureResponse("AI returned unexpected response format.",
+                            LlmFailureType.INVALID_OUTPUT);
+                }
+                String content = (String) contentValue;
+
+                int inTokens = 0;
+                int outTokens = 0;
+                Object usageValue = resp.get("usage");
+                if (usageValue != null) {
+                    if (!(usageValue instanceof Map<?, ?> usage)) {
+                        return failureResponse("AI returned unexpected response format.",
+                                LlmFailureType.INVALID_OUTPUT);
+                    }
+                    Object promptTokens = usage.get("prompt_tokens");
+                    Object completionTokens = usage.get("completion_tokens");
+                    if (promptTokens != null && !(promptTokens instanceof Number)
+                            || completionTokens != null && !(completionTokens instanceof Number)) {
+                        return failureResponse("AI returned unexpected response format.",
+                                LlmFailureType.INVALID_OUTPUT);
+                    }
+                    inTokens = promptTokens == null ? 0 : ((Number) promptTokens).intValue();
+                    outTokens = completionTokens == null ? 0 : ((Number) completionTokens).intValue();
+                }
+                if (content == null || content.isBlank()) {
+                    log.warn("LLM returned empty content: provider={}, model={}, finishReason={}, outputTokens={}",
+                            providerCode, m, choice.get("finish_reason"), outTokens);
+                    ChatResponse invalid = new ChatResponse(content, false, m, providerCode,
+                            inTokens, outTokens);
+                    invalid.setFailureType(LlmFailureType.INVALID_OUTPUT);
+                    return invalid;
+                }
+                return new ChatResponse(content, true, m, providerCode, inTokens, outTokens);
+            }
                 // 响应格式异常，重试无意义
-                return new ChatResponse("AI returned unexpected response format.", false);
+                return failureResponse("AI returned unexpected response format.",
+                    LlmFailureType.INVALID_OUTPUT);
             } catch (Exception e) {
                 lastException = e;
                 if (attempt < retries) {
@@ -184,7 +219,53 @@ public class LlmHttpClient {
         }
         log.error("LLM call failed after {} retries: {}", retries,
             lastException != null ? lastException.getMessage() : "unknown");
-        return new ChatResponse("AI service unavailable.", false);
+        return failureResponse("AI service unavailable.", classifyFailure(lastException));
+    }
+
+    private ChatResponse failureResponse(String message, LlmFailureType failureType) {
+        ChatResponse response = new ChatResponse(message, false);
+        response.setFailureType(failureType);
+        return response;
+    }
+
+    private LlmFailureType classifyFailure(Exception exception) {
+        if (exception instanceof HttpStatusCodeException statusException) {
+            int status = statusException.getStatusCode().value();
+        String responseBody = statusException.getResponseBodyAsString();
+        if (status == 429 || containsQuotaExhaustion(responseBody)) {
+            return LlmFailureType.RATE_LIMIT;
+            }
+            if (status >= 500) {
+                return LlmFailureType.SERVER_ERROR;
+            }
+        if (status >= 400 && containsSchemaCompatibilityError(responseBody)) {
+                return LlmFailureType.SCHEMA_UNSUPPORTED;
+            }
+            return LlmFailureType.CLIENT_ERROR;
+        }
+        Throwable current = exception;
+        while (current != null) {
+            String message = current.getMessage();
+            if (current instanceof java.net.SocketTimeoutException
+                    || message != null && message.toLowerCase(Locale.ROOT).contains("timed out")) {
+                return LlmFailureType.TIMEOUT;
+            }
+            current = current.getCause();
+        }
+        return LlmFailureType.MODEL_UNAVAILABLE;
+    }
+
+    private boolean containsSchemaCompatibilityError(String responseBody) {
+        String body = responseBody == null ? "" : responseBody.toLowerCase(Locale.ROOT);
+        return body.contains("json_schema") || body.contains("response_format")
+                || body.contains("uniqueitems")
+                || body.contains("schema") && body.contains("unsupported");
+    }
+
+    private boolean containsQuotaExhaustion(String responseBody) {
+        String body = responseBody == null ? "" : responseBody.toLowerCase(Locale.ROOT);
+        return body.contains("allocationquota") || body.contains("quota exhausted")
+                || body.contains("free tier only");
     }
 
     public String getDefaultSystemPrompt() { return defaultSystemPrompt; }

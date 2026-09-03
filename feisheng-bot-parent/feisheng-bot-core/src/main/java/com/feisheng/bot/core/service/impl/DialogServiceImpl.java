@@ -505,6 +505,8 @@ public class DialogServiceImpl {
     private long layeredContextFastModelId;
     @Value("${customer-service.layered-context.deep-model-id:0}")
     private long layeredContextDeepModelId;
+    @Value("${customer-service.layered-context.deep-backup-model-id:0}")
+    private long layeredContextDeepBackupModelId;
 
     private final ConversationServiceImpl conversationService;
     private final MessageServiceImpl messageService;
@@ -859,7 +861,8 @@ public class DialogServiceImpl {
                 conversation.getId(), userMessage.getId(), safeText, contextCandidates);
             contextDecisionResult = layeredContextDecisionService.decide(turnContext,
                 layeredContextFastModelId > 0 ? layeredContextFastModelId : null,
-                layeredContextDeepModelId > 0 ? layeredContextDeepModelId : null);
+                layeredContextDeepModelId > 0 ? layeredContextDeepModelId : null,
+                layeredContextDeepBackupModelId > 0 ? layeredContextDeepBackupModelId : null);
             contextDecision = contextDecisionResult.decision();
             contextDecisionFallbackReason = contextDecisionResult.fallbackReason();
         }
@@ -1632,6 +1635,36 @@ public class DialogServiceImpl {
         response.put("contextDecisionRoute", contextDecisionResult == null
             ? "DISABLED" : contextDecisionResult.route().name());
         response.put("contextDecisionFallbackReason", contextDecisionFallbackReason);
+        response.put("contextFastModelId", contextDecisionResult == null
+            ? null : contextDecisionResult.fastModelId());
+        response.put("contextDeepModelId", contextDecisionResult == null
+            ? null : contextDecisionResult.deepModelId());
+        response.put("contextBackupModelId", contextDecisionResult == null
+            ? null : contextDecisionResult.backupModelId());
+        response.put("contextFastOutcome", contextDecisionResult == null
+            ? "DISABLED" : contextDecisionResult.fastOutcome().name());
+        response.put("contextDeepTriggerReason", contextDecisionResult == null
+            ? "NONE" : contextDecisionResult.deepTriggerReason().name());
+        response.put("contextFastFailureType", contextDecisionResult == null
+            ? "NONE" : contextDecisionResult.fastFailureType().name());
+        response.put("contextDeepFailureType", contextDecisionResult == null
+            ? "NONE" : contextDecisionResult.deepFailureType().name());
+        response.put("contextBackupFailureType", contextDecisionResult == null
+            ? "NONE" : contextDecisionResult.backupFailureType().name());
+        response.put("contextFastLatencyMs", contextDecisionResult == null
+            ? 0L : contextDecisionResult.fastLatencyMs());
+        response.put("contextDeepLatencyMs", contextDecisionResult == null
+            ? 0L : contextDecisionResult.deepLatencyMs());
+        response.put("contextBackupLatencyMs", contextDecisionResult == null
+            ? 0L : contextDecisionResult.backupLatencyMs());
+        response.put("contextUsedFastFallback", contextDecisionResult != null
+            && contextDecisionResult.usedFastFallback());
+        response.put("contextDeadlineExceeded", contextDecisionResult != null
+            && contextDecisionResult.deadlineExceeded());
+        response.put("contextCandidateCount", contextDecisionResult == null
+            ? contextCandidates.size() : contextDecisionResult.candidateCount());
+        response.put("contextDecisionLatencyMs", contextDecisionResult == null
+            ? 0L : contextDecisionResult.latencyMs());
         response.put("contextCandidateIds", contextCandidates.stream()
             .map(ContextCandidate::contextId).toList());
         response.put("selectedContextIds", contextDecision == null

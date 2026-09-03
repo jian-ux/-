@@ -1,6 +1,7 @@
 package com.feisheng.bot.core.service;
 
 import com.feisheng.bot.core.dto.ChatResponse;
+import com.feisheng.bot.core.dto.LlmFailureType;
 import com.feisheng.bot.core.entity.BotMessage;
 import com.feisheng.bot.core.service.impl.AiModelServiceImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -28,6 +29,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class IntentUnderstandingServiceTest {
     @Mock private AiModelServiceImpl aiModelService;
+    @Mock private ContextModelCallService contextModelCallService;
 
     @Test
     void returnsStandaloneKnowledgeQueryFromRecentContext() {
@@ -253,6 +255,7 @@ class IntentUnderstandingServiceTest {
         Map<?, ?> properties = (Map<?, ?>) schema.getValue().get("properties");
         Map<?, ?> intentCode = (Map<?, ?>) properties.get("intent_code");
         assertTrue(((List<?>) intentCode.get("enum")).contains("SYSTEM_INTEGRATION"));
+        assertFalse(containsKeyRecursively(schema.getValue(), "uniqueItems"));
     }
 
     @Test
@@ -290,6 +293,71 @@ class IntentUnderstandingServiceTest {
         assertTrue(prompt.getValue().contains("message:9"));
         assertEquals(10, ((List<?>) schema.getValue().get("required")).size());
         assertEquals(Boolean.FALSE, schema.getValue().get("additionalProperties"));
+        assertFalse(containsKeyRecursively(schema.getValue(), "uniqueItems"));
+    }
+
+    @Test
+    void propagatesTypedTimeoutFromBoundedContextGatewayWithoutLegacyRetry() {
+        long deadlineNanos = System.nanoTime() + 5_000_000_000L;
+        ChatResponse timeout = new ChatResponse("context model timeout", false);
+        timeout.setFailureType(LlmFailureType.TIMEOUT);
+        when(contextModelCallService.callJsonDecision(
+                eq(11L), anyString(), anyString(), anyMap(),
+                eq(ContextModelCallPolicy.Tier.FAST), eq(deadlineNanos)))
+            .thenReturn(new ContextModelCallService.CallResult(timeout, 37L, false, false));
+        IntentUnderstandingService service = serviceWithGateway(true, 0.75, 4, 7L);
+        TurnContext context = TurnContext.start("turn:1", "web", "customer-1",
+            1L, 1L, "有没有视频的？", List.of());
+
+        IntentUnderstandingService.ContextModelResult result = service.decideContext(
+            context, 11L, ContextModelCallPolicy.Tier.FAST, deadlineNanos);
+
+        assertTrue(result.attempted());
+        assertEquals(null, result.decision());
+        assertEquals("timeout", result.reasonCode());
+        assertEquals(LlmFailureType.TIMEOUT, result.failureType());
+        assertEquals(37L, result.latencyMs());
+        verify(aiModelService, never()).chatWithExactModelJson(
+            anyString(), anyString(), eq(11L), anyMap());
+        verify(aiModelService, never()).chatWithExactModel(
+            anyString(), anyString(), eq(11L));
+    }
+
+    @Test
+    void retriesContextDecisionWithoutProviderSchemaWhenTheSameModelRejectsIt() {
+        IntentUnderstandingService service = service(true, 0.75, 4, 7L);
+        String decisionJson = """
+            {"relation":"NEW_TOPIC","intent":"PRODUCT_USAGE",
+            "selected_context_ids":[],"selected_memory_ids":[],
+            "task_action":"CREATE","task_id":"task:usage",
+            "original_requirements":[],"resolved_query":"点签的使用教程",
+            "confidence":0.91,"need_large_model":false}
+            """;
+        when(aiModelService.chatWithExactModelJson(
+            anyString(), anyString(), eq(11L), anyMap()))
+            .thenReturn(new ChatResponse("schema unsupported", false));
+        when(aiModelService.chatWithExactModel(anyString(), anyString(), eq(11L)))
+            .thenReturn(response(decisionJson));
+        TurnContext context = TurnContext.start("turn:1", "web", "customer-1",
+            1L, 1L, "点签的使用教程", List.of());
+
+        IntentUnderstandingService.ContextModelResult result = service.decideContext(context, 11L);
+
+        assertTrue(result.attempted());
+        assertEquals(ContextDecision.Relation.NEW_TOPIC, result.decision().relation());
+        assertEquals("点签的使用教程", result.decision().resolvedQuery());
+        verify(aiModelService).chatWithExactModelJson(
+                anyString(), anyString(), eq(11L), anyMap());
+        ArgumentCaptor<String> fallbackSystemPrompt = ArgumentCaptor.forClass(String.class);
+        verify(aiModelService).chatWithExactModel(
+                anyString(), fallbackSystemPrompt.capture(), eq(11L));
+        for (String requiredField : List.of(
+                "relation", "intent", "selected_context_ids", "selected_memory_ids",
+                "task_action", "task_id", "original_requirements", "resolved_query",
+                "confidence", "need_large_model")) {
+            assertTrue(fallbackSystemPrompt.getValue().contains(requiredField), requiredField);
+        }
+        assertTrue(fallbackSystemPrompt.getValue().contains("additionalProperties"));
     }
 
     @Test
@@ -355,6 +423,13 @@ class IntentUnderstandingServiceTest {
             aiModelService, new ObjectMapper(), enabled, confidence, historyMessages, modelId);
     }
 
+    private IntentUnderstandingService serviceWithGateway(boolean enabled, double confidence,
+                                                           int historyMessages, long modelId) {
+        return new IntentUnderstandingService(
+            aiModelService, contextModelCallService, new ObjectMapper(), enabled, confidence,
+            historyMessages, modelId);
+    }
+
     private void assertInvalid(IntentUnderstandingService.Understanding result) {
         assertTrue(result.attempted());
         assertFalse(result.actionable());
@@ -374,5 +449,23 @@ class IntentUnderstandingServiceTest {
 
     private int occurrences(String value, String expected) {
         return value.split(java.util.regex.Pattern.quote(expected), -1).length - 1;
+    }
+
+    private boolean containsKeyRecursively(Object value, String expectedKey) {
+        if (value instanceof Map<?, ?> map) {
+            if (map.containsKey(expectedKey)) {
+                return true;
+            }
+            return map.values().stream()
+                    .anyMatch(item -> containsKeyRecursively(item, expectedKey));
+        }
+        if (value instanceof Iterable<?> iterable) {
+            for (Object item : iterable) {
+                if (containsKeyRecursively(item, expectedKey)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 }

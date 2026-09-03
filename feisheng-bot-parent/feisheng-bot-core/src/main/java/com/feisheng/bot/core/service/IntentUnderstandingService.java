@@ -1,6 +1,7 @@
 package com.feisheng.bot.core.service;
 
 import com.feisheng.bot.core.dto.ChatResponse;
+import com.feisheng.bot.core.dto.LlmFailureType;
 import com.feisheng.bot.core.entity.BotMessage;
 import com.feisheng.bot.core.service.impl.AiModelServiceImpl;
 import com.fasterxml.jackson.core.JsonParser;
@@ -159,6 +160,7 @@ public class IntentUnderstandingService {
         """;
 
     private final AiModelServiceImpl aiModelService;
+    private final ContextModelCallService contextModelCallService;
     private final ObjectMapper objectMapper;
     private final boolean enabled;
     private final double minimumConfidence;
@@ -168,6 +170,7 @@ public class IntentUnderstandingService {
     @Autowired
     public IntentUnderstandingService(
             AiModelServiceImpl aiModelService,
+            ContextModelCallService contextModelCallService,
             ObjectMapper objectMapper,
             @Value("${customer-service.intent-understanding.enabled:true}") boolean enabled,
             @Value("${customer-service.intent-understanding.min-confidence:0.75}")
@@ -177,12 +180,24 @@ public class IntentUnderstandingService {
             @Value("${customer-service.intent-understanding.model-id:0}")
             long intentModelId) {
         this.aiModelService = aiModelService;
+        this.contextModelCallService = contextModelCallService;
         this.objectMapper = objectMapper.copy()
-            .enable(DeserializationFeature.FAIL_ON_READING_DUP_TREE_KEY);
+                .enable(DeserializationFeature.FAIL_ON_READING_DUP_TREE_KEY);
         this.enabled = enabled;
         this.minimumConfidence = Math.max(0.0, Math.min(1.0, minimumConfidence));
         this.maxHistoryMessages = Math.max(0, Math.min(8, maxHistoryMessages));
         this.intentModelId = Math.max(0L, intentModelId);
+    }
+
+    public IntentUnderstandingService(
+            AiModelServiceImpl aiModelService,
+            ObjectMapper objectMapper,
+            boolean enabled,
+            double minimumConfidence,
+            int maxHistoryMessages,
+            long intentModelId) {
+        this(aiModelService, null, objectMapper, enabled, minimumConfidence,
+                maxHistoryMessages, intentModelId);
     }
 
     public Understanding understand(String question, List<BotMessage> messages,
@@ -227,10 +242,21 @@ public class IntentUnderstandingService {
         long started = System.nanoTime();
         try {
             String prompt = buildContextPrompt(context);
-            ChatResponse response = modelId != null && modelId > 0
-                    ? aiModelService.chatWithExactModelJson(prompt, CONTEXT_SYSTEM_PROMPT,
-                    modelId, CONTEXT_RESPONSE_SCHEMA)
-                    : aiModelService.chatWithModel(prompt, CONTEXT_SYSTEM_PROMPT, modelId);
+            ChatResponse response;
+            if (modelId != null && modelId > 0) {
+                response = aiModelService.chatWithExactModelJson(prompt, CONTEXT_SYSTEM_PROMPT,
+                    modelId, CONTEXT_RESPONSE_SCHEMA);
+                if (response == null || !response.isSuccess() || response.getContent() == null
+                        || response.getContent().isBlank()) {
+                    String fallbackSystemPrompt = CONTEXT_SYSTEM_PROMPT
+                            + "\n普通调用时也必须严格遵循以下 JSON Schema，只输出一个 JSON 对象：\n"
+                            + objectMapper.writeValueAsString(CONTEXT_RESPONSE_SCHEMA);
+                    response = aiModelService.chatWithExactModel(
+                            prompt, fallbackSystemPrompt, modelId);
+                }
+            } else {
+                response = aiModelService.chatWithModel(prompt, CONTEXT_SYSTEM_PROMPT, modelId);
+            }
             long latencyMs = elapsedMillis(started);
             if (response == null || !response.isSuccess() || response.getContent() == null
                     || response.getContent().isBlank()) {
@@ -238,9 +264,75 @@ public class IntentUnderstandingService {
             }
             return ContextModelResult.success(parseContextDecision(response.getContent()), latencyMs);
         } catch (Exception e) {
-            log.warn("Context decision failed; using layered fallback ({})", e.getClass().getSimpleName());
+            log.warn("Context decision failed; using layered fallback ({}: {})",
+                    e.getClass().getSimpleName(), e.getMessage());
             return ContextModelResult.failed("invalid_model_output", elapsedMillis(started));
         }
+    }
+
+    public ContextModelResult decideContext(
+            TurnContext context,
+            Long modelId,
+            ContextModelCallPolicy.Tier tier,
+            long deadlineNanos) {
+        if (context == null || context.originalQuery().isBlank()
+                || context.originalQuery().length() > MAX_QUERY_CHARS) {
+            return ContextModelResult.notAttempted(enabled ? "invalid_question" : "disabled");
+        }
+        if (!enabled) {
+            return ContextModelResult.notAttempted("disabled");
+        }
+        if (contextModelCallService == null) {
+            return ContextModelResult.failed("model_unavailable", 0L,
+                    LlmFailureType.MODEL_UNAVAILABLE, false, false);
+        }
+
+        try {
+            String prompt = buildContextPrompt(context);
+            String schemaPrompt = CONTEXT_SYSTEM_PROMPT
+                    + "\n普通调用时也必须严格遵循以下 JSON Schema，只输出一个 JSON 对象：\n"
+                    + objectMapper.writeValueAsString(CONTEXT_RESPONSE_SCHEMA);
+            ContextModelCallService.CallResult callResult =
+                    contextModelCallService.callJsonDecision(modelId, prompt, schemaPrompt,
+                            CONTEXT_RESPONSE_SCHEMA, tier, deadlineNanos);
+            ChatResponse response = callResult.response();
+            if (response == null || !response.isSuccess() || response.getContent() == null
+                    || response.getContent().isBlank()) {
+                LlmFailureType failureType = response == null
+                        ? LlmFailureType.MODEL_UNAVAILABLE : response.getFailureType();
+                return ContextModelResult.failed(reasonCode(failureType), callResult.latencyMs(),
+                        failureType, callResult.schemaFallbackUsed(), callResult.circuitOpen());
+            }
+            try {
+                return ContextModelResult.success(parseContextDecision(response.getContent()),
+                        callResult.latencyMs(), callResult.schemaFallbackUsed(),
+                        callResult.circuitOpen());
+            } catch (IllegalArgumentException exception) {
+                return ContextModelResult.failed("invalid_model_output", callResult.latencyMs(),
+                        LlmFailureType.INVALID_OUTPUT, callResult.schemaFallbackUsed(),
+                        callResult.circuitOpen());
+            }
+        } catch (Exception exception) {
+            log.warn("Bounded context decision failed ({})", exception.getClass().getSimpleName());
+            return ContextModelResult.failed("model_unavailable", 0L,
+                    LlmFailureType.MODEL_UNAVAILABLE, false, false);
+        }
+    }
+
+    private String reasonCode(LlmFailureType failureType) {
+        if (failureType == null) {
+            return "model_unavailable";
+        }
+        return switch (failureType) {
+            case TIMEOUT -> "timeout";
+            case RATE_LIMIT -> "rate_limit";
+            case SERVER_ERROR -> "server_error";
+            case SCHEMA_UNSUPPORTED -> "schema_unsupported";
+            case INVALID_OUTPUT -> "invalid_model_output";
+            case CLIENT_ERROR -> "client_error";
+            case CIRCUIT_OPEN -> "circuit_open";
+            case NONE, MODEL_UNAVAILABLE -> "model_unavailable";
+        };
     }
 
     private String buildContextPrompt(TurnContext context) {
@@ -493,8 +585,8 @@ public class IntentUnderstandingService {
             "type", "string", "maxLength", MAX_QUERY_CHARS));
         properties.put("entities", entities);
         properties.put("missing_slots", Map.of(
-            "type", "array", "items", Map.of("type", "string", "enum", MISSING_SLOT_VALUES),
-            "maxItems", MAX_MISSING_SLOTS, "uniqueItems", true));
+                "type", "array", "items", Map.of("type", "string", "enum", MISSING_SLOT_VALUES),
+                "maxItems", MAX_MISSING_SLOTS));
         properties.put("context_dependent", Map.of("type", "boolean"));
         properties.put("confidence", Map.of(
             "type", "number", "minimum", 0, "maximum", 1));
@@ -514,7 +606,7 @@ public class IntentUnderstandingService {
         properties.put("intent", Map.of("type", "string", "enum", INTENT_CODE_VALUES));
         Map<String, Object> idArray = Map.of("type", "array", "items",
                 Map.of("type", "string", "minLength", 1, "maxLength", 120),
-                "maxItems", 12, "uniqueItems", true);
+                "maxItems", 12);
         properties.put("selected_context_ids", idArray);
         properties.put("selected_memory_ids", idArray);
         properties.put("task_action", Map.of("type", "string", "enum",
@@ -522,7 +614,7 @@ public class IntentUnderstandingService {
         properties.put("task_id", Map.of("type", "string", "maxLength", 120));
         properties.put("original_requirements", Map.of("type", "array", "items",
                 Map.of("type", "string", "minLength", 1, "maxLength", 160),
-                "maxItems", 12, "uniqueItems", true));
+                "maxItems", 12));
         properties.put("resolved_query", Map.of("type", "string", "minLength", 1, "maxLength", 500));
         properties.put("confidence", Map.of("type", "number", "minimum", 0, "maximum", 1));
         properties.put("need_large_model", Map.of("type", "boolean"));
@@ -541,7 +633,8 @@ public class IntentUnderstandingService {
         Set<String> actualFields = new HashSet<>();
         node.fieldNames().forEachRemaining(actualFields::add);
         if (!actualFields.equals(expectedFields)) {
-            throw new IllegalArgumentException("unexpected JSON fields");
+            throw new IllegalArgumentException("unexpected JSON fields: actual="
+                    + actualFields + ", expected=" + expectedFields);
         }
     }
 
@@ -618,22 +711,45 @@ public class IntentUnderstandingService {
     }
 
     public record ContextModelResult(boolean attempted, ContextDecision decision,
-                                     String reasonCode, long latencyMs) {
+                                     String reasonCode, long latencyMs,
+                                     LlmFailureType failureType,
+                                     boolean schemaFallbackUsed,
+                                     boolean circuitOpen) {
         public ContextModelResult {
             reasonCode = reasonCode == null ? "" : reasonCode;
             latencyMs = Math.max(0L, latencyMs);
+            failureType = failureType == null ? LlmFailureType.NONE : failureType;
         }
 
         public static ContextModelResult success(ContextDecision decision, long latencyMs) {
-            return new ContextModelResult(true, decision, "context_decision", latencyMs);
+            return success(decision, latencyMs, false, false);
+        }
+
+        public static ContextModelResult success(ContextDecision decision, long latencyMs,
+                                                 boolean schemaFallbackUsed,
+                                                 boolean circuitOpen) {
+            return new ContextModelResult(true, decision, "context_decision", latencyMs,
+                    LlmFailureType.NONE, schemaFallbackUsed, circuitOpen);
         }
 
         public static ContextModelResult failed(String reasonCode, long latencyMs) {
-            return new ContextModelResult(true, null, reasonCode, latencyMs);
+            return new ContextModelResult(true, null, reasonCode, latencyMs,
+                    "invalid_model_output".equals(reasonCode)
+                            ? LlmFailureType.INVALID_OUTPUT : LlmFailureType.MODEL_UNAVAILABLE,
+                    false, false);
+        }
+
+        public static ContextModelResult failed(String reasonCode, long latencyMs,
+                                                LlmFailureType failureType,
+                                                boolean schemaFallbackUsed,
+                                                boolean circuitOpen) {
+            return new ContextModelResult(true, null, reasonCode, latencyMs, failureType,
+                    schemaFallbackUsed, circuitOpen);
         }
 
         public static ContextModelResult notAttempted(String reasonCode) {
-            return new ContextModelResult(false, null, reasonCode, 0L);
+            return new ContextModelResult(false, null, reasonCode, 0L,
+                    LlmFailureType.NONE, false, false);
         }
     }
 }

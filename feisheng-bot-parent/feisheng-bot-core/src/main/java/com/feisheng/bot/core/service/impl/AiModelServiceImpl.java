@@ -4,6 +4,7 @@ import com.feisheng.bot.core.client.AdminClient;
 import com.feisheng.bot.core.client.LlmHttpClient;
 import com.feisheng.bot.core.client.LlmRouter;
 import com.feisheng.bot.core.dto.ChatResponse;
+import com.feisheng.bot.core.dto.LlmFailureType;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,8 +63,35 @@ public class AiModelServiceImpl {
         return chatWithExactModel(prompt, systemPrompt, modelId, responseSchema);
     }
 
+    /** Calls one configured model with a context-specific timeout and retry policy. */
+    public ChatResponse chatWithExactModelWithPolicy(String prompt, String systemPrompt,
+                                                     Long modelId, int requestReadTimeout,
+                                                     int requestMaxRetries) {
+        return chatWithExactModelWithPolicy(prompt, systemPrompt, modelId, null,
+            requestReadTimeout, requestMaxRetries);
+    }
+
+    /** Calls one configured model with provider-enforced JSON Schema and local policy. */
+    public ChatResponse chatWithExactModelJsonWithPolicy(String prompt, String systemPrompt,
+                                                         Long modelId,
+                                                         Map<String, Object> responseSchema,
+                                                         int requestReadTimeout,
+                                                         int requestMaxRetries) {
+        return chatWithExactModelWithPolicy(prompt, systemPrompt, modelId, responseSchema,
+            requestReadTimeout, requestMaxRetries);
+    }
+
     private ChatResponse chatWithExactModel(String prompt, String systemPrompt, Long modelId,
                                             Map<String, Object> responseSchema) {
+        return chatWithExactModelWithPolicy(prompt, systemPrompt, modelId, responseSchema,
+            -1, -1);
+    }
+
+    private ChatResponse chatWithExactModelWithPolicy(String prompt, String systemPrompt,
+                                                      Long modelId,
+                                                      Map<String, Object> responseSchema,
+                                                      int requestReadTimeout,
+                                                      int requestMaxRetries) {
         if (modelId == null || modelId <= 0) {
             return unavailableResponse("未配置指定模型");
         }
@@ -80,12 +108,19 @@ public class AiModelServiceImpl {
                 if (apiUrl.isBlank() || modelName.isBlank()) {
                     return unavailableResponse("指定模型地址不可用");
                 }
+                String providerCode = provider.isBlank() ? "exact" : provider;
+                if (requestReadTimeout > 0) {
+                    return responseSchema == null
+                        ? llmClient.callWithPolicy(apiUrl, apiKey, modelName, systemPrompt, prompt,
+                            providerCode, requestReadTimeout, Math.max(0, requestMaxRetries))
+                        : llmClient.callJsonSchemaWithPolicy(apiUrl, apiKey, modelName,
+                            systemPrompt, prompt, providerCode, responseSchema,
+                            requestReadTimeout, Math.max(0, requestMaxRetries));
+                }
                 return responseSchema == null
-                    ? llmClient.call(apiUrl, apiKey, modelName, systemPrompt, prompt,
-                        provider.isBlank() ? "exact" : provider)
+                    ? llmClient.call(apiUrl, apiKey, modelName, systemPrompt, prompt, providerCode)
                     : llmClient.callJsonSchema(apiUrl, apiKey, modelName,
-                        systemPrompt, prompt, provider.isBlank() ? "exact" : provider,
-                        responseSchema);
+                        systemPrompt, prompt, providerCode, responseSchema);
             }
             return unavailableResponse("指定模型未启用");
         } catch (Exception e) {
@@ -152,6 +187,7 @@ public class AiModelServiceImpl {
         resp.setSuccess(false);
         resp.setModel("unavailable");
         resp.setProviderCode("exact");
+        resp.setFailureType(LlmFailureType.MODEL_UNAVAILABLE);
         return resp;
     }
 

@@ -1,5 +1,6 @@
 package com.feisheng.bot.core.service;
 
+import com.feisheng.bot.core.dto.LlmFailureType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -8,7 +9,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -30,6 +35,11 @@ class LayeredContextDecisionServiceTest {
         LayeredContextDecisionService.DecisionResult result = service().decide(context, 11L, 22L);
 
         assertEquals(LayeredContextDecisionService.Route.FAST_MODEL, result.route());
+        assertEquals(11L, result.fastModelId());
+        assertNull(result.deepModelId());
+        assertEquals(LayeredContextDecisionService.FastOutcome.ACCEPTED, result.fastOutcome());
+        assertEquals(LayeredContextDecisionService.DeepTriggerReason.NONE, result.deepTriggerReason());
+        assertEquals(1, result.candidateCount());
         assertEquals("有没有视频的？", context.originalQuery());
         assertEquals(List.of("需要视频形式的教程"), result.decision().originalRequirements());
         assertEquals("点签是否提供使用视频教程？", result.decision().resolvedQuery());
@@ -52,7 +62,83 @@ class LayeredContextDecisionServiceTest {
         LayeredContextDecisionService.DecisionResult result = service().decide(context, 11L, 22L);
 
         assertEquals(LayeredContextDecisionService.Route.DEEP_MODEL, result.route());
+        assertEquals(11L, result.fastModelId());
+        assertEquals(22L, result.deepModelId());
+        assertEquals(LayeredContextDecisionService.FastOutcome.ESCALATED, result.fastOutcome());
+        assertEquals(LayeredContextDecisionService.DeepTriggerReason.LOW_CONFIDENCE,
+            result.deepTriggerReason());
         assertEquals(deep, result.decision());
+    }
+
+    @Test
+    void fallsBackWithoutCallingTheSameModelTwice() {
+        TurnContext context = context(List.of(candidate("message:9", "recent_message", "点签的使用教程")));
+        ContextDecision fast = decision(ContextDecision.Relation.FOLLOW_UP, List.of("message:9"),
+            List.of(), List.of("视频教程"), "点签的视频教程", 0.55, true);
+        when(intentUnderstandingService.decideContext(context, 11L))
+            .thenReturn(IntentUnderstandingService.ContextModelResult.success(fast, 8L));
+
+        LayeredContextDecisionService.DecisionResult result = service().decide(context, 11L, 11L);
+
+        assertEquals(LayeredContextDecisionService.Route.FALLBACK, result.route());
+        assertEquals("deep_model_not_distinct", result.fallbackReason());
+        assertEquals(11L, result.fastModelId());
+        assertNull(result.deepModelId());
+        assertEquals(LayeredContextDecisionService.DeepTriggerReason.LOW_CONFIDENCE,
+            result.deepTriggerReason());
+        verify(intentUnderstandingService).decideContext(context, 11L);
+        verifyNoMoreInteractions(intentUnderstandingService);
+    }
+
+    @Test
+    void keepsValidatedFastDecisionWhenPrimaryDeepModelTimesOut() {
+        TurnContext context = context(List.of(candidate("message:9", "recent_message", "点签的使用教程")));
+        ContextDecision fast = decision(ContextDecision.Relation.FOLLOW_UP, List.of("message:9"),
+                List.of(), List.of("视频教程"), "点签的视频教程", 0.55, true);
+        when(intentUnderstandingService.decideContext(eq(context), eq(11L),
+                eq(ContextModelCallPolicy.Tier.FAST), anyLong()))
+                .thenReturn(IntentUnderstandingService.ContextModelResult.success(fast, 8L));
+        when(intentUnderstandingService.decideContext(eq(context), eq(22L),
+                eq(ContextModelCallPolicy.Tier.DEEP), anyLong()))
+                .thenReturn(IntentUnderstandingService.ContextModelResult.failed(
+                        "timeout", 3_000L, LlmFailureType.TIMEOUT, false, false));
+
+        LayeredContextDecisionService.DecisionResult result = boundedService()
+                .decide(context, 11L, 22L, null);
+
+        assertEquals(LayeredContextDecisionService.Route.FAST_FALLBACK, result.route());
+        assertEquals("点签的视频教程", result.decision().resolvedQuery());
+        assertTrue(result.usedFastFallback());
+        assertEquals(LlmFailureType.TIMEOUT, result.deepFailureType());
+        assertEquals(3_008L, result.latencyMs());
+    }
+
+    @Test
+    void usesDistinctBackupModelWhenPrimaryDeepModelIsRateLimited() {
+        TurnContext context = context(List.of(candidate("message:9", "recent_message", "点签的使用教程")));
+        ContextDecision fast = decision(ContextDecision.Relation.FOLLOW_UP, List.of("message:9"),
+                List.of(), List.of("视频教程"), "点签的视频教程", 0.55, true);
+        ContextDecision backup = decision(ContextDecision.Relation.FOLLOW_UP, List.of("message:9"),
+                List.of(), List.of("视频教程"), "点签是否提供使用视频教程？", 0.93, false);
+        when(intentUnderstandingService.decideContext(eq(context), eq(11L),
+                eq(ContextModelCallPolicy.Tier.FAST), anyLong()))
+                .thenReturn(IntentUnderstandingService.ContextModelResult.success(fast, 8L));
+        when(intentUnderstandingService.decideContext(eq(context), eq(22L),
+                eq(ContextModelCallPolicy.Tier.DEEP), anyLong()))
+                .thenReturn(IntentUnderstandingService.ContextModelResult.failed(
+                        "rate_limit", 15L, LlmFailureType.RATE_LIMIT, false, false));
+        when(intentUnderstandingService.decideContext(eq(context), eq(33L),
+                eq(ContextModelCallPolicy.Tier.BACKUP), anyLong()))
+                .thenReturn(IntentUnderstandingService.ContextModelResult.success(backup, 20L));
+
+        LayeredContextDecisionService.DecisionResult result = boundedService()
+                .decide(context, 11L, 22L, 33L);
+
+        assertEquals(LayeredContextDecisionService.Route.BACKUP_MODEL, result.route());
+        assertEquals(33L, result.backupModelId());
+        assertEquals(backup, result.decision());
+        assertEquals(LlmFailureType.RATE_LIMIT, result.deepFailureType());
+        assertEquals(20L, result.backupLatencyMs());
     }
 
     @Test
@@ -119,6 +205,12 @@ class LayeredContextDecisionServiceTest {
         LayeredContextDecisionService.DecisionResult result = service().decide(context, 11L, 22L);
 
         assertEquals(LayeredContextDecisionService.Route.FALLBACK, result.route());
+        assertEquals(11L, result.fastModelId());
+        assertEquals(22L, result.deepModelId());
+        assertEquals(LayeredContextDecisionService.FastOutcome.INVALID, result.fastOutcome());
+        assertEquals(LayeredContextDecisionService.DeepTriggerReason.INVALID_FAST_DECISION,
+            result.deepTriggerReason());
+        assertEquals(1, result.candidateCount());
         assertEquals("有没有视频的？", result.decision().resolvedQuery());
         assertEquals(List.of(), result.decision().selectedContextIds());
         assertEquals("deep_model_unavailable", result.fallbackReason());
@@ -126,6 +218,11 @@ class LayeredContextDecisionServiceTest {
 
     private LayeredContextDecisionService service() {
         return new LayeredContextDecisionService(intentUnderstandingService, new DecisionValidator(), 0.80D);
+    }
+
+    private LayeredContextDecisionService boundedService() {
+        return new LayeredContextDecisionService(intentUnderstandingService, new DecisionValidator(),
+                new ContextModelCallPolicy(3_000, 8_000, 4_000, 15_000, 0), 0.80D);
     }
 
     private TurnContext context(List<ContextCandidate> candidates) {

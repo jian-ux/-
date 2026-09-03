@@ -9,6 +9,7 @@ import com.feisheng.bot.core.mapper.BotAiReplyLogMapper;
 import com.feisheng.bot.core.service.BusinessSafetyBoundaryService;
 import com.feisheng.bot.core.service.ConversationServiceImpl;
 import com.feisheng.bot.core.service.ContextDecision;
+import com.feisheng.bot.core.service.ContextModelCallPolicy;
 import com.feisheng.bot.core.service.CustomerServicePromptProvider;
 import com.feisheng.bot.core.service.EmotionService;
 import com.feisheng.bot.core.service.HandoffCoordinator;
@@ -42,6 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -1259,6 +1261,9 @@ class DialogServiceImplTest {
     void usesLayeredModelDecisionForTutorialVideoFollowUp() {
         String question = "视频教程有没有？";
         String resolvedQuery = "点签的使用教程，有没有视频教程？";
+        ReflectionTestUtils.setField(dialogService, "layeredContextFastModelId", 11L);
+        ReflectionTestUtils.setField(dialogService, "layeredContextDeepModelId", 22L);
+        ReflectionTestUtils.setField(dialogService, "layeredContextDeepBackupModelId", 33L);
         BotMessage previous = messageWithId(91L, "user", "点签的使用教程");
         previous.setConversationId(10L);
         BotMessage answer = messageWithId(92L, "ai", "可以查看点签使用说明。");
@@ -1277,8 +1282,9 @@ class DialogServiceImplTest {
                 resolvedQuery,
                 0.94,
                 false);
-        when(intentUnderstandingService.decideContext(any(), isNull()))
-                .thenReturn(IntentUnderstandingService.ContextModelResult.success(decision, 8L));
+        when(intentUnderstandingService.decideContext(any(), eq(11L),
+                eq(ContextModelCallPolicy.Tier.FAST), anyLong()))
+            .thenReturn(IntentUnderstandingService.ContextModelResult.success(decision, 8L));
         lenient().when(intentUnderstandingService.understand(eq(resolvedQuery), anyList(), isNull(), any()))
                 .thenReturn(knowledgeUnderstanding("PRODUCT_USAGE", resolvedQuery, true));
         lenient().when(retrievalService.retrieve(resolvedQuery)).thenReturn(
@@ -1294,6 +1300,16 @@ class DialogServiceImplTest {
         assertEquals(resolvedQuery, result.get("contextResolvedQuery"));
         assertEquals(resolvedQuery, result.get("retrievalQuery"));
         assertEquals("FAST_MODEL", result.get("contextDecisionRoute"));
+        assertEquals(11L, result.get("contextFastModelId"));
+        assertEquals(null, result.get("contextDeepModelId"));
+        assertEquals(null, result.get("contextBackupModelId"));
+        assertEquals("ACCEPTED", result.get("contextFastOutcome"));
+        assertEquals("NONE", result.get("contextDeepTriggerReason"));
+        assertEquals("NONE", result.get("contextFastFailureType"));
+        assertEquals("NONE", result.get("contextDeepFailureType"));
+        assertEquals(8L, result.get("contextFastLatencyMs"));
+        assertEquals(false, result.get("contextUsedFastFallback"));
+        assertEquals(3, result.get("contextCandidateCount"));
         assertEquals(List.of("视频形式"), result.get("originalRequirements"));
         verify(retrievalService).retrieve(
             argThat(query -> query.startsWith(resolvedQuery.replaceAll("[。！？?!]+$", ""))

@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -260,17 +261,19 @@ class IntentUnderstandingServiceTest {
 
     @Test
     void parsesStrictContextDecisionWithSelectedCandidateIds() {
-        IntentUnderstandingService service = service(true, 0.75, 4, 7L);
-        when(aiModelService.chatWithExactModelJson(
-                anyString(), anyString(), eq(11L), anyMap()))
-                .thenReturn(response("""
-                        {"relation":"FOLLOW_UP","intent":"PRODUCT_USAGE",
-                         "selected_context_ids":["message:9"],"selected_memory_ids":[],
-                         "task_action":"CONTINUE","task_id":"task:usage",
-                         "original_requirements":["需要视频形式的教程"],
-                         "resolved_query":"点签是否提供使用视频教程？",
-                         "confidence":0.93,"need_large_model":false}
-                        """));
+        IntentUnderstandingService service = serviceWithGateway(true, 0.75, 4, 7L);
+        ChatResponse modelResponse = response("""
+                {"relation":"FOLLOW_UP","intent":"PRODUCT_USAGE",
+                 "selected_context_ids":["message:9"],"selected_memory_ids":[],
+                 "task_action":"CONTINUE","task_id":"task:usage",
+                 "original_requirements":["需要视频形式的教程"],
+                 "resolved_query":"点签是否提供使用视频教程？",
+                 "confidence":0.93,"need_large_model":false}
+                """);
+        when(contextModelCallService.callJsonDecision(eq(11L), anyString(), anyString(),
+                anyMap(), eq(ContextModelCallPolicy.Tier.DEEP), anyLong()))
+                .thenReturn(new ContextModelCallService.CallResult(
+                        modelResponse, 12L, false, false));
         ContextCandidate candidate = new ContextCandidate(
                 "message:9", "recent_message", "点签的使用教程", 24L, 9L,
                 "web", "customer-1", 1D, null, null, "recent_session");
@@ -287,8 +290,8 @@ class IntentUnderstandingServiceTest {
 
         ArgumentCaptor<String> prompt = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<Map<String, Object>> schema = ArgumentCaptor.forClass(Map.class);
-        verify(aiModelService).chatWithExactModelJson(
-                prompt.capture(), anyString(), eq(11L), schema.capture());
+        verify(contextModelCallService).callJsonDecision(eq(11L), prompt.capture(), anyString(),
+                schema.capture(), eq(ContextModelCallPolicy.Tier.DEEP), anyLong());
         assertTrue(prompt.getValue().contains("有没有视频的？"));
         assertTrue(prompt.getValue().contains("message:9"));
         assertEquals(10, ((List<?>) schema.getValue().get("required")).size());
@@ -325,7 +328,7 @@ class IntentUnderstandingServiceTest {
 
     @Test
     void retriesContextDecisionWithoutProviderSchemaWhenTheSameModelRejectsIt() {
-        IntentUnderstandingService service = service(true, 0.75, 4, 7L);
+        IntentUnderstandingService service = serviceWithGateway(true, 0.75, 4, 7L);
         String decisionJson = """
             {"relation":"NEW_TOPIC","intent":"PRODUCT_USAGE",
             "selected_context_ids":[],"selected_memory_ids":[],
@@ -333,11 +336,10 @@ class IntentUnderstandingServiceTest {
             "original_requirements":[],"resolved_query":"点签的使用教程",
             "confidence":0.91,"need_large_model":false}
             """;
-        when(aiModelService.chatWithExactModelJson(
-            anyString(), anyString(), eq(11L), anyMap()))
-            .thenReturn(new ChatResponse("schema unsupported", false));
-        when(aiModelService.chatWithExactModel(anyString(), anyString(), eq(11L)))
-            .thenReturn(response(decisionJson));
+        when(contextModelCallService.callJsonDecision(eq(11L), anyString(), anyString(),
+                anyMap(), eq(ContextModelCallPolicy.Tier.DEEP), anyLong()))
+                .thenReturn(new ContextModelCallService.CallResult(
+                        response(decisionJson), 15L, true, false));
         TurnContext context = TurnContext.start("turn:1", "web", "customer-1",
             1L, 1L, "点签的使用教程", List.of());
 
@@ -346,33 +348,22 @@ class IntentUnderstandingServiceTest {
         assertTrue(result.attempted());
         assertEquals(ContextDecision.Relation.NEW_TOPIC, result.decision().relation());
         assertEquals("点签的使用教程", result.decision().resolvedQuery());
-        verify(aiModelService).chatWithExactModelJson(
-                anyString(), anyString(), eq(11L), anyMap());
-        ArgumentCaptor<String> fallbackSystemPrompt = ArgumentCaptor.forClass(String.class);
-        verify(aiModelService).chatWithExactModel(
-                anyString(), fallbackSystemPrompt.capture(), eq(11L));
-        for (String requiredField : List.of(
-                "relation", "intent", "selected_context_ids", "selected_memory_ids",
-                "task_action", "task_id", "original_requirements", "resolved_query",
-                "confidence", "need_large_model")) {
-            assertTrue(fallbackSystemPrompt.getValue().contains(requiredField), requiredField);
-        }
-        assertTrue(fallbackSystemPrompt.getValue().contains("additionalProperties"));
+        assertTrue(result.schemaFallbackUsed());
     }
 
     @Test
     void rejectsContextDecisionWithUnexpectedFields() {
-        IntentUnderstandingService service = service(true, 0.75, 4, 7L);
-        when(aiModelService.chatWithExactModelJson(
-                anyString(), anyString(), eq(11L), anyMap()))
-                .thenReturn(response("""
-                        {"relation":"NEW_TOPIC","intent":"PRODUCT_USAGE",
-                         "selected_context_ids":[],"selected_memory_ids":[],
-                         "task_action":"CREATE","task_id":"task:usage",
-                         "original_requirements":[],"resolved_query":"点签怎么用？",
-                         "confidence":0.93,"need_large_model":false,
-                         "answer":"直接登录"}
-                        """));
+        IntentUnderstandingService service = serviceWithGateway(true, 0.75, 4, 7L);
+        when(contextModelCallService.callJsonDecision(eq(11L), anyString(), anyString(),
+                anyMap(), eq(ContextModelCallPolicy.Tier.DEEP), anyLong()))
+                .thenReturn(new ContextModelCallService.CallResult(response("""
+                {"relation":"NEW_TOPIC","intent":"PRODUCT_USAGE",
+                 "selected_context_ids":[],"selected_memory_ids":[],
+                 "task_action":"CREATE","task_id":"task:usage",
+                 "original_requirements":[],"resolved_query":"点签怎么用？",
+                 "confidence":0.93,"need_large_model":false,
+                 "answer":"直接登录"}
+                """), 12L, false, false));
         TurnContext context = TurnContext.start("turn:1", "web", "customer-1",
                 1L, 1L, "点签怎么用？", List.of());
 

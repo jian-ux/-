@@ -39,10 +39,7 @@ public class ContextModelCallService {
                     started, false, false);
         }
 
-        String breakerName = "context-model-" + modelId;
-        CircuitBreaker breaker = circuitBreakers.getConfiguration("contextModel")
-                .map(config -> circuitBreakers.circuitBreaker(breakerName, config))
-                .orElseGet(() -> circuitBreakers.circuitBreaker(breakerName));
+        CircuitBreaker breaker = breakerFor(modelId);
         if (!breaker.tryAcquirePermission()) {
             return result(failure("context model circuit is open", LlmFailureType.CIRCUIT_OPEN),
                     started, false, true);
@@ -70,14 +67,34 @@ public class ContextModelCallService {
 
         LlmFailureType failureType = response == null
                 ? LlmFailureType.MODEL_UNAVAILABLE : response.getFailureType();
-        if (response != null && response.isSuccess()) {
-            breaker.onSuccess(Math.max(1L, System.nanoTime() - started), TimeUnit.NANOSECONDS);
-        } else if (failureType != LlmFailureType.SCHEMA_UNSUPPORTED) {
+        if (response == null || !response.isSuccess()) {
             breaker.onError(Math.max(1L, System.nanoTime() - started), TimeUnit.NANOSECONDS,
                     new ContextModelException(failureType));
         }
         return result(response == null ? failure("context model unavailable",
                 LlmFailureType.MODEL_UNAVAILABLE) : response, started, schemaFallbackUsed, false);
+    }
+
+    public void recordDecisionOutcome(Long modelId, long latencyMs, LlmFailureType failureType) {
+        if (modelId == null || modelId <= 0) {
+            return;
+        }
+        CircuitBreaker breaker = breakerFor(modelId);
+        long durationNanos = TimeUnit.MILLISECONDS.toNanos(Math.max(1L, latencyMs));
+        LlmFailureType outcome = failureType == null ? LlmFailureType.MODEL_UNAVAILABLE : failureType;
+        if (outcome == LlmFailureType.NONE) {
+            breaker.onSuccess(durationNanos, TimeUnit.NANOSECONDS);
+        } else {
+            breaker.onError(durationNanos, TimeUnit.NANOSECONDS,
+                    new ContextModelException(outcome));
+        }
+    }
+
+    private CircuitBreaker breakerFor(Long modelId) {
+        String breakerName = "context-model-" + modelId;
+        return circuitBreakers.getConfiguration("contextModel")
+                .map(config -> circuitBreakers.circuitBreaker(breakerName, config))
+                .orElseGet(() -> circuitBreakers.circuitBreaker(breakerName));
     }
 
     private CallResult result(ChatResponse response, long started, boolean schemaFallbackUsed,

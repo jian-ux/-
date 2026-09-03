@@ -1309,6 +1309,7 @@ class DialogServiceImplTest {
         assertEquals("NONE", result.get("contextDeepFailureType"));
         assertEquals(8L, result.get("contextFastLatencyMs"));
         assertEquals(false, result.get("contextUsedFastFallback"));
+        assertEquals("NONE", result.get("contextCircuitState"));
         assertEquals(3, result.get("contextCandidateCount"));
         assertEquals(List.of("视频形式"), result.get("originalRequirements"));
         verify(retrievalService).retrieve(

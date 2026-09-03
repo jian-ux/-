@@ -235,39 +235,7 @@ public class IntentUnderstandingService {
     }
 
     public ContextModelResult decideContext(TurnContext context, Long modelId) {
-        if (!enabled || context == null || context.originalQuery().isBlank()
-                || context.originalQuery().length() > MAX_QUERY_CHARS) {
-            return ContextModelResult.notAttempted(enabled ? "invalid_input" : "disabled");
-        }
-        long started = System.nanoTime();
-        try {
-            String prompt = buildContextPrompt(context);
-            ChatResponse response;
-            if (modelId != null && modelId > 0) {
-                response = aiModelService.chatWithExactModelJson(prompt, CONTEXT_SYSTEM_PROMPT,
-                    modelId, CONTEXT_RESPONSE_SCHEMA);
-                if (response == null || !response.isSuccess() || response.getContent() == null
-                        || response.getContent().isBlank()) {
-                    String fallbackSystemPrompt = CONTEXT_SYSTEM_PROMPT
-                            + "\n普通调用时也必须严格遵循以下 JSON Schema，只输出一个 JSON 对象：\n"
-                            + objectMapper.writeValueAsString(CONTEXT_RESPONSE_SCHEMA);
-                    response = aiModelService.chatWithExactModel(
-                            prompt, fallbackSystemPrompt, modelId);
-                }
-            } else {
-                response = aiModelService.chatWithModel(prompt, CONTEXT_SYSTEM_PROMPT, modelId);
-            }
-            long latencyMs = elapsedMillis(started);
-            if (response == null || !response.isSuccess() || response.getContent() == null
-                    || response.getContent().isBlank()) {
-                return ContextModelResult.failed("model_unavailable", latencyMs);
-            }
-            return ContextModelResult.success(parseContextDecision(response.getContent()), latencyMs);
-        } catch (Exception e) {
-            log.warn("Context decision failed; using layered fallback ({}: {})",
-                    e.getClass().getSimpleName(), e.getMessage());
-            return ContextModelResult.failed("invalid_model_output", elapsedMillis(started));
-        }
+        return decideContext(context, modelId, ContextModelCallPolicy.Tier.DEEP, Long.MAX_VALUE);
     }
 
     public ContextModelResult decideContext(
@@ -304,10 +272,12 @@ public class IntentUnderstandingService {
                         failureType, callResult.schemaFallbackUsed(), callResult.circuitOpen());
             }
             try {
-                return ContextModelResult.success(parseContextDecision(response.getContent()),
-                        callResult.latencyMs(), callResult.schemaFallbackUsed(),
-                        callResult.circuitOpen());
+                ContextDecision decision = parseContextDecision(response.getContent());
+                return ContextModelResult.success(decision, callResult.latencyMs(),
+                        callResult.schemaFallbackUsed(), callResult.circuitOpen());
             } catch (IllegalArgumentException exception) {
+                recordContextDecisionOutcome(
+                        modelId, callResult.latencyMs(), LlmFailureType.INVALID_OUTPUT);
                 return ContextModelResult.failed("invalid_model_output", callResult.latencyMs(),
                         LlmFailureType.INVALID_OUTPUT, callResult.schemaFallbackUsed(),
                         callResult.circuitOpen());
@@ -316,6 +286,13 @@ public class IntentUnderstandingService {
             log.warn("Bounded context decision failed ({})", exception.getClass().getSimpleName());
             return ContextModelResult.failed("model_unavailable", 0L,
                     LlmFailureType.MODEL_UNAVAILABLE, false, false);
+        }
+    }
+
+    public void recordContextDecisionOutcome(Long modelId, long latencyMs,
+                                             LlmFailureType failureType) {
+        if (contextModelCallService != null) {
+            contextModelCallService.recordDecisionOutcome(modelId, latencyMs, failureType);
         }
     }
 

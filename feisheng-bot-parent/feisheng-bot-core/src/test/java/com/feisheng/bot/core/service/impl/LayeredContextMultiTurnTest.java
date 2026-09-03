@@ -194,7 +194,7 @@ class LayeredContextMultiTurnTest {
         Map<String, Object> result = dialogService.send("web", "acceptance-user", "视频教程有没有？", "咨询");
 
         assertEquals("FALLBACK", result.get("contextDecisionRoute"));
-        assertEquals("model_unavailable", result.get("contextDecisionFallbackReason"));
+        assertEquals("deep_model_unavailable", result.get("contextDecisionFallbackReason"));
         assertEquals("视频教程有没有？", result.get("originalQuery"));
         assertEquals("视频教程有没有？", result.get("resolvedQuery"));
     }

@@ -1,4 +1,7 @@
 package com.feisheng.bot.core.client;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.feisheng.bot.core.dto.ChatResponse;
 import com.feisheng.bot.core.dto.LlmFailureType;
 import com.sun.net.httpserver.HttpExchange;
@@ -11,11 +14,14 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.slf4j.LoggerFactory.getLogger;
 
 class LlmHttpClientTest {
 
@@ -121,6 +127,90 @@ class LlmHttpClientTest {
 
         assertFalse(response.isSuccess());
         assertEquals(LlmFailureType.INVALID_OUTPUT, response.getFailureType());
+    }
+
+    @Test
+    void enforcesTotalPolicyDeadlineWhileResponseTrickles() throws Exception {
+        byte[] payload = ("{\"choices\":[{\"message\":{\"content\":\"ok\"}}],"
+                + "\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}")
+                .getBytes(StandardCharsets.UTF_8);
+        server.createContext("/v1/chat/completions", exchange -> {
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, 0);
+            try {
+                for (byte value : payload) {
+                    exchange.getResponseBody().write(value);
+                    exchange.getResponseBody().flush();
+                    Thread.sleep(20L);
+                }
+            } catch (IOException ignored) {
+                // The deadline closes the client connection before the slow response completes.
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        server.start();
+
+        long started = System.nanoTime();
+        ChatResponse response = client.callWithPolicy(endpoint(), "key", "model", "system",
+                "prompt", "test", 500, 0);
+        long elapsedMs = (System.nanoTime() - started) / 1_000_000L;
+
+        assertFalse(response.isSuccess());
+        assertEquals(LlmFailureType.TIMEOUT, response.getFailureType());
+        assertTrue(elapsedMs < 1_500L, "policy deadline exceeded: " + elapsedMs + "ms");
+    }
+
+    @Test
+    void classifiesModelNotFoundAsModelUnavailable() throws Exception {
+        server.createContext("/v1/chat/completions", exchange -> respond(exchange, 404,
+                "{\"error\":{\"code\":\"model_not_found\",\"message\":\"model unavailable\"}}"));
+        server.start();
+
+        ChatResponse response = client.callWithPolicy(endpoint(), "key", "retired-model",
+                "system", "prompt", "test", 500, 0);
+
+        assertFalse(response.isSuccess());
+        assertEquals(LlmFailureType.MODEL_UNAVAILABLE, response.getFailureType());
+    }
+
+    @Test
+    void classifiesInvalidJsonAsInvalidOutput() throws Exception {
+        server.createContext("/v1/chat/completions", exchange -> respond(exchange, 200,
+                "{not-json"));
+        server.start();
+
+        ChatResponse response = client.callWithPolicy(endpoint(), "key", "model", "system",
+                "prompt", "test", 500, 0);
+
+        assertFalse(response.isSuccess());
+        assertEquals(LlmFailureType.INVALID_OUTPUT, response.getFailureType());
+    }
+
+    @Test
+    void doesNotLogProviderResponseBody() throws Exception {
+        String sensitiveBody = "secret-customer-fragment";
+        server.createContext("/v1/chat/completions", exchange -> respond(exchange, 400,
+                "{\"error\":{\"message\":\"" + sensitiveBody + "\"}}"));
+        server.start();
+        Logger logger = (Logger) getLogger(LlmHttpClient.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            client.callWithPolicy(endpoint(), "key", "model", "system", "prompt", "test",
+                    500, 0);
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+
+        List<String> messages = appender.list.stream()
+                .map(ILoggingEvent::getFormattedMessage)
+                .toList();
+        assertTrue(messages.stream().noneMatch(message -> message.contains(sensitiveBody)));
     }
 
 

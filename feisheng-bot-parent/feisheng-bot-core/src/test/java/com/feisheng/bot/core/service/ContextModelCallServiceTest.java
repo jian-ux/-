@@ -115,6 +115,34 @@ class ContextModelCallServiceTest {
         assertFalse(result.response().isSuccess());
     }
 
+    @Test
+    void invalidDecisionOutcomeOpensOnlyThatModelsCircuit() {
+        CircuitBreakerConfig config = CircuitBreakerConfig.custom()
+                .slidingWindowSize(1)
+                .minimumNumberOfCalls(1)
+                .failureRateThreshold(50F)
+                .waitDurationInOpenState(Duration.ofMinutes(1))
+                .build();
+        CircuitBreakerRegistry registry = CircuitBreakerRegistry.of(
+                Map.of("contextModel", config));
+        ContextModelCallService service = service(registry);
+        when(aiModelService.chatWithExactModelJsonWithPolicy(anyString(), anyString(), eq(6L),
+                anyMap(), eq(8_000), eq(0)))
+                .thenReturn(new ChatResponse("{}", true));
+
+        service.recordDecisionOutcome(5L, 12L, LlmFailureType.INVALID_OUTPUT);
+        ContextModelCallService.CallResult openCircuit = service.callJsonDecision(5L, "prompt",
+                "schema-prompt", Map.of("type", "object"), ContextModelCallPolicy.Tier.DEEP,
+                System.nanoTime() + 10_000_000_000L);
+        ContextModelCallService.CallResult otherModel = service.callJsonDecision(6L, "prompt",
+                "schema-prompt", Map.of("type", "object"), ContextModelCallPolicy.Tier.DEEP,
+                System.nanoTime() + 10_000_000_000L);
+
+        assertTrue(openCircuit.circuitOpen());
+        assertEquals(LlmFailureType.CIRCUIT_OPEN, openCircuit.response().getFailureType());
+        assertTrue(otherModel.response().isSuccess());
+    }
+
     private ContextModelCallService service() {
         return service(CircuitBreakerRegistry.ofDefaults());
     }

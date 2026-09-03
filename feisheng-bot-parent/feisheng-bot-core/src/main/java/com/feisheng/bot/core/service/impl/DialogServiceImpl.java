@@ -1659,6 +1659,8 @@ public class DialogServiceImpl {
             ? 0L : contextDecisionResult.backupLatencyMs());
         response.put("contextUsedFastFallback", contextDecisionResult != null
             && contextDecisionResult.usedFastFallback());
+        response.put("contextCircuitState", contextDecisionResult == null
+            ? "NONE" : contextDecisionResult.circuitState().name());
         response.put("contextDeadlineExceeded", contextDecisionResult != null
             && contextDecisionResult.deadlineExceeded());
         response.put("contextCandidateCount", contextDecisionResult == null

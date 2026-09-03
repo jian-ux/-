@@ -41,53 +41,25 @@ public class LayeredContextDecisionService {
     }
 
     public DecisionResult decide(TurnContext context, Long fastModelId, Long deepModelId) {
-        Long effectiveFastModelId = normalizeModelId(fastModelId);
-        Long effectiveDeepModelId = normalizeModelId(deepModelId);
-        int candidateCount = context == null ? 0 : context.candidates().size();
-
-        IntentUnderstandingService.ContextModelResult fast = call(context, effectiveFastModelId);
-        ContextDecision fastDecision = validDecision(context, fast);
-        FastAssessment fastAssessment = assessFast(fast, fastDecision);
-        if (fastAssessment.outcome() == FastOutcome.ACCEPTED) {
-            return new DecisionResult(Route.FAST_MODEL, fastDecision, "", fast.latencyMs(),
-                effectiveFastModelId, null, fastAssessment.outcome(),
-                fastAssessment.deepTriggerReason(), candidateCount);
-        }
-        if (Objects.equals(effectiveFastModelId, effectiveDeepModelId)) {
-            return new DecisionResult(Route.FALLBACK,
-                ContextDecision.fallback(context == null ? "" : context.originalQuery()),
-                "deep_model_not_distinct", latency(fast), effectiveFastModelId, null,
-                fastAssessment.outcome(), fastAssessment.deepTriggerReason(), candidateCount);
-        }
-
-        IntentUnderstandingService.ContextModelResult deep = call(context, effectiveDeepModelId);
-        ContextDecision deepDecision = validDecision(context, deep);
-        if (deepDecision != null) {
-            return new DecisionResult(Route.DEEP_MODEL, deepDecision, "",
-                latency(fast) + latency(deep), effectiveFastModelId, effectiveDeepModelId,
-                fastAssessment.outcome(), fastAssessment.deepTriggerReason(), candidateCount);
-        }
-
-        String reason = deep == null || !deep.attempted()
-                || "model_unavailable".equals(deep.reasonCode())
-            ? "deep_model_unavailable" : "deep_model_invalid";
-        return new DecisionResult(Route.FALLBACK,
-            ContextDecision.fallback(context == null ? "" : context.originalQuery()), reason,
-            latency(fast) + latency(deep), effectiveFastModelId, effectiveDeepModelId,
-            fastAssessment.outcome(), fastAssessment.deepTriggerReason(), candidateCount);
+        return decide(context, fastModelId, deepModelId, null);
     }
 
     public DecisionResult decide(TurnContext context, Long fastModelId, Long deepModelId,
                                  Long backupModelId) {
         long deadlineNanos = callPolicy.deadlineFromNow();
         Long effectiveFastModelId = normalizeModelId(fastModelId);
-        Long effectiveDeepModelId = normalizeModelId(deepModelId);
-        Long effectiveBackupModelId = normalizeModelId(backupModelId);
+        Long requestedDeepModelId = normalizeModelId(deepModelId);
+        Long effectiveDeepModelId = isDistinct(requestedDeepModelId, effectiveFastModelId)
+                ? requestedDeepModelId : null;
+        Long requestedBackupModelId = normalizeModelId(backupModelId);
+        Long effectiveBackupModelId = isDistinct(requestedBackupModelId, effectiveFastModelId)
+                && isDistinct(requestedBackupModelId, effectiveDeepModelId)
+                ? requestedBackupModelId : null;
         int candidateCount = context == null ? 0 : context.candidates().size();
 
         IntentUnderstandingService.ContextModelResult fast = call(
                 context, effectiveFastModelId, ContextModelCallPolicy.Tier.FAST, deadlineNanos);
-        ContextDecision fastDecision = validDecision(context, fast);
+        ContextDecision fastDecision = validDecision(context, fast, effectiveFastModelId);
         FastAssessment fastAssessment = assessFast(fast, fastDecision);
         LlmFailureType fastFailureType = effectiveFailureType(fast, fastDecision);
         if (fastAssessment.outcome() == FastOutcome.ACCEPTED) {
@@ -99,11 +71,11 @@ public class LayeredContextDecisionService {
 
         IntentUnderstandingService.ContextModelResult deep = null;
         ContextDecision deepDecision = null;
-        LlmFailureType deepFailureType = LlmFailureType.MODEL_UNAVAILABLE;
+        LlmFailureType deepFailureType = LlmFailureType.NONE;
         if (isDistinct(effectiveDeepModelId, effectiveFastModelId)) {
             deep = call(context, effectiveDeepModelId, ContextModelCallPolicy.Tier.DEEP,
                     deadlineNanos);
-            deepDecision = validDecision(context, deep);
+            deepDecision = validDecision(context, deep, effectiveDeepModelId);
             deepFailureType = effectiveFailureType(deep, deepDecision);
             if (deepDecision != null) {
                 return detailedResult(Route.DEEP_MODEL, deepDecision, "", effectiveFastModelId,
@@ -123,7 +95,7 @@ public class LayeredContextDecisionService {
                     deadlineNanos) > 0) {
             backup = call(context, effectiveBackupModelId, ContextModelCallPolicy.Tier.BACKUP,
                     deadlineNanos);
-            backupDecision = validDecision(context, backup);
+            backupDecision = validDecision(context, backup, effectiveBackupModelId);
             backupFailureType = effectiveFailureType(backup, backupDecision);
             if (backupDecision != null) {
                 return detailedResult(Route.BACKUP_MODEL, backupDecision, "",
@@ -174,7 +146,30 @@ public class LayeredContextDecisionService {
                 fastAssessment.outcome(), fastAssessment.deepTriggerReason(), candidateCount,
                 backupModelId, fastFailureType, deepFailureType, backupFailureType,
                 fastLatencyMs, deepLatencyMs, backupLatencyMs, usedFastFallback,
-                System.nanoTime() >= deadlineNanos);
+                circuitState(fast, deep, backup), System.nanoTime() >= deadlineNanos);
+    }
+
+    private CircuitState circuitState(
+            IntentUnderstandingService.ContextModelResult fast,
+            IntentUnderstandingService.ContextModelResult deep,
+            IntentUnderstandingService.ContextModelResult backup) {
+        boolean fastOpen = fast != null && fast.circuitOpen();
+        boolean deepOpen = deep != null && deep.circuitOpen();
+        boolean backupOpen = backup != null && backup.circuitOpen();
+        int openCount = (fastOpen ? 1 : 0) + (deepOpen ? 1 : 0) + (backupOpen ? 1 : 0);
+        if (openCount > 1) {
+            return CircuitState.MULTIPLE_OPEN;
+        }
+        if (fastOpen) {
+            return CircuitState.FAST_OPEN;
+        }
+        if (deepOpen) {
+            return CircuitState.DEEP_OPEN;
+        }
+        if (backupOpen) {
+            return CircuitState.BACKUP_OPEN;
+        }
+        return CircuitState.NONE;
     }
 
     private boolean isDistinct(Long candidate, Long other) {
@@ -206,19 +201,13 @@ public class LayeredContextDecisionService {
 
     private String fallbackReason(LlmFailureType deepFailureType,
                                   LlmFailureType backupFailureType) {
-        LlmFailureType terminal = backupFailureType != null
-                && backupFailureType != LlmFailureType.NONE
-                ? backupFailureType : deepFailureType;
-        return terminal == null ? "model_unavailable"
-                : terminal.name().toLowerCase(java.util.Locale.ROOT);
-    }
-
-    private IntentUnderstandingService.ContextModelResult call(TurnContext context, Long modelId) {
-        try {
-            return intentUnderstandingService.decideContext(context, modelId);
-        } catch (RuntimeException e) {
-            return IntentUnderstandingService.ContextModelResult.failed("model_unavailable", 0L);
+        if (backupFailureType != null && backupFailureType != LlmFailureType.NONE) {
+            return "backup_" + backupFailureType.name().toLowerCase(java.util.Locale.ROOT);
         }
+        if (deepFailureType != null && deepFailureType != LlmFailureType.NONE) {
+            return "deep_" + deepFailureType.name().toLowerCase(java.util.Locale.ROOT);
+        }
+        return "model_unavailable";
     }
 
     private IntentUnderstandingService.ContextModelResult call(
@@ -240,14 +229,21 @@ public class LayeredContextDecisionService {
 
     private ContextDecision validDecision(
             TurnContext context,
-            IntentUnderstandingService.ContextModelResult result) {
+            IntentUnderstandingService.ContextModelResult result,
+            Long modelId) {
         if (result == null || result.decision() == null) {
             return null;
         }
         try {
-            return validator.validate(context, result.decision());
+            ContextDecision decision = validator.validate(context, result.decision());
+            intentUnderstandingService.recordContextDecisionOutcome(
+                    modelId, latency(result), LlmFailureType.NONE);
+            return decision;
         } catch (IllegalArgumentException e) {
-            log.warn("Layered context decision rejected by validator: {}", e.getMessage());
+            intentUnderstandingService.recordContextDecisionOutcome(
+                    modelId, latency(result), LlmFailureType.INVALID_OUTPUT);
+            log.warn("Layered context decision rejected by validator ({})",
+                    e.getClass().getSimpleName());
             return null;
         }
     }
@@ -317,6 +313,14 @@ public class LayeredContextDecisionService {
         FAST_MODEL_NOT_ATTEMPTED
     }
 
+    public enum CircuitState {
+        NONE,
+        FAST_OPEN,
+        DEEP_OPEN,
+        BACKUP_OPEN,
+        MULTIPLE_OPEN
+    }
+
     private record FastAssessment(FastOutcome outcome, DeepTriggerReason deepTriggerReason) {}
 
     public record DecisionResult(
@@ -337,6 +341,7 @@ public class LayeredContextDecisionService {
             long deepLatencyMs,
             long backupLatencyMs,
             boolean usedFastFallback,
+            CircuitState circuitState,
             boolean deadlineExceeded) {
         public DecisionResult(Route route, ContextDecision decision, String fallbackReason,
                               long latencyMs, Long fastModelId, Long deepModelId,
@@ -344,7 +349,8 @@ public class LayeredContextDecisionService {
                               int candidateCount) {
             this(route, decision, fallbackReason, latencyMs, fastModelId, deepModelId,
                     fastOutcome, deepTriggerReason, candidateCount, null, LlmFailureType.NONE,
-                    LlmFailureType.NONE, LlmFailureType.NONE, latencyMs, 0L, 0L, false, false);
+                    LlmFailureType.NONE, LlmFailureType.NONE, latencyMs, 0L, 0L, false,
+                    CircuitState.NONE, false);
         }
 
         public DecisionResult {
@@ -360,6 +366,7 @@ public class LayeredContextDecisionService {
             fastLatencyMs = Math.max(0L, fastLatencyMs);
             deepLatencyMs = Math.max(0L, deepLatencyMs);
             backupLatencyMs = Math.max(0L, backupLatencyMs);
+            circuitState = circuitState == null ? CircuitState.NONE : circuitState;
         }
     }
 }
